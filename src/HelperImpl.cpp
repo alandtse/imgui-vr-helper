@@ -12,6 +12,7 @@
 #include "Input.h"
 #include "Overlay.h"
 #include "OverlayDrag.h"
+#include "SettingsUI.h"
 #include "WandPointing.h"
 #include "internal/VRUtils.h"
 
@@ -302,6 +303,37 @@ namespace ImGuiVRHelper
 		return 0;
 	}
 
+	bool HelperImpl::IsSelfUIVisible() { return SettingsUI::IsVisible(); }
+
+	void HelperImpl::EnsureSelfClient()
+	{
+		if (m_self_client_id != 0)
+			return;
+		if (!Globals::IsReady())
+			return;
+
+		// Register a synthetic self-client. The on_frame callback is empty
+		// because the helper drives its own rendering inline in
+		// DispatchFrame (we don't need to round-trip through the public
+		// callback path).
+		m_self_client_id = RegisterClient(
+			"ImGuiVRHelper.Settings",
+			+[](const ImGuiVRHelperPluginAPI::Frame*, void*) { /* no-op */ },
+			nullptr,
+			ImGuiVRHelperPluginAPI::kClientFlag_None);
+
+		// Default toggle combo: Both controllers' kBY pressed simultaneously.
+		// Users can rebind once the combo recording UI lands.
+		using namespace ImGuiVRHelperPluginAPI;
+		const InputCombo toggle_keys[] = {
+			InputCombo(InputDeviceType::Both, RE::BSOpenVRControllerDevice::Keys::kBY),
+		};
+		m_self_toggle_combo = RegisterCombo(m_self_client_id, toggle_keys, 1, 3.0f);
+
+		logs::info("Self-client registered: id={} toggle_combo={}",
+			m_self_client_id, m_self_toggle_combo);
+	}
+
 	void HelperImpl::RequestFocus(uint32_t client_id)
 	{
 		std::scoped_lock lk{ m_mutex };
@@ -389,6 +421,18 @@ namespace ImGuiVRHelper
 		OverlayDrag::UpdateFixedWorldPositioning();
 		OverlayDrag::Update();
 
+		// Self-toggle combo (default: Both kBY). When fired, flip the
+		// helper's settings UI visibility. The combo machinery latches
+		// rising edges, so this fires once per held cycle.
+		if (m_self_toggle_combo != 0 && ComboFired(m_self_toggle_combo)) {
+			SettingsUI::Toggle();
+			if (SettingsUI::IsVisible() && m_self_client_id != 0) {
+				RequestFocus(m_self_client_id);
+			} else if (m_self_client_id != 0 && m_focused_client == m_self_client_id) {
+				ReleaseFocus(m_self_client_id);
+			}
+		}
+
 		// Combo matcher: walk all registered combos, latch rising edges.
 		// Held-but-already-matched combos do NOT re-fire — clients see one
 		// "fired" event per held cycle.
@@ -425,6 +469,32 @@ namespace ImGuiVRHelper
 		}
 
 		const bool wandHit = overlayState.wandState.isIntersecting;
+
+		// Render the helper's own settings UI into its self-client panel
+		// before the client OnFrame loop, so InSceneOverlay's per-eye
+		// composite picks up the latest pixels.
+		if (m_self_client_id != 0 && SettingsUI::IsVisible()) {
+			ImGuiVRHelperPluginAPI::PanelHandle handle{};
+			if (GetPanel(m_self_client_id, &handle) && handle.rtv) {
+				if (SettingsUI::Render(dt)) {
+					auto* ctx = Globals::GetD3D().context;
+					if (ctx) {
+						ID3D11RenderTargetView* oldRTV = nullptr;
+						ID3D11DepthStencilView* oldDSV = nullptr;
+						ctx->OMGetRenderTargets(1, &oldRTV, &oldDSV);
+						const float clear[4] = { 0, 0, 0, 0 };
+						ctx->OMSetRenderTargets(1, &handle.rtv, nullptr);
+						ctx->ClearRenderTargetView(handle.rtv, clear);
+						ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+						ctx->OMSetRenderTargets(1, &oldRTV, oldDSV);
+						if (oldRTV)
+							oldRTV->Release();
+						if (oldDSV)
+							oldDSV->Release();
+					}
+				}
+			}
+		}
 
 		for (const auto& sn : snapshot) {
 			ImGuiVRHelperPluginAPI::Frame perClient = baseFrame;

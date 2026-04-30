@@ -25,6 +25,12 @@
 #include <vector>
 #include <winrt/base.h>
 
+// ImGui — the helper has its own context for its own settings UI.
+// Clients link their own ImGui (potentially a different version) and
+// never share our context.
+#include <imgui.h>
+#include <imgui_impl_dx11.h>
+
 namespace logs = SKSE::log;
 using namespace std::literals;
 

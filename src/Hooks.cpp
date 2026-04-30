@@ -16,6 +16,7 @@
 #include "Globals.h"
 #include "HelperImpl.h"
 #include "InSceneOverlay.h"
+#include "SettingsUI.h"
 
 #include <RE/R/Renderer.h>
 
@@ -113,6 +114,13 @@ namespace ImGuiVRHelper::Hooks
 				// composites the focused client's panel into each eye
 				// render target. Universal across SteamVR + OpenComposite.
 				InSceneOverlay::Install();
+
+				// Initialize the helper's own ImGui context for its
+				// settings panel; register the synthetic self-client so
+				// the existing per-client texture pipeline allocates an
+				// RTV for it.
+				SettingsUI::Init();
+				HelperImpl::GetSingleton().EnsureSelfClient();
 			}
 
 			static inline REL::Relocation<decltype(thunk)> func;

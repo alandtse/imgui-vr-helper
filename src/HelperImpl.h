@@ -68,6 +68,14 @@ namespace ImGuiVRHelper
 		/// panel to draw on each Submit.
 		uint32_t GetFocusedClientId();
 
+		/// Allocate the helper's own self-client (so the helper's settings
+		/// UI gets a panel texture via the same per-client allocation
+		/// pipeline as external clients). Idempotent.
+		void EnsureSelfClient();
+
+		/// True iff the helper's own settings UI is currently visible.
+		bool IsSelfUIVisible();
+
 	private:
 		HelperImpl() = default;
 
@@ -84,6 +92,14 @@ namespace ImGuiVRHelper
 		/// resources. Returns true on success, false if D3D isn't ready
 		/// or texture creation failed. Must be called with m_mutex held.
 		bool EnsureClientTextureLocked(struct ClientRecord& rec);
+
+		/// client_id assigned to the helper itself for its settings UI.
+		/// 0 until EnsureSelfClient runs. Reserved combo IDs and the
+		/// helper's panel texture are owned by this slot.
+		uint32_t m_self_client_id = 0;
+
+		/// Combo IDs the helper registers for its own toggle hotkey.
+		ImGuiVRHelperPluginAPI::ComboId m_self_toggle_combo = 0;
 	};
 
 	struct ClientRecord
