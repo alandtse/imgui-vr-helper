@@ -8,6 +8,7 @@
 #include "pch.h"
 
 #include "HelperImpl.h"
+#include "Hooks.h"
 #include "OpenVRDetection.h"
 
 #define IMGUI_VR_HELPER_STR_HELPER(x) #x
@@ -71,7 +72,12 @@ namespace
 				logs::info("  interfaces: system={} overlay={} compositor={}",
 					info.hasSystemInterface, info.hasOverlayInterface,
 					info.hasCompositorInterface);
-				// TODO: allocate overlay textures, install Present + Submit detours,
+
+				// Install the BSGraphics::Renderer::InitD3D thunk so we
+				// capture device/context/swapchain when the renderer
+				// initializes. Subsequent ports build on Globals::GetD3D().
+				ImGuiVRHelper::Hooks::Install();
+				// TODO: allocate overlay textures, install Present detour,
 				// set up in-scene fallback when overlay interface is missing.
 			}
 			break;

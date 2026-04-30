@@ -26,3 +26,23 @@
 
 namespace logs = SKSE::log;
 using namespace std::literals;
+
+// Helper-side equivalent of SCS's stl::write_thunk_call<T>(addr) — wraps
+// SKSE::GetTrampoline().write_call<N>() so a thunk struct with `static
+// void thunk(...)` and `static REL::Relocation<...> func` can be installed
+// in one call.
+namespace stl
+{
+	using namespace SKSE::stl;
+
+	template <class T, std::size_t Size = 5>
+	void write_thunk_call(std::uintptr_t a_src)
+	{
+		auto& trampoline = SKSE::GetTrampoline();
+		if constexpr (Size == 6) {
+			T::func = *reinterpret_cast<std::uintptr_t*>(trampoline.write_call<6>(a_src, T::thunk));
+		} else {
+			T::func = trampoline.write_call<Size>(a_src, T::thunk);
+		}
+	}
+}
