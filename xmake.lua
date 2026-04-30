@@ -67,31 +67,49 @@ add_headerfiles("api/**.h")
 add_includedirs("src", "api")
 set_pcxxheader("src/pch.h")
 
--- Auto-deploy on build. Set SkyrimVRPluginTargets to one or more paths
--- separated by ';' (each pointing at a Skyrim VR Data folder or a mod
--- manager mod folder) to copy the DLL + PDB into each one.
+-- Auto-deploy on build. The helper looks at, in order:
+--   1. SkyrimVRPluginTargets — semicolon-separated list of Data folders
+--      (or mod-manager mod folders) for explicit override.
+--   2. SkyrimVRPath — community convention: points at the SkyrimVR install
+--      root (the folder that contains SkyrimVR.exe). The deploy step
+--      appends "Data" to it.
 --
--- Distinct from the more general SkyrimPluginTargets convention because
--- this helper is VR-only — using a VR-scoped env var lets users keep one
--- env var listing every Skyrim install they target with non-VR plugins
--- and a separate one listing only the VR install(s) for this helper.
+-- If neither is set, the deploy step is a no-op.
 after_build(function(target)
-    local deploy_dirs = os.getenv("SkyrimVRPluginTargets")
-    if not deploy_dirs then
+    local function collect_targets()
+        local explicit = os.getenv("SkyrimVRPluginTargets")
+        if explicit and explicit ~= "" then
+            local out = {}
+            for _, dir in ipairs(explicit:split(";")) do
+                dir = dir:trim()
+                if dir ~= "" then
+                    table.insert(out, dir)
+                end
+            end
+            return out
+        end
+        local vr_root = os.getenv("SkyrimVRPath")
+        if vr_root and vr_root ~= "" then
+            return { path.join(vr_root:trim(), "Data") }
+        end
+        return {}
+    end
+
+    local targets = collect_targets()
+    if #targets == 0 then
+        print("No deploy target (set SkyrimVRPath or SkyrimVRPluginTargets)")
         return
     end
+
     local dll = target:targetfile()
     local pdb = target:symbolfile()
-    for _, dir in ipairs(deploy_dirs:split(";")) do
-        dir = dir:trim()
-        if dir ~= "" then
-            local dest = path.join(dir, "SKSE", "Plugins")
-            os.mkdir(dest)
-            os.cp(dll, dest)
-            if os.isfile(pdb) then
-                os.cp(pdb, dest)
-            end
-            print("Deployed to " .. dest)
+    for _, dir in ipairs(targets) do
+        local dest = path.join(dir, "SKSE", "Plugins")
+        os.mkdir(dest)
+        os.cp(dll, dest)
+        if os.isfile(pdb) then
+            os.cp(pdb, dest)
         end
+        print("Deployed to " .. dest)
     end
 end)

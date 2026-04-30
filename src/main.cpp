@@ -55,7 +55,12 @@ namespace
 		case SKSE::MessagingInterface::kPostLoad:
 			// Load persisted settings as early as possible so InitD3D-time
 			// resource allocation sees the user's configured offsets/scale.
+			// Also write a default config to disk on first run so users
+			// have a discoverable file to edit (e.g. to bump logLevel for
+			// diagnostics without rebuilding).
 			ImGuiVRHelper::Overlay::LoadSettings();
+			ImGuiVRHelper::Overlay::WriteDefaultsIfMissing();
+			ImGuiVRHelper::Overlay::ApplyLogLevel();
 			break;
 
 		case SKSE::MessagingInterface::kPostPostLoad:

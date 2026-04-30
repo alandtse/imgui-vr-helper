@@ -42,6 +42,7 @@ namespace ImGuiVRHelper::Overlay
 			s.enableDragToReposition = j.value("enableDragToReposition", s.enableDragToReposition);
 			s.autoResetDistance = j.value("autoResetDistance", s.autoResetDistance);
 			s.mouseDeadzone = j.value("mouseDeadzone", s.mouseDeadzone);
+			s.logLevel = j.value("logLevel", s.logLevel);
 		}
 
 		nlohmann::json ToJson(const Settings& s)
@@ -61,6 +62,7 @@ namespace ImGuiVRHelper::Overlay
 			j["enableDragToReposition"] = s.enableDragToReposition;
 			j["autoResetDistance"] = s.autoResetDistance;
 			j["mouseDeadzone"] = s.mouseDeadzone;
+			j["logLevel"] = s.logLevel;
 			return j;
 		}
 	}
@@ -103,5 +105,28 @@ namespace ImGuiVRHelper::Overlay
 		} catch (const std::exception& e) {
 			logs::warn("LoadSettings parse error: {}", e.what());
 		}
+	}
+
+	void WriteDefaultsIfMissing()
+	{
+		std::error_code ec;
+		if (std::filesystem::exists(kSettingsPath, ec)) {
+			return;  // user already has one
+		}
+		SaveSettings();
+		logs::info("WriteDefaultsIfMissing: wrote default config to {}",
+			kSettingsPath.string());
+	}
+
+	void ApplyLogLevel()
+	{
+		const auto& s = State::GetSingleton().settings;
+		const auto lvl = spdlog::level::from_str(s.logLevel);
+		if (auto logger = spdlog::default_logger()) {
+			logger->set_level(lvl);
+			logger->flush_on(lvl);
+		}
+		spdlog::set_level(lvl);
+		logs::info("ApplyLogLevel: spdlog level set to '{}'", s.logLevel);
 	}
 }

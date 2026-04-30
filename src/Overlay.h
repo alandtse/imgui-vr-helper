@@ -104,6 +104,10 @@ namespace ImGuiVRHelper::Overlay
 		/// RGBA color blended into the overlay while it's being dragged.
 		/// Default: yellow at 30% alpha, matching SCS's visual feedback.
 		float dragHighlightColor[4] = { 1.0f, 1.0f, 0.0f, 0.3f };
+
+		/// Spdlog level name: "trace", "debug", "info", "warn", "err",
+		/// "critical", "off". Applied at plugin load. Default "info".
+		std::string logLevel = "info";
 	};
 
 	// ---- Runtime state --------------------------------------------------
@@ -156,6 +160,15 @@ namespace ImGuiVRHelper::Overlay
 	/// exists. Missing fields fall back to defaults; corrupt files log a
 	/// warning and leave defaults intact.
 	void LoadSettings();
+
+	/// If the JSON config file doesn't exist on disk, write the current
+	/// (default) Settings to it so the user has a discoverable file to
+	/// edit. Idempotent — silent if the file is already present.
+	void WriteDefaultsIfMissing();
+
+	/// Apply Settings::logLevel to spdlog's default logger. Safe to call
+	/// after SKSE::Init has set up logging.
+	void ApplyLogLevel();
 
 	class State
 	{
