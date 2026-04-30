@@ -8,6 +8,7 @@
 #include "pch.h"
 
 #include "HelperImpl.h"
+#include "Input.h"
 
 namespace ImGuiVRHelper
 {
@@ -164,5 +165,48 @@ namespace ImGuiVRHelper
 	{
 		// TODO: merge into helper's persistent JSON.
 		return true;
+	}
+
+	void HelperImpl::DispatchFrame(float dt)
+	{
+		ImGuiVRHelperPluginAPI::Frame baseFrame;
+		Input::BuildFrame(baseFrame, dt);
+
+		// Snapshot the client list under the lock so we don't hold the
+		// mutex across a callback into client code (avoids deadlocks if a
+		// client calls back into RegisterClient/UnregisterClient).
+		struct Snapshot
+		{
+			uint32_t id;
+			ImGuiVRHelperPluginAPI::OnFrameFn on_frame;
+			void* user;
+			uint32_t flags;
+		};
+		std::vector<Snapshot> snapshot;
+		uint32_t focused;
+		{
+			std::scoped_lock lk{ m_mutex };
+			focused = m_focused_client;
+			snapshot.reserve(m_clients.size());
+			for (const auto& [id, rec] : m_clients) {
+				snapshot.push_back({ id, rec.on_frame, rec.user, rec.flags });
+			}
+		}
+
+		for (const auto& s : snapshot) {
+			ImGuiVRHelperPluginAPI::Frame perClient = baseFrame;
+			if (s.id == focused) {
+				perClient.flags |= 1u << 0;  // bit0 client_has_focus
+			} else {
+				perClient.flags &= ~(1u << 0);
+			}
+			// bit2 client_pointer_in_panel comes from the wand pointer,
+			// which is computed per-client in GetPointer rather than
+			// pre-baked into the frame. Leave at 0 for now.
+
+			if (s.on_frame) {
+				s.on_frame(&perClient, s.user);
+			}
+		}
 	}
 }

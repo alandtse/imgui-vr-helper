@@ -47,6 +47,13 @@ namespace ImGuiVRHelper
 
 		bool ImportLegacySettings(const char* json_blob) override;
 
+		// Helper-internal entry points (not part of the public API).
+
+		/// Build the per-frame Frame snapshot via Input::BuildFrame and
+		/// invoke each registered client's on_frame callback. Called from
+		/// the helper's Present detour. `dt` is seconds since previous call.
+		void DispatchFrame(float dt);
+
 	private:
 		HelperImpl() = default;
 
