@@ -7,6 +7,7 @@
 
 #include "pch.h"
 
+#include "ComboRecording.h"
 #include "Globals.h"
 #include "HelperImpl.h"
 #include "Input.h"
@@ -257,17 +258,16 @@ namespace ImGuiVRHelper
 	}
 
 	void HelperImpl::StartComboRecording(uint32_t client_id, const char* label,
-		ImGuiVRHelperPluginAPI::ComboRecordedFn /*on_done*/, void* /*user*/,
-		float timeout_s)
+		ImGuiVRHelperPluginAPI::ComboRecordedFn on_done, void* user, float timeout_s)
 	{
-		logs::info("StartComboRecording(client={}, label={}, timeout={}s) [stub]",
+		logs::info("StartComboRecording(client={}, label={}, timeout={}s)",
 			client_id, label ? label : "<null>", timeout_s);
-		// TODO: render modal capture overlay; latch input until done/timeout.
+		ComboRecording::Begin(client_id, label, on_done, user, timeout_s);
 	}
 
 	void HelperImpl::CancelComboRecording(uint32_t client_id)
 	{
-		logs::info("CancelComboRecording(client={}) [stub]", client_id);
+		ComboRecording::Cancel(client_id);
 	}
 
 	bool HelperImpl::IsOverlayVisible()
@@ -467,6 +467,14 @@ namespace ImGuiVRHelper
 		// player travels far enough.
 		OverlayDrag::UpdateFixedWorldPositioning();
 		OverlayDrag::Update();
+
+		// Combo recording: detect press/release edges, accumulate the
+		// recorded combo, deliver via callback when done. While active
+		// the helper takes self-focus so the modal is visible.
+		ComboRecording::Tick(dt);
+		if (ComboRecording::IsActive() && m_self_client_id != 0) {
+			RequestFocus(m_self_client_id);
+		}
 
 		// Self-toggle combo (default: Both kBY). When fired, flip the
 		// helper's settings UI visibility. The combo machinery latches

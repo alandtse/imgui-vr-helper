@@ -5,6 +5,7 @@
 
 #include "SettingsUI.h"
 
+#include "ComboRecording.h"
 #include "Globals.h"
 #include "Overlay.h"
 
@@ -155,7 +156,9 @@ namespace ImGuiVRHelper::SettingsUI
 	{
 		if (!g_ctx)
 			return false;
-		if (!g_visible)
+		// Render whenever either the settings window or the combo recording
+		// modal is up. The modal can fire from any client at any time.
+		if (!g_visible && !ComboRecording::IsActive())
 			return false;
 
 		ImGui::SetCurrentContext(g_ctx);
@@ -190,7 +193,10 @@ namespace ImGuiVRHelper::SettingsUI
 
 		ImGui_ImplDX11_NewFrame();
 		ImGui::NewFrame();
-		RenderWindow();
+		if (g_visible) {
+			RenderWindow();
+		}
+		ComboRecording::RenderModal();
 		ImGui::Render();
 		return true;
 	}
