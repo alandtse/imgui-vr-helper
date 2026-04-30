@@ -93,6 +93,14 @@ namespace ImGuiVRHelper
 		/// reaches us.
 		void OnKeyboardToggle();
 
+		/// True iff VR controller input should be intercepted from the
+		/// game this frame — i.e. some helper UI is up and consuming
+		/// trigger / grip / stick events. The PollInputDevices thunk
+		/// swallows controller events when this returns true so menu
+		/// clicks don't also fire bows / scroll thumbsticks don't move
+		/// the player camera. Mirrors SCS Menu::ShouldSwallowInput.
+		bool ShouldSwallowInput() const;
+
 	private:
 		HelperImpl() = default;
 

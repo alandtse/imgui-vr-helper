@@ -228,12 +228,33 @@ namespace ImGuiVRHelper::Input
 		}
 
 		// Thumbstick axis: live update.
-		if (thumbstickX != 0.0f || thumbstickY != 0.0f) {
-			const size_t thumbIdx = static_cast<size_t>(
-				isPrimary ? RE::ControllerRole::Primary : RE::ControllerRole::Secondary);
-			target.thumbsticks[thumbIdx].x = thumbstickX;
-			target.thumbsticks[thumbIdx].y = thumbstickY;
-		}
+		//
+		// Two changes from the obvious version:
+		//
+		// 1. Always update, even on (0, 0). The previous "skip on zero"
+		//    branch caused stick values to LATCH at the last non-zero
+		//    reading: BSInputDeviceManager only fires a thumbstick event
+		//    when the value changes, so a stick that ends a sweep at
+		//    (0.5, 0) and then returns to (0, 0) over a frame Skyrim
+		//    didn't observe could be missed entirely. The cursor would
+		//    keep drifting at "release speed" forever.
+		//
+		// 2. Snap micro-deflections to zero before storing. Hardware
+		//    drift on most controllers sits at 0.05-0.15 of full
+		//    deflection; below that, treating the stick as released is
+		//    objectively correct and saves every consumer (cursor,
+		//    scroll, drag-depth) from re-applying the same deadzone.
+		//    Threshold is fixed at 0.05 — settings.mouseDeadzone is the
+		//    USER-tunable threshold for *cursor speed scaling*, kept
+		//    higher (default 0.2) so the cursor only moves on
+		//    intentional pushes.
+		const size_t thumbIdx = static_cast<size_t>(
+			isPrimary ? RE::ControllerRole::Primary : RE::ControllerRole::Secondary);
+		constexpr float kHardwareDriftFloor = 0.05f;
+		const float snappedX = (std::abs(thumbstickX) < kHardwareDriftFloor) ? 0.0f : thumbstickX;
+		const float snappedY = (std::abs(thumbstickY) < kHardwareDriftFloor) ? 0.0f : thumbstickY;
+		target.thumbsticks[thumbIdx].x = snappedX;
+		target.thumbsticks[thumbIdx].y = snappedY;
 	}
 
 	void InvalidateHandedness()

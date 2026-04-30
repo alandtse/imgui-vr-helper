@@ -295,19 +295,30 @@ namespace ImGuiVRHelper
 	uint32_t HelperImpl::GetFocusedClientId()
 	{
 		std::scoped_lock lk{ m_mutex };
-		// Fall back to the first registered client when nobody has
-		// explicitly requested focus. Avoids a "must call RequestFocus"
-		// boilerplate on simple single-client setups.
+		// 0 means "nobody is focused, do not display anything." Earlier
+		// versions fell back to the first registered client to save
+		// boilerplate, but that broke the helper's own toggle: closing
+		// the settings UI calls ReleaseFocus(self) -> m_focused_client = 0,
+		// and the fallback would then re-elect self -> OverlayManager
+		// kept calling ShowOverlay -> the menu stayed on screen forever.
+		// Clients (including the helper's self-client) MUST call
+		// RequestFocus to be displayed.
 		if (m_focused_client != 0 && m_clients.contains(m_focused_client)) {
 			return m_focused_client;
-		}
-		if (!m_clients.empty()) {
-			return m_clients.begin()->first;
 		}
 		return 0;
 	}
 
 	bool HelperImpl::IsSelfUIVisible() { return SettingsUI::IsVisible(); }
+
+	bool HelperImpl::ShouldSwallowInput() const
+	{
+		// Any visible helper UI consumes VR controller input. Today that's
+		// just the settings window or the combo-recording modal; future
+		// external clients with focus would extend this with a "panel
+		// wants input" check.
+		return SettingsUI::IsVisible() || ComboRecording::IsActive();
+	}
 
 	uint32_t HelperImpl::GetSelfClientId() const { return m_self_client_id; }
 

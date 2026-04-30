@@ -115,6 +115,11 @@ namespace ImGuiVRHelper::Hooks
 			static void thunk(RE::BSTEventSource<RE::InputEvent*>* a_dispatcher,
 				RE::InputEvent* const* a_events)
 			{
+				// Always feed the menu its input first, even when we're
+				// about to swallow the events from the game side. This is
+				// what lets ImGui see the trigger pull as a click while
+				// Skyrim sees nothing.
+				bool sawVRController = false;
 				if (a_events) {
 					for (auto* e = *a_events; e; e = e->next) {
 						const auto device = e->GetDevice();
@@ -135,6 +140,7 @@ namespace ImGuiVRHelper::Hooks
 
 						if (!IsVRControllerDevice(device))
 							continue;
+						sawVRController = true;
 
 						switch (e->GetEventType()) {
 						case RE::INPUT_EVENT_TYPE::kButton:
@@ -161,6 +167,20 @@ namespace ImGuiVRHelper::Hooks
 							break;
 						}
 					}
+				}
+
+				// Swallow controller input from the game while the helper
+				// is interactive — otherwise trigger pulls used to click
+				// menu buttons also fire bows / cast spells, scroll thumb
+				// drifts the player camera, etc. Pattern lifted from SCS
+				// (origin/vr_imgui src/Hooks.cpp:566-607): when the menu
+				// wants input, hand the original a dummy {nullptr} list.
+				// Non-VR-controller events pass through unchanged so the
+				// game still sees keyboard / gamepad / mouse / etc.
+				if (sawVRController && HelperImpl::GetSingleton().ShouldSwallowInput()) {
+					constexpr RE::InputEvent* const dummy[] = { nullptr };
+					func(a_dispatcher, dummy);
+					return;
 				}
 				func(a_dispatcher, a_events);
 			}
