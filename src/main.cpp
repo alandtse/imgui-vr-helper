@@ -41,6 +41,14 @@ namespace
 		if (!msg)
 			return;
 
+		// Diagnostic: log every message we receive so we can confirm what
+		// SKSE is actually dispatching. Logs at info level so it stays
+		// visible at default settings during the bring-up phase.
+		logs::info("SKSE message: type={} sender='{}' dataLen={}",
+			static_cast<uint32_t>(msg->type),
+			msg->sender ? msg->sender : "<null>",
+			msg->dataLen);
+
 		// Handshake from a client requesting our API surface.
 		if (msg->type == Message::kMessage_GetInterface &&
 			msg->dataLen >= sizeof(Message*)) {
