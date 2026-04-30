@@ -59,8 +59,14 @@ namespace ImGuiVRHelper
 
 		/// Returns the raw ID3D11Texture2D backing a client's panel, or
 		/// nullptr if the client doesn't exist or its texture isn't
-		/// allocated yet. Used by OverlayManager to feed the IVROverlay.
+		/// allocated yet. Used by InSceneOverlay to feed the eye-render
+		/// compositing pass.
 		ID3D11Texture2D* GetClientPanelTexture(uint32_t client_id);
+
+		/// Returns the currently-focused client_id, or 0 if no client
+		/// holds focus. Used by InSceneOverlay to pick which client's
+		/// panel to draw on each Submit.
+		uint32_t GetFocusedClientId();
 
 	private:
 		HelperImpl() = default;

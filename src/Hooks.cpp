@@ -15,7 +15,7 @@
 
 #include "Globals.h"
 #include "HelperImpl.h"
-#include "OverlayManager.h"
+#include "InSceneOverlay.h"
 
 #include <RE/R/Renderer.h>
 
@@ -109,9 +109,10 @@ namespace ImGuiVRHelper::Hooks
 				logs::info("IDXGISwapChain::Present detour installed (original={})",
 					reinterpret_cast<void*>(g_originalPresent));
 
-				// Initialize the OpenVR overlay handle now that BSOpenVR
-				// is up. Submission happens per-frame from DispatchFrame.
-				OverlayManager::Init();
+				// Install the IVRCompositor::Submit detour so the helper
+				// composites the focused client's panel into each eye
+				// render target. Universal across SteamVR + OpenComposite.
+				InSceneOverlay::Install();
 			}
 
 			static inline REL::Relocation<decltype(thunk)> func;

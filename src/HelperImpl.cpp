@@ -12,7 +12,6 @@
 #include "Input.h"
 #include "Overlay.h"
 #include "OverlayDrag.h"
-#include "OverlayManager.h"
 #include "WandPointing.h"
 #include "internal/VRUtils.h"
 
@@ -270,7 +269,11 @@ namespace ImGuiVRHelper
 
 	bool HelperImpl::IsOverlayVisible()
 	{
-		return OverlayManager::IsVisible();
+		// In v1 the helper renders whenever a client is registered and
+		// has focus. Show/hide is driven by client RequestFocus/ReleaseFocus.
+		// A future revision can add a separate "user has the menu open"
+		// gate driven by the helper's own toggle hotkey.
+		return GetFocusedClientId() != 0;
 	}
 
 	ID3D11Texture2D* HelperImpl::GetClientPanelTexture(uint32_t client_id)
@@ -282,6 +285,21 @@ namespace ImGuiVRHelper
 		if (!EnsureClientTextureLocked(it->second))
 			return nullptr;
 		return it->second.texture.get();
+	}
+
+	uint32_t HelperImpl::GetFocusedClientId()
+	{
+		std::scoped_lock lk{ m_mutex };
+		// Fall back to the first registered client when nobody has
+		// explicitly requested focus. Avoids a "must call RequestFocus"
+		// boilerplate on simple single-client setups.
+		if (m_focused_client != 0 && m_clients.contains(m_focused_client)) {
+			return m_focused_client;
+		}
+		if (!m_clients.empty()) {
+			return m_clients.begin()->first;
+		}
+		return 0;
 	}
 
 	void HelperImpl::RequestFocus(uint32_t client_id)
@@ -424,8 +442,12 @@ namespace ImGuiVRHelper
 			}
 		}
 
-		// After all clients have rendered into their panel textures,
-		// submit the focused client's texture to the IVROverlay handle.
-		OverlayManager::SubmitFrame(focused);
+		// Note: actual texture submission to the headset happens lazily
+		// from the IVRCompositor::Submit detour (InSceneOverlay), which
+		// fires once per eye per frame. Nothing to do here after dispatch.
+
+		// Keep Overlay::State::overlayVisible in sync with focus state so
+		// OverlayDrag::CanPerform sees the right value next frame.
+		overlayState.overlayVisible = (focused != 0);
 	}
 }
