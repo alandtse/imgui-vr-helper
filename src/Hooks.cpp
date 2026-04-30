@@ -99,6 +99,14 @@ namespace ImGuiVRHelper::Hooks
 			}
 		}
 
+		// DirectInput scan code for F2. Used as the default keyboard
+		// toggle for the helper's settings UI. Hardcoded for now —
+		// keyboard input is the only reliable way to reach the helper
+		// at the main menu, where VR controller buttons (BY/AX/trigger)
+		// drive menu navigation and may be consumed before reaching us.
+		// Future: make this user-configurable via the TOML config.
+		constexpr std::uint32_t kKeyboardToggleDIK = 0x3C;  // DIK_F2
+
 		struct PollInputDevices_t
 		{
 			static void thunk(RE::BSTEventSource<RE::InputEvent*>* a_dispatcher,
@@ -107,6 +115,21 @@ namespace ImGuiVRHelper::Hooks
 				if (a_events) {
 					for (auto* e = *a_events; e; e = e->next) {
 						const auto device = e->GetDevice();
+
+						// Keyboard fallback toggle (F2) — fires the same
+						// SettingsUI::Toggle path the controller combo
+						// uses, so it works at the main menu where
+						// controller buttons may be intercepted.
+						if (device == RE::INPUT_DEVICE::kKeyboard &&
+							e->GetEventType() == RE::INPUT_EVENT_TYPE::kButton) {
+							if (auto* btn = e->AsButtonEvent();
+								btn && btn->GetIDCode() == kKeyboardToggleDIK &&
+								btn->IsDown()) {
+								HelperImpl::GetSingleton().OnKeyboardToggle();
+							}
+							continue;
+						}
+
 						if (!IsVRControllerDevice(device))
 							continue;
 

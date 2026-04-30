@@ -85,6 +85,14 @@ namespace ImGuiVRHelper
 		/// completes. No-op if `n` == 0.
 		void RebindSelfToggle(const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n);
 
+		/// Called from the PollInputDevices thunk on a keyboard-toggle
+		/// key-down. Equivalent to firing the controller toggle combo —
+		/// flips the helper's settings-UI visibility and adjusts focus.
+		/// Exists because the main menu can swallow controller buttons
+		/// before they reach our combo matcher; keyboard input always
+		/// reaches us.
+		void OnKeyboardToggle();
+
 	private:
 		HelperImpl() = default;
 

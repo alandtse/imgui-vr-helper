@@ -346,16 +346,40 @@ namespace ImGuiVRHelper
 			nullptr,
 			ImGuiVRHelperPluginAPI::kClientFlag_None);
 
-		// Default toggle combo: Both controllers' kBY pressed simultaneously.
-		// Users can rebind once the combo recording UI lands.
+		// Default toggle combo: hold both grip buttons simultaneously.
+		// Grip is rarely consumed by Skyrim's main menu (which uses face
+		// buttons + trigger + stick), so it actually reaches our combo
+		// matcher. The previous default (kBY-on-both) collided with the
+		// main menu's BY = "back/cancel" handling and fired unreliably.
+		// kGrip matches kGripAlt too (Input.cpp folds Oculus's axis-2
+		// grip into the same button).
+		// Users can also use the keyboard toggle (default F2) which
+		// always reaches us regardless of menu state.
 		using namespace ImGuiVRHelperPluginAPI;
 		const InputCombo toggle_keys[] = {
-			InputCombo(InputDeviceType::Both, RE::BSOpenVRControllerDevice::Keys::kBY),
+			InputCombo(InputDeviceType::Both, RE::BSOpenVRControllerDevice::Keys::kGrip),
 		};
 		m_self_toggle_combo = RegisterCombo(m_self_client_id, toggle_keys, 1, 3.0f);
 
-		logs::info("Self-client registered: id={} toggle_combo={}",
+		logs::info("Self-client registered: id={} toggle_combo={} (grip+grip; F2 also toggles)",
 			m_self_client_id, m_self_toggle_combo);
+	}
+
+	void HelperImpl::OnKeyboardToggle()
+	{
+		// Mirrors the controller-combo path in DispatchFrame: flip
+		// visibility, then take focus on show / release on hide.
+		SettingsUI::Toggle();
+		const bool visible = SettingsUI::IsVisible();
+		logs::info("Keyboard toggle (F2): settings UI now {}",
+			visible ? "VISIBLE" : "hidden");
+		if (m_self_client_id == 0)
+			return;
+		if (visible) {
+			RequestFocus(m_self_client_id);
+		} else if (m_focused_client == m_self_client_id) {
+			ReleaseFocus(m_self_client_id);
+		}
 	}
 
 	void HelperImpl::RequestFocus(uint32_t client_id)
@@ -498,12 +522,15 @@ namespace ImGuiVRHelper
 			RequestFocus(m_self_client_id);
 		}
 
-		// Self-toggle combo (default: Both kBY). When fired, flip the
-		// helper's settings UI visibility. The combo machinery latches
-		// rising edges, so this fires once per held cycle.
+		// Self-toggle combo (default: Both grip buttons). When fired,
+		// flip the helper's settings UI visibility. The combo machinery
+		// latches rising edges, so this fires once per held cycle.
 		if (m_self_toggle_combo != 0 && ComboFired(m_self_toggle_combo)) {
 			SettingsUI::Toggle();
-			if (SettingsUI::IsVisible() && m_self_client_id != 0) {
+			const bool visible = SettingsUI::IsVisible();
+			logs::info("Controller toggle combo: settings UI now {}",
+				visible ? "VISIBLE" : "hidden");
+			if (visible && m_self_client_id != 0) {
 				RequestFocus(m_self_client_id);
 			} else if (m_self_client_id != 0 && m_focused_client == m_self_client_id) {
 				ReleaseFocus(m_self_client_id);
