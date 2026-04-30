@@ -149,6 +149,8 @@ namespace ImGuiVRHelper::SettingsUI
 
 	bool IsInitialized() { return g_ctx != nullptr; }
 
+	ImGuiContext* GetContext() { return g_ctx; }
+
 	void Toggle()
 	{
 		const bool wasVisible = g_visible;
@@ -176,30 +178,16 @@ namespace ImGuiVRHelper::SettingsUI
 		ImGuiIO& io = ImGui::GetIO();
 		io.DeltaTime = dt > 0.0f ? dt : 1.0f / 60.0f;
 
-		// Drive mouse position from the wand pointer when it's intersecting
-		// the panel. Trigger acts as left-click; this is the helper's own
-		// internal input plumbing — it doesn't go through the public
-		// GetPointer / FeedVREvent paths because the helper isn't a client
-		// of itself in that sense, just a renderer that lives in the same
-		// process.
-		auto& state = Overlay::State::GetSingleton();
-		if (state.wandState.isIntersecting) {
-			const float x = state.wandState.uvCoordinates.x * io.DisplaySize.x;
-			const float y = state.wandState.uvCoordinates.y * io.DisplaySize.y;
-			io.AddMousePosEvent(x, y);
-		} else {
-			io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
-		}
-
-		// Trigger → left mouse button (edge-detected from controller state).
-		static bool lastTriggerHeld = false;
-		const bool triggerHeld =
-			state.primaryControllerState[RE::BSOpenVRControllerDevice::Keys::kTrigger].isPressed ||
-			state.secondaryControllerState[RE::BSOpenVRControllerDevice::Keys::kTrigger].isPressed;
-		if (triggerHeld != lastTriggerHeld) {
-			io.AddMouseButtonEvent(0, triggerHeld);
-			lastTriggerHeld = triggerHeld;
-		}
+		// Mouse position / clicks / scroll come from SteamVR's overlay
+		// event queue, drained by OverlayManager::PumpOverlayEvents.
+		// SteamVR ray-casts the controller laser against the overlay's
+		// hit-test surface and dispatches VREvent_MouseMove with x/y in
+		// our texture's pixel space (because we set OverlayMouseScale
+		// to 1920×1080 at init). Trigger pull becomes
+		// VREvent_MouseButtonDown(Left). This bypasses our internal
+		// WandPointing math entirely — SteamVR knows where it placed
+		// the overlay better than we can reconstruct from our own
+		// transform calculations.
 
 		ImGui_ImplDX11_NewFrame();
 		ImGui::NewFrame();
