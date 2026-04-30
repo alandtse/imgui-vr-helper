@@ -152,16 +152,18 @@ namespace ImGuiVRHelper::Overlay
 
 	// ---- Singleton ------------------------------------------------------
 
-	/// Persist Settings to Data/SKSE/Plugins/ImGuiVRHelper.json. Safe to
+	/// Persist Settings to Data/SKSE/Plugins/ImGuiVRHelper.toml. Safe to
 	/// call any time after Globals::IsReady().
 	void SaveSettings();
 
-	/// Load Settings from Data/SKSE/Plugins/ImGuiVRHelper.json if it
+	/// Load Settings from Data/SKSE/Plugins/ImGuiVRHelper.toml if it
 	/// exists. Missing fields fall back to defaults; corrupt files log a
-	/// warning and leave defaults intact.
+	/// warning and leave defaults intact. If a legacy .json from a prior
+	/// helper version is present, its values are migrated and the .json
+	/// is removed on the way through.
 	void LoadSettings();
 
-	/// If the JSON config file doesn't exist on disk, write the current
+	/// If the TOML config file doesn't exist on disk, write the current
 	/// (default) Settings to it so the user has a discoverable file to
 	/// edit. Idempotent — silent if the file is already present.
 	void WriteDefaultsIfMissing();

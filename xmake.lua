@@ -24,12 +24,13 @@ add_rules("plugin.vsxmake.autoupdate")
 -- Runtime dependencies. Pinned versions resolved into xmake-requires.lock.
 add_requires("openvr")
 add_requires("imgui", { configs = { dx11 = true, win32 = true } })
-add_requires("nlohmann_json")
+add_requires("nlohmann_json") -- still needed for ImportLegacySettings (SCS-shaped blob)
+add_requires("toml++") -- helper's own settings file
 add_requires("directxtk") -- SimpleMath, used for matrix helpers in VRUtils
 
 target("ImGuiVRHelper")
 add_deps("commonlibsse-ng")
-add_packages("openvr", "imgui", "nlohmann_json", "directxtk")
+add_packages("openvr", "imgui", "nlohmann_json", "toml++", "directxtk")
 
 set_basename("imgui-vr-helper")
 
