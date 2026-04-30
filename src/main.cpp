@@ -57,12 +57,16 @@ namespace
 			// resource allocation sees the user's configured offsets/scale.
 			ImGuiVRHelper::Overlay::LoadSettings();
 			break;
+
 		case SKSE::MessagingInterface::kPostPostLoad:
-			break;
-		case SKSE::MessagingInterface::kInputLoaded:
-			break;
-		case SKSE::MessagingInterface::kDataLoaded:
 			{
+				// Install hooks here, NOT at kDataLoaded — by the time
+				// kDataLoaded fires, Skyrim's renderer has already
+				// initialized (BSGraphics::Renderer::InitD3D has been
+				// called) and the thunk we'd write to that call site
+				// would never execute. kPostPostLoad fires before the
+				// renderer is up, so the thunk catches the original
+				// call. This matches SCS's XSEPlugin.cpp:81-86 pattern.
 				const auto info = VRDetection::Detect();
 				logs::info("OpenVR runtime detection:");
 				logs::info("  available={} compatible={} probing_ok={}",
@@ -77,13 +81,13 @@ namespace
 					info.hasSystemInterface, info.hasOverlayInterface,
 					info.hasCompositorInterface);
 
-				// Install the BSGraphics::Renderer::InitD3D thunk so we
-				// capture device/context/swapchain when the renderer
-				// initializes. Subsequent ports build on Globals::GetD3D().
 				ImGuiVRHelper::Hooks::Install();
-				// TODO: allocate overlay textures, install Present detour,
-				// set up in-scene fallback when overlay interface is missing.
 			}
+			break;
+
+		case SKSE::MessagingInterface::kInputLoaded:
+			break;
+		case SKSE::MessagingInterface::kDataLoaded:
 			break;
 		default:
 			break;
