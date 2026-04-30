@@ -40,4 +40,10 @@ namespace ImGuiVRHelper::OverlayTinter
 	/// InSceneOverlay's composite. Returns nullptr if EnsureResources
 	/// hasn't succeeded yet.
 	ID3D11ShaderResourceView* GetOutputSRV();
+
+	/// Underlying texture for the post-process output. OverlayManager
+	/// uses this when handing the tinted result to SteamVR via
+	/// IVROverlay::SetOverlayTexture (which wants a raw texture, not an
+	/// SRV). Returns nullptr if EnsureResources hasn't succeeded yet.
+	ID3D11Texture2D* GetOutputTexture();
 }

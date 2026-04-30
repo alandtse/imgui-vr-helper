@@ -13,6 +13,7 @@
 #include "Input.h"
 #include "Overlay.h"
 #include "OverlayDrag.h"
+#include "OverlayManager.h"
 #include "OverlayTinter.h"
 #include "SettingsUI.h"
 #include "WandPointing.h"
@@ -616,15 +617,11 @@ namespace ImGuiVRHelper
 			}
 		}
 
-		// Note: actual texture submission to the headset happens lazily
-		// from the IVRCompositor::Submit detour (InSceneOverlay), which
-		// fires once per eye per frame.
-
 		// Compute-shader tinting: copy focused client's panel through the
 		// OverlayTinter (with drag-highlight color when dragging) into a
-		// helper-owned post-process texture. InSceneOverlay samples that
-		// texture during eye composite when dragging. Skip when nothing's
-		// focused — saves a dispatch.
+		// helper-owned post-process texture. OverlayManager hands SteamVR
+		// the tinted output when dragging, the raw panel otherwise.
+		// Skip when nothing's focused — saves a dispatch.
 		if (focused != 0) {
 			if (auto* tex = GetClientPanelTexture(focused)) {
 				const bool dragging = overlayState.dragState.dragging &&
@@ -638,6 +635,13 @@ namespace ImGuiVRHelper
 				OverlayTinter::Dispatch(tex, tint);
 			}
 		}
+
+		// Hand the focused client's panel to SteamVR via IVROverlay. Must
+		// run AFTER per-client OnFrame (so panel pixels are current) and
+		// AFTER OverlayTinter::Dispatch (so the tinted version exists when
+		// dragging). OverlayManager handles its own lazy init and the
+		// hide/show decision based on attachMode + focus.
+		OverlayManager::Tick();
 
 		// Keep Overlay::State::overlayVisible in sync with focus state so
 		// OverlayDrag::CanPerform sees the right value next frame.

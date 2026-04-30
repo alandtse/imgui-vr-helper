@@ -201,4 +201,9 @@ void main(uint3 tid : SV_DispatchThreadID)
 	{
 		return g_res.initialized ? g_res.dstSRV.get() : nullptr;
 	}
+
+	ID3D11Texture2D* GetOutputTexture()
+	{
+		return g_res.initialized ? g_res.dstTex.get() : nullptr;
+	}
 }

@@ -6,8 +6,11 @@
 //       REL::RelocationID(75595, 77226).address() + REL::Relocate(0x50, 0x2BC));
 //
 // Captures the renderer's device/context/swapchain into Globals after
-// the original InitD3D returns. Future hook installations (Present detour,
-// eye-submit detour for InSceneOverlay) live in this file.
+// the original InitD3D returns, then installs the Present detour (used as
+// the per-frame tick) and the input poll thunk. The actual menu pixels
+// reach the headset via SteamVR's IVROverlay layer system, driven from
+// HelperImpl::DispatchFrame -> OverlayManager::Tick — no Submit/eye-render
+// hook required.
 
 #include "pch.h"
 
@@ -15,8 +18,8 @@
 
 #include "Globals.h"
 #include "HelperImpl.h"
-#include "InSceneOverlay.h"
 #include "Input.h"
+#include "OverlayManager.h"
 #include "SettingsUI.h"
 
 #include <RE/B/BSOpenVRControllerDevice.h>
@@ -202,10 +205,11 @@ namespace ImGuiVRHelper::Hooks
 				logs::info("IDXGISwapChain::Present detour installed (original={})",
 					reinterpret_cast<void*>(g_originalPresent));
 
-				// Install the IVRCompositor::Submit detour so the helper
-				// composites the focused client's panel into each eye
-				// render target. Universal across SteamVR + OpenComposite.
-				InSceneOverlay::Install();
+				// IVROverlay handle creation is deferred until the first
+				// OverlayManager::Tick — it requires BSOpenVR's vrContext
+				// to be populated, which doesn't happen until somewhat
+				// after InitD3D. Tick is idempotent and re-tries until it
+				// succeeds.
 
 				// Initialize the helper's own ImGui context for its
 				// settings panel; register the synthetic self-client so
