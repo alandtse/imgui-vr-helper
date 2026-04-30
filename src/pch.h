@@ -23,6 +23,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+#include <winrt/base.h>
 
 namespace logs = SKSE::log;
 using namespace std::literals;

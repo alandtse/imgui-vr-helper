@@ -7,8 +7,10 @@
 
 #include "pch.h"
 
+#include "Globals.h"
 #include "HelperImpl.h"
 #include "Input.h"
+#include "Overlay.h"
 
 namespace ImGuiVRHelper
 {
@@ -65,16 +67,87 @@ namespace ImGuiVRHelper
 		}
 	}
 
-	bool HelperImpl::GetPanel(uint32_t /*client_id*/,
+	bool HelperImpl::EnsureClientTextureLocked(ClientRecord& rec)
+	{
+		if (rec.texture && rec.rtv) {
+			return true;  // already allocated
+		}
+		if (!Globals::IsReady()) {
+			return false;  // device not yet captured
+		}
+		auto& d3d = Globals::GetD3D();
+		if (!d3d.device) {
+			return false;
+		}
+
+		D3D11_TEXTURE2D_DESC desc{};
+		desc.Width = static_cast<UINT>(Overlay::Config::kOverlayWidth);
+		desc.Height = static_cast<UINT>(Overlay::Config::kOverlayHeight);
+		desc.MipLevels = 1;
+		desc.ArraySize = 1;
+		desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		desc.SampleDesc.Count = 1;
+		desc.SampleDesc.Quality = 0;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+		desc.CPUAccessFlags = 0;
+		desc.MiscFlags = 0;
+
+		winrt::com_ptr<ID3D11Texture2D> tex;
+		HRESULT hr = d3d.device->CreateTexture2D(&desc, nullptr, tex.put());
+		if (FAILED(hr)) {
+			logs::warn("EnsureClientTextureLocked: CreateTexture2D failed (hr=0x{:x}) for client '{}'",
+				static_cast<unsigned>(hr), rec.name);
+			return false;
+		}
+
+		winrt::com_ptr<ID3D11RenderTargetView> rtv;
+		hr = d3d.device->CreateRenderTargetView(tex.get(), nullptr, rtv.put());
+		if (FAILED(hr)) {
+			logs::warn("EnsureClientTextureLocked: CreateRenderTargetView failed (hr=0x{:x}) for client '{}'",
+				static_cast<unsigned>(hr), rec.name);
+			return false;
+		}
+
+		winrt::com_ptr<ID3D11ShaderResourceView> srv;
+		hr = d3d.device->CreateShaderResourceView(tex.get(), nullptr, srv.put());
+		if (FAILED(hr)) {
+			logs::warn("EnsureClientTextureLocked: CreateShaderResourceView failed (hr=0x{:x}) for client '{}'",
+				static_cast<unsigned>(hr), rec.name);
+			return false;
+		}
+
+		rec.texture = std::move(tex);
+		rec.rtv = std::move(rtv);
+		rec.srv = std::move(srv);
+
+		logs::info("Allocated panel texture for client '{}' ({}x{} RGBA8)",
+			rec.name, desc.Width, desc.Height);
+		return true;
+	}
+
+	bool HelperImpl::GetPanel(uint32_t client_id,
 		ImGuiVRHelperPluginAPI::PanelHandle* out)
 	{
-		if (out) {
-			out->width = 0;
-			out->height = 0;
-			out->rtv = nullptr;
+		if (!out)
+			return false;
+		out->width = 0;
+		out->height = 0;
+		out->rtv = nullptr;
+
+		std::scoped_lock lk{ m_mutex };
+		auto it = m_clients.find(client_id);
+		if (it == m_clients.end())
+			return false;
+
+		if (!EnsureClientTextureLocked(it->second)) {
+			return false;
 		}
-		// TODO: return helper-owned RTV once Overlay.{h,cpp} lands.
-		return false;
+
+		out->width = static_cast<uint32_t>(Overlay::Config::kOverlayWidth);
+		out->height = static_cast<uint32_t>(Overlay::Config::kOverlayHeight);
+		out->rtv = it->second.rtv.get();
+		return true;
 	}
 
 	bool HelperImpl::GetPointer(uint32_t /*client_id*/, float* u, float* v,

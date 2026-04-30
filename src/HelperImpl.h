@@ -65,6 +65,11 @@ namespace ImGuiVRHelper
 			m_combos;
 		ImGuiVRHelperPluginAPI::ComboId m_next_combo_id = 1;
 		uint32_t m_focused_client = 0;
+
+		/// Allocate (or return existing) per-client overlay texture
+		/// resources. Returns true on success, false if D3D isn't ready
+		/// or texture creation failed. Must be called with m_mutex held.
+		bool EnsureClientTextureLocked(struct ClientRecord& rec);
 	};
 
 	struct ClientRecord
@@ -73,6 +78,14 @@ namespace ImGuiVRHelper
 		ImGuiVRHelperPluginAPI::OnFrameFn on_frame = nullptr;
 		void* user = nullptr;
 		uint32_t flags = 0;
+
+		// Helper-owned panel render target. Allocated lazily on the first
+		// GetPanel call after InitD3D has fired. Format is fixed at
+		// R8G8B8A8_UNORM; dimensions match Overlay::Config::kOverlayWidth/
+		// kOverlayHeight (1920×1080).
+		winrt::com_ptr<ID3D11Texture2D> texture;
+		winrt::com_ptr<ID3D11RenderTargetView> rtv;
+		winrt::com_ptr<ID3D11ShaderResourceView> srv;
 	};
 
 	struct ComboRecord
