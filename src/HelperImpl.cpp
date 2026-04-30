@@ -308,6 +308,27 @@ namespace ImGuiVRHelper
 
 	bool HelperImpl::IsSelfUIVisible() { return SettingsUI::IsVisible(); }
 
+	uint32_t HelperImpl::GetSelfClientId() const { return m_self_client_id; }
+
+	void HelperImpl::RebindSelfToggle(const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n)
+	{
+		if (!keys || n == 0)
+			return;
+		if (m_self_client_id == 0)
+			return;
+		// Drop the old combo by walking m_combos under the lock; replace
+		// with a fresh registration so the matcher's was_matched state
+		// resets (avoid spurious "fire" if user happens to be holding
+		// any of the new keys at registration time).
+		{
+			std::scoped_lock lk{ m_mutex };
+			m_combos.erase(m_self_toggle_combo);
+		}
+		m_self_toggle_combo = RegisterCombo(m_self_client_id, keys, n, 3.0f);
+		logs::info("Rebound self-toggle combo to {} keys (combo_id={})",
+			n, m_self_toggle_combo);
+	}
+
 	void HelperImpl::EnsureSelfClient()
 	{
 		if (m_self_client_id != 0)

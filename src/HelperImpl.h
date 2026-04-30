@@ -76,6 +76,15 @@ namespace ImGuiVRHelper
 		/// True iff the helper's own settings UI is currently visible.
 		bool IsSelfUIVisible();
 
+		/// client_id of the helper's synthetic self-client, or 0 before
+		/// EnsureSelfClient has run.
+		uint32_t GetSelfClientId() const;
+
+		/// Replace the self-toggle combo with `keys` (length `n`). Used
+		/// by SettingsUI's "Rebind toggle" button after combo recording
+		/// completes. No-op if `n` == 0.
+		void RebindSelfToggle(const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n);
+
 	private:
 		HelperImpl() = default;
 

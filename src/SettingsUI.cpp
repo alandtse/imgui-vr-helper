@@ -7,6 +7,7 @@
 
 #include "ComboRecording.h"
 #include "Globals.h"
+#include "HelperImpl.h"
 #include "Overlay.h"
 
 namespace ImGuiVRHelper::SettingsUI
@@ -73,6 +74,15 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::SliderFloat("Mouse deadzone", &s.mouseDeadzone, 0.0f, 1.0f, "%.2f");
 				ImGui::SliderFloat("Auto-reset distance",
 					&s.autoResetDistance, 0.0f, 5000.0f, "%.0f units");
+
+				ImGui::Separator();
+				ImGui::TextUnformatted("Toggle hotkey: bound to a controller combo.");
+				if (ImGui::Button("Rebind toggle key")) {
+					auto& impl = HelperImpl::GetSingleton();
+					ComboRecording::Begin(impl.GetSelfClientId(), "ImGuiVRHelper toggle", +[](const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n, void* /*user*/) {
+							if (n == 0) return;  // user cancelled or timed out empty
+							HelperImpl::GetSingleton().RebindSelfToggle(keys, n); }, nullptr, 5.0f);
+				}
 			}
 
 			if (ImGui::CollapsingHeader("Diagnostics")) {
