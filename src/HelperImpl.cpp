@@ -15,6 +15,47 @@
 #include "WandPointing.h"
 #include "internal/VRUtils.h"
 
+#include <RE/B/BSOpenVRControllerDevice.h>
+
+namespace
+{
+	/// Returns true iff every key in the combo is currently held on the
+	/// expected device. Mirrors SCS's CheckCombo lambda: reads the live
+	/// per-controller state from Overlay::State, indexed by RE button key
+	/// codes. Keyboard/mouse/gamepad device types are unsupported here
+	/// (they need a Win32 input source we don't have yet).
+	bool MatchCombo(const std::vector<ImGuiVRHelperPluginAPI::InputCombo>& keys)
+	{
+		if (keys.empty())
+			return false;
+
+		namespace API = ImGuiVRHelperPluginAPI;
+		auto& state = ImGuiVRHelper::Overlay::State::GetSingleton();
+
+		for (const auto& k : keys) {
+			const uint32_t reKey = k.GetKey();
+			bool pressed = false;
+			switch (k.GetDevice()) {
+			case API::InputDeviceType::Both:
+				pressed = state.primaryControllerState[reKey].isPressed &&
+				          state.secondaryControllerState[reKey].isPressed;
+				break;
+			case API::InputDeviceType::Primary:
+				pressed = state.primaryControllerState[reKey].isPressed;
+				break;
+			case API::InputDeviceType::Secondary:
+				pressed = state.secondaryControllerState[reKey].isPressed;
+				break;
+			default:
+				return false;  // keyboard/mouse/gamepad not yet supported
+			}
+			if (!pressed)
+				return false;
+		}
+		return true;
+	}
+}
+
 namespace ImGuiVRHelper
 {
 	HelperImpl& HelperImpl::GetSingleton()
@@ -316,6 +357,20 @@ namespace ImGuiVRHelper
 
 		ImGuiVRHelperPluginAPI::Frame baseFrame;
 		Input::BuildFrame(baseFrame, dt);
+
+		// Combo matcher: walk all registered combos, latch rising edges.
+		// Held-but-already-matched combos do NOT re-fire — clients see one
+		// "fired" event per held cycle.
+		{
+			std::scoped_lock lk{ m_mutex };
+			for (auto& [id, combo] : m_combos) {
+				const bool matched = MatchCombo(combo.keys);
+				if (matched && !combo.was_matched) {
+					combo.latched = true;
+				}
+				combo.was_matched = matched;
+			}
+		}
 
 		// Snapshot the client list under the lock so we don't hold the
 		// mutex across a callback into client code (avoids deadlocks if a

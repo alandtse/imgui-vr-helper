@@ -98,6 +98,7 @@ namespace ImGuiVRHelper
 		uint32_t client_id = 0;
 		std::vector<ImGuiVRHelperPluginAPI::InputCombo> keys;
 		float timeout_s = 0.0f;
-		bool latched = false;
+		bool latched = false;      ///< edge-fired, cleared on read
+		bool was_matched = false;  ///< previous-frame match, for rising edge detection
 	};
 }
