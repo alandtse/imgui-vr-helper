@@ -12,6 +12,8 @@
 #include "Input.h"
 #include "Overlay.h"
 #include "OverlayManager.h"
+#include "WandPointing.h"
+#include "internal/VRUtils.h"
 
 namespace ImGuiVRHelper
 {
@@ -151,7 +153,7 @@ namespace ImGuiVRHelper
 		return true;
 	}
 
-	bool HelperImpl::GetPointer(uint32_t /*client_id*/, float* u, float* v,
+	bool HelperImpl::GetPointer(uint32_t client_id, float* u, float* v,
 		uint32_t* device_idx)
 	{
 		if (u)
@@ -160,8 +162,24 @@ namespace ImGuiVRHelper
 			*v = 0.0f;
 		if (device_idx)
 			*device_idx = 0;
-		// TODO: return wand intersection once WandPointing.cpp lands.
-		return false;
+
+		{
+			std::scoped_lock lk{ m_mutex };
+			if (!m_clients.contains(client_id))
+				return false;
+		}
+
+		const auto& wand = Overlay::State::GetSingleton().wandState;
+		if (!wand.isIntersecting)
+			return false;
+
+		if (u)
+			*u = wand.uvCoordinates.x;
+		if (v)
+			*v = wand.uvCoordinates.y;
+		if (device_idx)
+			*device_idx = wand.controllerIndex;
+		return true;
 	}
 
 	ImGuiVRHelperPluginAPI::ComboId HelperImpl::RegisterCombo(uint32_t client_id,
@@ -254,6 +272,36 @@ namespace ImGuiVRHelper
 
 	void HelperImpl::DispatchFrame(float dt)
 	{
+		// Update the wand-pointer intersection once per tick. The result
+		// lives on Overlay::State::wandState and is consumed by GetPointer
+		// (per-client) and by Frame.flags bit 2 (client_pointer_in_panel).
+		auto& overlayState = Overlay::State::GetSingleton();
+		const auto& s = overlayState.settings;
+		if (s.enableWandPointing) {
+			namespace API = ImGuiVRHelperPluginAPI;
+			// Pointer hand: opposite of attached when controller-attached;
+			// otherwise the primary hand.
+			API::InputDeviceType pointer;
+			if (s.attachMode == Overlay::AttachMode::ControllerOnly ||
+				s.attachMode == Overlay::AttachMode::Both) {
+				pointer = (s.attachController == API::InputDeviceType::Primary) ?
+				              API::InputDeviceType::Secondary :
+				              API::InputDeviceType::Primary;
+			} else {
+				pointer = API::InputDeviceType::Primary;
+			}
+			const auto idx = Util::GetControllerIndexForDevice(
+				pointer, overlayState.lastKnownLeftHandedMode);
+			if (idx != vr::k_unTrackedDeviceIndexInvalid) {
+				ImVec2 uv;
+				WandPointing::ComputeIntersection(idx, uv);
+			} else {
+				overlayState.wandState.isIntersecting = false;
+			}
+		} else {
+			overlayState.wandState.isIntersecting = false;
+		}
+
 		ImGuiVRHelperPluginAPI::Frame baseFrame;
 		Input::BuildFrame(baseFrame, dt);
 
@@ -278,19 +326,21 @@ namespace ImGuiVRHelper
 			}
 		}
 
-		for (const auto& s : snapshot) {
-			ImGuiVRHelperPluginAPI::Frame perClient = baseFrame;
-			if (s.id == focused) {
-				perClient.flags |= 1u << 0;  // bit0 client_has_focus
-			} else {
-				perClient.flags &= ~(1u << 0);
-			}
-			// bit2 client_pointer_in_panel comes from the wand pointer,
-			// which is computed per-client in GetPointer rather than
-			// pre-baked into the frame. Leave at 0 for now.
+		const bool wandHit = overlayState.wandState.isIntersecting;
 
-			if (s.on_frame) {
-				s.on_frame(&perClient, s.user);
+		for (const auto& sn : snapshot) {
+			ImGuiVRHelperPluginAPI::Frame perClient = baseFrame;
+			if (sn.id == focused) {
+				perClient.flags |= 1u << 0;  // bit0 client_has_focus
+				if (wandHit) {
+					perClient.flags |= 1u << 2;  // bit2 client_pointer_in_panel
+				}
+			} else {
+				perClient.flags &= ~((1u << 0) | (1u << 2));
+			}
+
+			if (sn.on_frame) {
+				sn.on_frame(&perClient, sn.user);
 			}
 		}
 
