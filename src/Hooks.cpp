@@ -15,6 +15,7 @@
 
 #include "Globals.h"
 #include "HelperImpl.h"
+#include "OverlayManager.h"
 
 #include <RE/R/Renderer.h>
 
@@ -107,6 +108,10 @@ namespace ImGuiVRHelper::Hooks
 				g_originalPresent = DetourClassVTable<PresentFn>(swapchain, 8, &hk_Present);
 				logs::info("IDXGISwapChain::Present detour installed (original={})",
 					reinterpret_cast<void*>(g_originalPresent));
+
+				// Initialize the OpenVR overlay handle now that BSOpenVR
+				// is up. Submission happens per-frame from DispatchFrame.
+				OverlayManager::Init();
 			}
 
 			static inline REL::Relocation<decltype(thunk)> func;

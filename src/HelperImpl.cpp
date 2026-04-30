@@ -11,6 +11,7 @@
 #include "HelperImpl.h"
 #include "Input.h"
 #include "Overlay.h"
+#include "OverlayManager.h"
 
 namespace ImGuiVRHelper
 {
@@ -209,7 +210,18 @@ namespace ImGuiVRHelper
 
 	bool HelperImpl::IsOverlayVisible()
 	{
-		return false;
+		return OverlayManager::IsVisible();
+	}
+
+	ID3D11Texture2D* HelperImpl::GetClientPanelTexture(uint32_t client_id)
+	{
+		std::scoped_lock lk{ m_mutex };
+		auto it = m_clients.find(client_id);
+		if (it == m_clients.end())
+			return nullptr;
+		if (!EnsureClientTextureLocked(it->second))
+			return nullptr;
+		return it->second.texture.get();
 	}
 
 	void HelperImpl::RequestFocus(uint32_t client_id)
@@ -281,5 +293,9 @@ namespace ImGuiVRHelper
 				s.on_frame(&perClient, s.user);
 			}
 		}
+
+		// After all clients have rendered into their panel textures,
+		// submit the focused client's texture to the IVROverlay handle.
+		OverlayManager::SubmitFrame(focused);
 	}
 }

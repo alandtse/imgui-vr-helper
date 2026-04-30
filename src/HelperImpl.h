@@ -54,6 +54,11 @@ namespace ImGuiVRHelper
 		/// the helper's Present detour. `dt` is seconds since previous call.
 		void DispatchFrame(float dt);
 
+		/// Returns the raw ID3D11Texture2D backing a client's panel, or
+		/// nullptr if the client doesn't exist or its texture isn't
+		/// allocated yet. Used by OverlayManager to feed the IVROverlay.
+		ID3D11Texture2D* GetClientPanelTexture(uint32_t client_id);
+
 	private:
 		HelperImpl() = default;
 
