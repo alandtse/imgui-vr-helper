@@ -100,6 +100,10 @@ namespace ImGuiVRHelper::Overlay
 		bool enableDragToReposition = false;
 		float autoResetDistance = 1000.0f;  ///< game units; 0 disables auto-reset
 		float mouseDeadzone = 0.1f;         ///< thumbstick deadzone, also used for drag-depth control
+
+		/// RGBA color blended into the overlay while it's being dragged.
+		/// Default: yellow at 30% alpha, matching SCS's visual feedback.
+		float dragHighlightColor[4] = { 1.0f, 1.0f, 0.0f, 0.3f };
 	};
 
 	// ---- Runtime state --------------------------------------------------
