@@ -144,6 +144,15 @@ namespace ImGuiVRHelper::Overlay
 
 	// ---- Singleton ------------------------------------------------------
 
+	/// Persist Settings to Data/SKSE/Plugins/ImGuiVRHelper.json. Safe to
+	/// call any time after Globals::IsReady().
+	void SaveSettings();
+
+	/// Load Settings from Data/SKSE/Plugins/ImGuiVRHelper.json if it
+	/// exists. Missing fields fall back to defaults; corrupt files log a
+	/// warning and leave defaults intact.
+	void LoadSettings();
+
 	class State
 	{
 	public:

@@ -18,6 +18,8 @@
 
 #include <RE/B/BSOpenVRControllerDevice.h>
 
+#include <nlohmann/json.hpp>
+
 namespace
 {
 	/// Returns true iff every key in the combo is currently held on the
@@ -368,10 +370,55 @@ namespace ImGuiVRHelper
 		ctx.system->TriggerHapticPulse(deviceIndex, 0, static_cast<unsigned short>(std::min<uint32_t>(duration_us, 65535u)));
 	}
 
-	bool HelperImpl::ImportLegacySettings(const char* /*json_blob*/)
+	bool HelperImpl::ImportLegacySettings(const char* json_blob)
 	{
-		// TODO: merge into helper's persistent JSON.
-		return true;
+		if (!json_blob)
+			return false;
+		try {
+			auto j = nlohmann::json::parse(json_blob);
+			// Merge whatever the legacy client gave us into Overlay::State's
+			// settings. Each Settings field uses .value() with the current
+			// in-memory default as fallback, so unknown / missing keys are
+			// silently skipped.
+			auto& s = Overlay::State::GetSingleton().settings;
+			if (j.contains("VRMenuScale"))
+				s.menuScale = j["VRMenuScale"];
+			if (j.contains("VRMenuPositioningMethod"))
+				s.positioningMethod = static_cast<Overlay::PositioningMethod>(
+					j["VRMenuPositioningMethod"].get<int>());
+			if (j.contains("attachMode"))
+				s.attachMode = static_cast<Overlay::AttachMode>(
+					j["attachMode"].get<int>());
+			if (j.contains("VRMenuAttachController"))
+				s.attachController = static_cast<ImGuiVRHelperPluginAPI::InputDeviceType>(
+					j["VRMenuAttachController"].get<int>());
+			if (j.contains("VRMenuOffsetX"))
+				s.hmdOffsetX = j["VRMenuOffsetX"];
+			if (j.contains("VRMenuOffsetY"))
+				s.hmdOffsetY = j["VRMenuOffsetY"];
+			if (j.contains("VRMenuOffsetZ"))
+				s.hmdOffsetZ = j["VRMenuOffsetZ"];
+			if (j.contains("VRMenuControllerOffsetX"))
+				s.controllerOffsetX = j["VRMenuControllerOffsetX"];
+			if (j.contains("VRMenuControllerOffsetY"))
+				s.controllerOffsetY = j["VRMenuControllerOffsetY"];
+			if (j.contains("VRMenuControllerOffsetZ"))
+				s.controllerOffsetZ = j["VRMenuControllerOffsetZ"];
+			if (j.contains("EnableWandPointing"))
+				s.enableWandPointing = j["EnableWandPointing"];
+			if (j.contains("EnableDragToReposition"))
+				s.enableDragToReposition = j["EnableDragToReposition"];
+			if (j.contains("VRMenuAutoResetDistance"))
+				s.autoResetDistance = j["VRMenuAutoResetDistance"];
+			if (j.contains("mouseDeadzone"))
+				s.mouseDeadzone = j["mouseDeadzone"];
+			Overlay::SaveSettings();
+			logs::info("ImportLegacySettings: merged {} keys, persisted to disk", j.size());
+			return true;
+		} catch (const std::exception& e) {
+			logs::warn("ImportLegacySettings parse error: {}", e.what());
+			return false;
+		}
 	}
 
 	void HelperImpl::FeedVREvent(uint32_t device, uint32_t key_code, bool pressed,

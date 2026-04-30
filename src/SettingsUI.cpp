@@ -138,7 +138,16 @@ namespace ImGuiVRHelper::SettingsUI
 
 	bool IsInitialized() { return g_ctx != nullptr; }
 
-	void Toggle() { g_visible = !g_visible; }
+	void Toggle()
+	{
+		const bool wasVisible = g_visible;
+		g_visible = !g_visible;
+		// Persist on every close — it's cheap (small JSON) and avoids
+		// silent loss of changes if Skyrim crashes before a graceful exit.
+		if (wasVisible && !g_visible) {
+			Overlay::SaveSettings();
+		}
+	}
 
 	bool IsVisible() { return g_visible; }
 

@@ -10,6 +10,7 @@
 #include "HelperImpl.h"
 #include "Hooks.h"
 #include "OpenVRDetection.h"
+#include "Overlay.h"
 
 #define IMGUI_VR_HELPER_STR_HELPER(x) #x
 #define IMGUI_VR_HELPER_STR(x) IMGUI_VR_HELPER_STR_HELPER(x)
@@ -52,6 +53,9 @@ namespace
 
 		switch (msg->type) {
 		case SKSE::MessagingInterface::kPostLoad:
+			// Load persisted settings as early as possible so InitD3D-time
+			// resource allocation sees the user's configured offsets/scale.
+			ImGuiVRHelper::Overlay::LoadSettings();
 			break;
 		case SKSE::MessagingInterface::kPostPostLoad:
 			break;
