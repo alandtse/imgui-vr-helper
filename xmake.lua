@@ -71,12 +71,25 @@ set_pcxxheader("src/pch.h")
 -- Auto-deploy on build. The helper looks at, in order:
 --   1. SkyrimVRPluginTargets — semicolon-separated list of Data folders
 --      (or mod-manager mod folders) for explicit override.
---   2. SkyrimVRPath — community convention: points at the SkyrimVR install
---      root (the folder that contains SkyrimVR.exe). The deploy step
---      appends "Data" to it.
+--   2. SkyrimVRPath — community env var. Conventionally points at the
+--      SkyrimVR install root (folder containing SkyrimVR.exe), but some
+--      setups point it at the Data folder directly. We accept both and
+--      probe for SkyrimVR.exe to disambiguate.
 --
 -- If neither is set, the deploy step is a no-op.
 after_build(function(target)
+    -- Resolve a SkyrimVRPath value to its Data folder, regardless of
+    -- whether the env var pointed at the install root or already at Data.
+    local function to_data_folder(p)
+        p = p:trim()
+        if os.isfile(path.join(p, "SkyrimVR.exe")) then
+            return path.join(p, "Data")
+        end
+        -- Already a Data folder (basename "Data", case-insensitive) —
+        -- or a mod-manager mod folder used as a virtual Data root.
+        return p
+    end
+
     local function collect_targets()
         local explicit = os.getenv("SkyrimVRPluginTargets")
         if explicit and explicit ~= "" then
@@ -91,7 +104,7 @@ after_build(function(target)
         end
         local vr_root = os.getenv("SkyrimVRPath")
         if vr_root and vr_root ~= "" then
-            return { path.join(vr_root:trim(), "Data") }
+            return { to_data_folder(vr_root) }
         end
         return {}
     end

@@ -36,28 +36,28 @@ namespace
 		}
 	}
 
-	void OnSKSEMessage(SKSE::MessagingInterface::Message* msg)
+	// Two listeners are registered below:
+	//   * OnSKSELifecycle: filter="SKSE", catches kPostLoad/kPostPostLoad/
+	//     kInputLoaded/kDataLoaded — what we actually act on.
+	//   * OnPluginMessage: wildcard filter, catches client handshakes
+	//     (kMessage_GetInterface) sent by SCS / other API consumers.
+	//
+	// We split them because passing nullptr as the sender filter to the
+	// proxy turned out NOT to be a true wildcard for SKSE-emitted
+	// messages — empirically it delivered plugin broadcasts but skipped
+	// SKSE's own lifecycle dispatches (sender="SKSE"). The single-arg
+	// RegisterListener overload defaults to filter="SKSE", which is the
+	// canonical pattern every other SKSE plugin uses for lifecycle.
+
+	void OnSKSELifecycle(SKSE::MessagingInterface::Message* msg)
 	{
 		if (!msg)
 			return;
 
-		// Diagnostic: log every message we receive so we can confirm what
-		// SKSE is actually dispatching. Logs at info level so it stays
-		// visible at default settings during the bring-up phase.
-		logs::info("SKSE message: type={} sender='{}' dataLen={}",
+		logs::info("SKSE lifecycle: type={} sender='{}' dataLen={}",
 			static_cast<uint32_t>(msg->type),
 			msg->sender ? msg->sender : "<null>",
 			msg->dataLen);
-
-		// Handshake from a client requesting our API surface.
-		if (msg->type == Message::kMessage_GetInterface &&
-			msg->dataLen >= sizeof(Message*)) {
-			auto* req = static_cast<Message*>(msg->data);
-			req->GetApiFunction = &GetApiFunction;
-			logs::info("Handshake from '{}' -> GetApiFunction installed",
-				msg->sender ? msg->sender : "<unknown>");
-			return;
-		}
 
 		switch (msg->type) {
 		case SKSE::MessagingInterface::kPostLoad:
@@ -107,6 +107,33 @@ namespace
 		}
 	}
 
+	void OnPluginMessage(SKSE::MessagingInterface::Message* msg)
+	{
+		if (!msg)
+			return;
+
+		// Skip SKSE-emitted lifecycle messages here — OnSKSELifecycle owns
+		// those. Without this guard we'd double-process if the wildcard
+		// filter happens to also deliver them.
+		if (msg->sender && std::string_view(msg->sender) == "SKSE") {
+			return;
+		}
+
+		logs::info("Plugin message: type={} sender='{}' dataLen={}",
+			static_cast<uint32_t>(msg->type),
+			msg->sender ? msg->sender : "<null>",
+			msg->dataLen);
+
+		// Handshake from a client requesting our API surface.
+		if (msg->type == Message::kMessage_GetInterface &&
+			msg->dataLen >= sizeof(Message*)) {
+			auto* req = static_cast<Message*>(msg->data);
+			req->GetApiFunction = &GetApiFunction;
+			logs::info("Handshake from '{}' -> GetApiFunction installed",
+				msg->sender ? msg->sender : "<unknown>");
+		}
+	}
+
 }
 
 SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
@@ -126,8 +153,18 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 	if (!messaging) {
 		SKSE::stl::report_and_fail("SKSE messaging interface unavailable"sv);
 	}
-	if (!messaging->RegisterListener(nullptr, OnSKSEMessage)) {
-		SKSE::stl::report_and_fail("failed to register SKSE message listener"sv);
+	// Single-arg overload internally sets sender filter = "SKSE", which is
+	// the only filter SKSE's dispatcher reliably matches against its own
+	// lifecycle messages (kPostLoad/kPostPostLoad/kInputLoaded/kDataLoaded).
+	if (!messaging->RegisterListener(OnSKSELifecycle)) {
+		SKSE::stl::report_and_fail("failed to register SKSE lifecycle listener"sv);
+	}
+	// Wildcard filter for client handshakes. OnPluginMessage skips
+	// sender=="SKSE" so the lifecycle handler stays the single source of
+	// truth for SKSE-emitted messages even if the wildcard also delivers
+	// them.
+	if (!messaging->RegisterListener(nullptr, OnPluginMessage)) {
+		SKSE::stl::report_and_fail("failed to register plugin message listener"sv);
 	}
 
 	logs::info("ImGuiVRHelper loaded");
