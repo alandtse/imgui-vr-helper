@@ -13,6 +13,7 @@
 #include "Input.h"
 #include "Overlay.h"
 #include "OverlayDrag.h"
+#include "OverlayTinter.h"
 #include "SettingsUI.h"
 #include "WandPointing.h"
 #include "internal/VRUtils.h"
@@ -569,7 +570,26 @@ namespace ImGuiVRHelper
 
 		// Note: actual texture submission to the headset happens lazily
 		// from the IVRCompositor::Submit detour (InSceneOverlay), which
-		// fires once per eye per frame. Nothing to do here after dispatch.
+		// fires once per eye per frame.
+
+		// Compute-shader tinting: copy focused client's panel through the
+		// OverlayTinter (with drag-highlight color when dragging) into a
+		// helper-owned post-process texture. InSceneOverlay samples that
+		// texture during eye composite when dragging. Skip when nothing's
+		// focused — saves a dispatch.
+		if (focused != 0) {
+			if (auto* tex = GetClientPanelTexture(focused)) {
+				const bool dragging = overlayState.dragState.dragging &&
+				                      overlayState.settings.enableDragToReposition;
+				const float tint[4] = {
+					dragging ? overlayState.settings.dragHighlightColor[0] : 0.0f,
+					dragging ? overlayState.settings.dragHighlightColor[1] : 0.0f,
+					dragging ? overlayState.settings.dragHighlightColor[2] : 0.0f,
+					dragging ? overlayState.settings.dragHighlightColor[3] : 0.0f,
+				};
+				OverlayTinter::Dispatch(tex, tint);
+			}
+		}
 
 		// Keep Overlay::State::overlayVisible in sync with focus state so
 		// OverlayDrag::CanPerform sees the right value next frame.

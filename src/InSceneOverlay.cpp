@@ -16,6 +16,7 @@
 #include "Globals.h"
 #include "HelperImpl.h"
 #include "Overlay.h"
+#include "OverlayTinter.h"
 #include "internal/VRUtils.h"
 
 #include <RE/B/BSOpenVR.h>
@@ -41,11 +42,14 @@ namespace ImGuiVRHelper::InSceneOverlay
 		// skyrim-community-shaders/package/Shaders/VR/InSceneOverlay.{vs,ps}.hlsl
 		// so the helper has no on-disk shader file dependency.
 
+		// Tint blending lives in OverlayTinter's compute shader pass (run
+		// once per frame on the focused client's panel before composite).
+		// Composite shaders here are pure pass-through.
+
 		constexpr const char* kVertexShader = R"(
-cbuffer DrawBuffer : register(b0)
+cbuffer MatrixBuffer : register(b0)
 {
 	matrix wvp;
-	float4 tint;
 };
 struct VS_INPUT
 {
@@ -67,11 +71,6 @@ PS_INPUT main(VS_INPUT input)
 )";
 
 		constexpr const char* kPixelShader = R"(
-cbuffer DrawBuffer : register(b0)
-{
-	matrix wvp;
-	float4 tint;
-};
 Texture2D shaderTexture : register(t0);
 SamplerState sampleType : register(s0);
 struct PS_INPUT
@@ -81,17 +80,13 @@ struct PS_INPUT
 };
 float4 main(PS_INPUT input) : SV_TARGET
 {
-	float4 c = shaderTexture.Sample(sampleType, input.uv);
-	// tint.a = blend factor toward tint.rgb. 0 = no tint (default).
-	c.rgb = lerp(c.rgb, tint.rgb, tint.a);
-	return c;
+	return shaderTexture.Sample(sampleType, input.uv);
 }
 )";
 
 		struct ConstantBufferData
 		{
 			Matrix wvp;
-			float tint[4];
 		};
 
 		struct Resources
@@ -494,7 +489,6 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 			ID3D11Buffer* cb = g_res.cb.get();
 			ctx->VSSetConstantBuffers(0, 1, &cb);
-			ctx->PSSetConstantBuffers(0, 1, &cb);
 
 			struct VT
 			{
@@ -573,7 +567,14 @@ float4 main(PS_INPUT input) : SV_TARGET
 		auto* rtv = GetEyeRTV(eye, targetTexture);
 		if (!rtv)
 			return;
-		auto* srv = GetMenuSRV(menuTex);
+
+		// While dragging, the OverlayTinter compute pass writes the
+		// tinted panel into its post-process texture each Present.
+		// Sample that instead so the drag highlight appears.
+		const bool dragging = overlayState.dragState.dragging && s.enableDragToReposition;
+		auto* srv = dragging ? OverlayTinter::GetOutputSRV() : GetMenuSRV(menuTex);
+		if (!srv)
+			srv = GetMenuSRV(menuTex);  // fallback if tinter not ready
 		if (!srv)
 			return;
 
@@ -604,14 +605,6 @@ float4 main(PS_INPUT input) : SV_TARGET
 		vp.MaxDepth = 1.0f;
 		ctx->RSSetViewports(1, &vp);
 
-		// Tint while dragging — visual feedback for grip-to-reposition.
-		// tint.a == 0 means "no tint" (regular rendering).
-		const bool dragging = overlayState.dragState.dragging && s.enableDragToReposition;
-		const float tintR = dragging ? s.dragHighlightColor[0] : 0.0f;
-		const float tintG = dragging ? s.dragHighlightColor[1] : 0.0f;
-		const float tintB = dragging ? s.dragHighlightColor[2] : 0.0f;
-		const float tintA = dragging ? s.dragHighlightColor[3] : 0.0f;
-
 		// HMD-attached pass.
 		if (s.attachMode == Overlay::AttachMode::HMDOnly ||
 			s.attachMode == Overlay::AttachMode::Both) {
@@ -627,10 +620,6 @@ float4 main(PS_INPUT input) : SV_TARGET
 			}
 			ConstantBufferData cb;
 			cb.wvp = (model * vpMat).Transpose();
-			cb.tint[0] = tintR;
-			cb.tint[1] = tintG;
-			cb.tint[2] = tintB;
-			cb.tint[3] = tintA;
 			DrawQuad(ctx, cb, srv);
 		}
 
@@ -664,10 +653,6 @@ float4 main(PS_INPUT input) : SV_TARGET
 					if (overlayNormal.Dot(toEye) > 0.0f) {
 						ConstantBufferData cb;
 						cb.wvp = (model * matrices.vpWorldSpace).Transpose();
-						cb.tint[0] = tintR;
-						cb.tint[1] = tintG;
-						cb.tint[2] = tintB;
-						cb.tint[3] = tintA;
 						DrawQuad(ctx, cb, srv);
 					}
 				}
