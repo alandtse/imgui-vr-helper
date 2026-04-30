@@ -47,6 +47,9 @@ namespace ImGuiVRHelper
 
 		bool ImportLegacySettings(const char* json_blob) override;
 
+		void FeedVREvent(uint32_t device, uint32_t key_code, bool pressed,
+			float thumbstick_x, float thumbstick_y) override;
+
 		// Helper-internal entry points (not part of the public API).
 
 		/// Build the per-frame Frame snapshot via Input::BuildFrame and

@@ -141,6 +141,29 @@ namespace ImGuiVRHelperPluginAPI
 		/// merges these into its own JSON store. One-shot; subsequent
 		/// imports are ignored.
 		virtual bool ImportLegacySettings(const char* json_blob) = 0;
+
+		// ---- Input ingestion -------------------------------------------
+
+		/// Push one VR controller event into the helper's input state.
+		/// Clients that own a PollInputDevices-style hook (e.g. SCS) call
+		/// this once per VR event to keep the helper's controller state
+		/// fresh; the helper then drives wand pointing, drag, and combo
+		/// matching off it.
+		///
+		/// Parameters:
+		///   - device:         RE::INPUT_DEVICE value (kVivePrimary,
+		///                     kOculusSecondary, etc.); cast-compatible
+		///                     with uint32_t for ABI stability.
+		///   - key_code:       RE::BSOpenVRControllerDevice::Keys value
+		///                     (kBY=1, kGrip=2, kXA=7, ...).
+		///   - pressed:        true on press, false on release.
+		///   - thumbstick_x/y: raw analog values [-1..1] for thumbstick
+		///                     events; pass 0 for button events.
+		///
+		/// A future revision will install the PollInputDevices hook
+		/// directly so clients can drop their own input plumbing.
+		virtual void FeedVREvent(uint32_t device, uint32_t key_code, bool pressed,
+			float thumbstick_x, float thumbstick_y) = 0;
 	};
 
 }  // namespace ImGuiVRHelperPluginAPI
