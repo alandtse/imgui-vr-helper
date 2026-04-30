@@ -1,0 +1,16 @@
+build/
+.xmake/
+.vs/
+.vscode/
+*.user
+*.pdb
+*.dll
+*.exp
+*.lib
+*.obj
+src/Version.h
+
+# Until lib/commonlibsse-ng is converted to a proper git submodule (when
+# this repo gets its own remote), keep its files out of any parent repo
+# that adds extern/imgui-vr-helper/ as a regular directory.
+lib/

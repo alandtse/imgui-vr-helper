@@ -1,0 +1,7 @@
+# Force LF line endings for all text files so the pre-commit
+# mixed-line-ending hook stays consistent across Windows / Linux / WSL.
+* text=auto eol=lf
+
+# Always use CRLF for batch / cmd files (Windows requires it).
+*.bat text eol=crlf
+*.cmd text eol=crlf
