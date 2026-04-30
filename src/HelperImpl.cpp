@@ -11,6 +11,7 @@
 #include "HelperImpl.h"
 #include "Input.h"
 #include "Overlay.h"
+#include "OverlayDrag.h"
 #include "OverlayManager.h"
 #include "WandPointing.h"
 #include "internal/VRUtils.h"
@@ -363,6 +364,12 @@ namespace ImGuiVRHelper
 
 		ImGuiVRHelperPluginAPI::Frame baseFrame;
 		Input::BuildFrame(baseFrame, dt);
+
+		// Drag state machine: lazy-init the fixed-world transform on first
+		// visible frame, run grip-to-drag if active, auto-reset when the
+		// player travels far enough.
+		OverlayDrag::UpdateFixedWorldPositioning();
+		OverlayDrag::Update();
 
 		// Combo matcher: walk all registered combos, latch rising edges.
 		// Held-but-already-matched combos do NOT re-fire — clients see one
