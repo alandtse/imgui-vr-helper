@@ -258,10 +258,22 @@ namespace ImGuiVRHelper
 		}
 	}
 
-	void HelperImpl::TriggerHaptic(uint32_t /*client_id*/, uint32_t /*haptic_token*/,
-		uint32_t /*duration_us*/, float /*frequency*/, float /*amplitude*/)
+	void HelperImpl::TriggerHaptic(uint32_t /*client_id*/, uint32_t haptic_token,
+		uint32_t duration_us, float /*frequency*/, float /*amplitude*/)
 	{
-		// TODO: route to OpenVR IVRSystem::TriggerHapticPulse.
+		// haptic_token is (tracked_device_index + 1); 0 means "no haptic".
+		// Frequency and amplitude are ignored — the legacy IVRSystem API
+		// only supports duration. SteamVR Input would give finer control,
+		// but that's a future API revision.
+		if (haptic_token == 0)
+			return;
+
+		Util::OpenVRContext ctx;
+		if (!ctx.IsValid())
+			return;
+
+		const auto deviceIndex = static_cast<vr::TrackedDeviceIndex_t>(haptic_token - 1);
+		ctx.system->TriggerHapticPulse(deviceIndex, 0, static_cast<unsigned short>(std::min<uint32_t>(duration_us, 65535u)));
 	}
 
 	bool HelperImpl::ImportLegacySettings(const char* /*json_blob*/)
