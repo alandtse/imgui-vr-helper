@@ -16,9 +16,14 @@
 #include "Globals.h"
 #include "HelperImpl.h"
 #include "InSceneOverlay.h"
+#include "Input.h"
 #include "SettingsUI.h"
 
+#include <RE/B/BSOpenVRControllerDevice.h>
+#include <RE/B/ButtonEvent.h>
+#include <RE/I/InputEvent.h>
 #include <RE/R/Renderer.h>
+#include <RE/T/ThumbstickEvent.h>
 
 #include <chrono>
 #include <dxgi.h>
@@ -71,6 +76,70 @@ namespace ImGuiVRHelper::Hooks
 
 			return g_originalPresent(This, SyncInterval, Flags);
 		}
+
+		// ---- BSInputDeviceManager::PollInputDevices thunk ---------------
+		//
+		// Walks the InputEvent linked list, feeds VR button/thumbstick
+		// events into Input::FeedVREvent so Overlay::State's controller
+		// state stays current. Chains to the original (and any other
+		// plugin's thunk), so nothing else is disturbed.
+
+		bool IsVRControllerDevice(RE::INPUT_DEVICE d)
+		{
+			switch (d) {
+			case RE::INPUT_DEVICE::kVivePrimary:
+			case RE::INPUT_DEVICE::kViveSecondary:
+			case RE::INPUT_DEVICE::kOculusPrimary:
+			case RE::INPUT_DEVICE::kOculusSecondary:
+			case RE::INPUT_DEVICE::kWMRPrimary:
+			case RE::INPUT_DEVICE::kWMRSecondary:
+				return true;
+			default:
+				return false;
+			}
+		}
+
+		struct PollInputDevices_t
+		{
+			static void thunk(RE::BSTEventSource<RE::InputEvent*>* a_dispatcher,
+				RE::InputEvent* const* a_events)
+			{
+				if (a_events) {
+					for (auto* e = *a_events; e; e = e->next) {
+						const auto device = e->GetDevice();
+						if (!IsVRControllerDevice(device))
+							continue;
+
+						switch (e->GetEventType()) {
+						case RE::INPUT_EVENT_TYPE::kButton:
+							{
+								if (auto* btn = e->AsButtonEvent()) {
+									Input::FeedVREvent(static_cast<uint32_t>(device),
+										btn->GetIDCode(),
+										btn->IsPressed(),
+										0.0f, 0.0f);
+								}
+								break;
+							}
+						case RE::INPUT_EVENT_TYPE::kThumbstick:
+							{
+								if (auto* ts = e->AsThumbstickEvent()) {
+									Input::FeedVREvent(static_cast<uint32_t>(device),
+										ts->GetIDCode(),
+										false,
+										ts->xValue, ts->yValue);
+								}
+								break;
+							}
+						default:
+							break;
+						}
+					}
+				}
+				func(a_dispatcher, a_events);
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
 
 		// ---- BSGraphics::Renderer::InitD3D thunk ------------------------
 
@@ -137,11 +206,17 @@ namespace ImGuiVRHelper::Hooks
 			return;
 		}
 
-		SKSE::AllocTrampoline(14);
+		SKSE::AllocTrampoline(28);
 
 		logs::info("Hooks::Install - writing BSGraphics::Renderer::InitD3D thunk");
 		// VR offset 77226 + 0x2BC matches the SCS Hooks.cpp install site for VR.
 		stl::write_thunk_call<BSGraphics_Renderer_Init_InitD3D>(
 			REL::RelocationID(75595, 77226).address() + REL::Relocate(0x50, 0x2BC));
+
+		logs::info("Hooks::Install - writing BSInputDeviceManager::PollInputDevices thunk");
+		// Same install site SCS uses; SKSE trampoline chains correctly when
+		// multiple plugins hook here.
+		stl::write_thunk_call<PollInputDevices_t>(
+			REL::RelocationID(67315, 68617).address() + REL::Relocate(0x7B, 0x7B, 0x81));
 	}
 }
