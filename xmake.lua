@@ -67,10 +67,16 @@ add_headerfiles("api/**.h")
 add_includedirs("src", "api")
 set_pcxxheader("src/pch.h")
 
--- Auto-deploy on build: set SkyrimPluginTargets to one or more paths
--- separated by ';' to copy the DLL + PDB into each Skyrim Data dir.
+-- Auto-deploy on build. Set SkyrimVRPluginTargets to one or more paths
+-- separated by ';' (each pointing at a Skyrim VR Data folder or a mod
+-- manager mod folder) to copy the DLL + PDB into each one.
+--
+-- Distinct from the more general SkyrimPluginTargets convention because
+-- this helper is VR-only — using a VR-scoped env var lets users keep one
+-- env var listing every Skyrim install they target with non-VR plugins
+-- and a separate one listing only the VR install(s) for this helper.
 after_build(function(target)
-    local deploy_dirs = os.getenv("SkyrimPluginTargets")
+    local deploy_dirs = os.getenv("SkyrimVRPluginTargets")
     if not deploy_dirs then
         return
     end

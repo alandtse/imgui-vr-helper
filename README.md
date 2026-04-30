@@ -59,8 +59,11 @@ cd imgui-vr-helper
 xmake
 ```
 
-Set the `SkyrimPluginTargets` environment variable to a semicolon-separated
-list of Skyrim Data directories to auto-deploy the built DLL.
+Set the `SkyrimVRPluginTargets` environment variable to a semicolon-separated
+list of Skyrim VR Data directories (or mod-manager mod folders) to auto-deploy
+the built DLL on every build. This is intentionally distinct from the more
+general `SkyrimPluginTargets` convention — the helper is VR-only, so its
+deploy targets shouldn't collide with non-VR plugins' deploy paths.
 
 ## Using ImGuiVRHelper from a client mod
 
