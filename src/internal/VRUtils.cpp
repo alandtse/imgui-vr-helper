@@ -56,6 +56,24 @@ namespace ImGuiVRHelper::Util
 		return transform;
 	}
 
+	vr::HmdMatrix34_t CreateControllerOverlayTransform(
+		float offsetX, float offsetY, float offsetZ,
+		float width, float height)
+	{
+		// Same shape SCS uses (Utils/VRUtils.cpp:CreateControllerOverlayTransform):
+		// width on m[0][0], height on m[1][1], identity Z, offset on the
+		// last column. SteamVR multiplies the result against the parent
+		// device pose internally.
+		vr::HmdMatrix34_t transform{};
+		transform.m[0][0] = width;
+		transform.m[0][3] = offsetX;
+		transform.m[1][1] = height;
+		transform.m[1][3] = offsetY;
+		transform.m[2][2] = 1.0f;
+		transform.m[2][3] = offsetZ;
+		return transform;
+	}
+
 	vr::TrackedDeviceIndex_t GetControllerIndexForDevice(InputDeviceType device, bool isLeftHanded)
 	{
 		OpenVRContext ctx;

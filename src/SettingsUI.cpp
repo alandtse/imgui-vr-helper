@@ -178,16 +178,129 @@ namespace ImGuiVRHelper::SettingsUI
 		ImGuiIO& io = ImGui::GetIO();
 		io.DeltaTime = dt > 0.0f ? dt : 1.0f / 60.0f;
 
-		// Mouse position / clicks / scroll come from SteamVR's overlay
-		// event queue, drained by OverlayManager::PumpOverlayEvents.
-		// SteamVR ray-casts the controller laser against the overlay's
-		// hit-test surface and dispatches VREvent_MouseMove with x/y in
-		// our texture's pixel space (because we set OverlayMouseScale
-		// to 1920×1080 at init). Trigger pull becomes
-		// VREvent_MouseButtonDown(Left). This bypasses our internal
-		// WandPointing math entirely — SteamVR knows where it placed
-		// the overlay better than we can reconstruct from our own
-		// transform calculations.
+		// Two cursor sources (matching SCS) — last-writer-wins per frame:
+		//
+		// 1. SteamVR overlay events drained by OverlayManager::PumpOverlayEvents
+		//    (laser pointer hit-test → VREvent_MouseMove with pixel coords).
+		// 2. Controller thumbstick deflection driving cursor delta. Belt
+		//    and suspenders — works on runtimes whose IVROverlay event
+		//    delivery is partial (notably OpenComposite). Mirrors SCS's
+		//    pattern in src/Features/VR.cpp:1670-1745.
+		//
+		// Buttons: trigger=left, grip=right, joystick-click/touchpad=middle.
+		// kBY=Tab, kXA=Enter — keyboard shortcuts for menu navigation.
+		// Edge-detected per controller so we only fire transitions.
+		auto& vrState = Overlay::State::GetSingleton();
+		const auto& settings = vrState.settings;
+
+		auto driveCursorAndScrollFrom = [&](const RE::VRControllerState& cursorCtl,
+											const RE::VRControllerState& scrollCtl,
+											size_t cursorThumbIdx, size_t scrollThumbIdx) {
+			// Cursor (SCS uses ~10 px/frame at full deflection).
+			constexpr float kMouseSpeed = 12.0f;
+			const float cx = cursorCtl.thumbsticks[cursorThumbIdx].x;
+			const float cy = cursorCtl.thumbsticks[cursorThumbIdx].y;
+			if (std::abs(cx) > settings.mouseDeadzone || std::abs(cy) > settings.mouseDeadzone) {
+				ImVec2 pos = io.MousePos;
+				if (pos.x < 0.0f || pos.x > io.DisplaySize.x ||
+					pos.y < 0.0f || pos.y > io.DisplaySize.y) {
+					// Cursor out of range / never set — center it so the
+					// first stick deflection doesn't teleport from -FLT_MAX.
+					pos.x = io.DisplaySize.x * 0.5f;
+					pos.y = io.DisplaySize.y * 0.5f;
+				}
+				pos.x += cx * kMouseSpeed;
+				pos.y -= cy * kMouseSpeed;  // stick up = cursor up
+				pos.x = std::clamp(pos.x, 0.0f, io.DisplaySize.x);
+				pos.y = std::clamp(pos.y, 0.0f, io.DisplaySize.y);
+				io.AddMousePosEvent(pos.x, pos.y);
+				io.MouseDrawCursor = true;
+			}
+
+			// Scroll: discrete tick when the other stick crosses 0.3
+			// accumulated deflection (SCS pattern, prevents 90Hz spam).
+			static float scrollAccumX = 0.0f;
+			static float scrollAccumY = 0.0f;
+			const float sx = scrollCtl.thumbsticks[scrollThumbIdx].x;
+			const float sy = scrollCtl.thumbsticks[scrollThumbIdx].y;
+			if (std::abs(sx) > settings.mouseDeadzone)
+				scrollAccumX += sx * 0.1f;
+			if (std::abs(sy) > settings.mouseDeadzone)
+				scrollAccumY += sy * 0.1f;
+			float wheelX = 0.0f, wheelY = 0.0f;
+			if (std::abs(scrollAccumX) > 0.3f) {
+				wheelX = scrollAccumX > 0 ? 1.0f : -1.0f;
+				scrollAccumX = 0.0f;
+			}
+			if (std::abs(scrollAccumY) > 0.3f) {
+				wheelY = scrollAccumY > 0 ? 1.0f : -1.0f;
+				scrollAccumY = 0.0f;
+			}
+			if (wheelX != 0.0f || wheelY != 0.0f) {
+				io.AddMouseWheelEvent(wheelX, wheelY);
+			}
+		};
+
+		// Pick which controller drives cursor vs scroll. When the menu is
+		// attached to a controller, that hand's stick is awkward to reach
+		// while holding the menu, so the OPPOSITE hand drives the cursor
+		// (SCS does this swap explicitly). Otherwise primary=cursor,
+		// secondary=scroll.
+		namespace API = ImGuiVRHelperPluginAPI;
+		const bool menuOnPrimary = (settings.attachMode == Overlay::AttachMode::ControllerOnly &&
+									settings.attachController == API::InputDeviceType::Primary);
+		if (menuOnPrimary) {
+			driveCursorAndScrollFrom(vrState.secondaryControllerState,
+				vrState.primaryControllerState, 1, 0);  // secondary stick=cursor, primary stick=scroll
+		} else {
+			driveCursorAndScrollFrom(vrState.primaryControllerState,
+				vrState.secondaryControllerState, 0, 1);
+		}
+
+		// Button → mouse/key edge-detector. Tracks per-controller per-key
+		// previous state so simultaneous presses on both hands don't
+		// double-fire.
+		struct ButtonMap
+		{
+			uint32_t reKey;
+			int imguiButton;  // -1 if this is a key event
+			ImGuiKey key;     // valid only when imguiButton == -1
+			bool shift;       // hold Shift while sending key
+		};
+		using K = RE::BSOpenVRControllerDevice::Keys;
+		static const ButtonMap kMappings[] = {
+			{ K::kTrigger, ImGuiMouseButton_Left, ImGuiKey_None, false },
+			// kGrip is the toggle combo when both controllers grip
+			// simultaneously, but a single-hand grip should still work as
+			// right-click. The toggle combo's matcher only fires on
+			// simultaneous-rising-edge so the overlap is benign.
+			{ K::kGrip, ImGuiMouseButton_Right, ImGuiKey_None, false },
+			{ K::kGripAlt, ImGuiMouseButton_Right, ImGuiKey_None, false },
+			{ K::kTouchpadClick, ImGuiMouseButton_Middle, ImGuiKey_None, false },
+			{ K::kJoystickTrigger, ImGuiMouseButton_Middle, ImGuiKey_None, false },
+			{ K::kBY, -1, ImGuiKey_Tab, true },
+			{ K::kXA, -1, ImGuiKey_Enter, false },
+		};
+		auto pumpButtons = [&](const RE::VRControllerState& ctlState, bool* prev) {
+			for (size_t i = 0; i < std::size(kMappings); ++i) {
+				const auto& m = kMappings[i];
+				const bool pressed = ctlState[m.reKey].isPressed;
+				if (pressed != prev[i]) {
+					if (m.imguiButton >= 0) {
+						io.AddMouseButtonEvent(m.imguiButton, pressed);
+					} else {
+						if (m.shift)
+							io.AddKeyEvent(ImGuiMod_Shift, pressed);
+						io.AddKeyEvent(m.key, pressed);
+					}
+					prev[i] = pressed;
+				}
+			}
+		};
+		static bool prevPrimary[std::size(kMappings)] = {};
+		static bool prevSecondary[std::size(kMappings)] = {};
+		pumpButtons(vrState.primaryControllerState, prevPrimary);
+		pumpButtons(vrState.secondaryControllerState, prevSecondary);
 
 		ImGui_ImplDX11_NewFrame();
 		ImGui::NewFrame();

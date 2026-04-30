@@ -181,7 +181,11 @@ next_event:;
 			g_warnedNoCleanOverlay = true;
 		}
 
-		const auto& overlayState = Overlay::State::GetSingleton();
+		// Non-const because the FixedWorld branch updates fw.initialized /
+		// fw.m on first show — we own the singleton and the mutation is
+		// frame-local, no thread sync needed (DispatchFrame is the sole
+		// caller).
+		auto& overlayState = Overlay::State::GetSingleton();
 		const auto& s = overlayState.settings;
 		const uint32_t focused = HelperImpl::GetSingleton().GetFocusedClientId();
 
@@ -216,15 +220,75 @@ next_event:;
 			}
 		}
 
-		// MVP: HMD-relative positioning only. Controller-relative and
-		// fixed-world come back in a follow-up commit; the helper-side
-		// state for both is preserved (Overlay::State::fixedWorld,
-		// Settings::positioningMethod) so reactivating them is a localized
-		// change.
-		vr::HmdMatrix34_t transform = Util::ComputeOverlayTransformFromHMD(
-			s.hmdOffsetX, s.hmdOffsetY, s.hmdOffsetZ);
-		ctx.overlay->SetOverlayTransformAbsolute(
-			g_handle, vr::TrackingUniverseStanding, &transform);
+		// Three positioning modes, matching SCS UpdateVROverlayPosition
+		// (origin/vr_imgui src/Features/VR.cpp:970-1108):
+		//
+		// 1. ControllerOnly: overlay parented to a tracked controller via
+		//    SetOverlayTransformTrackedDeviceRelative — moves with the hand.
+		// 2. HMDOnly (or Both for now) + HMDRelative: overlay glued to the
+		//    HMD pose, recomputed every frame.
+		// 3. HMDOnly (or Both) + FixedWorld: snapshot the HMD-relative
+		//    pose ONCE on first show / on transition into FixedWorld, then
+		//    keep submitting that fixed transform every frame so the
+		//    overlay stays put while the player can look around freely.
+		//    This is what makes the overlay actually usable — controllers
+		//    can aim at a static target.
+		//
+		// MVP for Both: treat as HMDOnly. Full Both-mode parity needs a
+		// second IVROverlay handle for the controller-attached copy and
+		// a duplicate texture submission; tracked as a follow-up.
+		auto& fw = overlayState.fixedWorld;
+		static int s_lastPositioningMethod = -1;
+		const int curPositioningMethod = static_cast<int>(s.positioningMethod);
+		const bool justSwitchedToFixed =
+			(s_lastPositioningMethod != curPositioningMethod) &&
+			(s.positioningMethod == Overlay::PositioningMethod::FixedWorld);
+		s_lastPositioningMethod = curPositioningMethod;
+
+		const bool controllerAttached = (s.attachMode == Overlay::AttachMode::ControllerOnly);
+		vr::TrackedDeviceIndex_t attachedControllerIdx = vr::k_unTrackedDeviceIndexInvalid;
+		if (controllerAttached) {
+			attachedControllerIdx = Util::GetControllerIndexForDevice(
+				s.attachController, overlayState.lastKnownLeftHandedMode);
+			if (attachedControllerIdx == vr::k_unTrackedDeviceIndexInvalid) {
+				// No matching controller online (e.g. one tracker dropped) —
+				// hide rather than render at an undefined pose.
+				ctx.overlay->HideOverlay(g_handle);
+				return;
+			}
+		}
+
+		if (controllerAttached) {
+			// Controller-relative: a 4x3 scale-and-translate matrix in the
+			// controller's local space. Util::CreateControllerOverlayTransform
+			// puts width/height on the diagonal and the offset on the last
+			// column — same shape as SCS uses.
+			vr::HmdMatrix34_t transform = Util::CreateControllerOverlayTransform(
+				s.controllerOffsetX, s.controllerOffsetY, s.controllerOffsetZ,
+				1.0f, 1.0f);  // basis identity; SetOverlayWidthInMeters does the scaling
+			ctx.overlay->SetOverlayTransformTrackedDeviceRelative(
+				g_handle, attachedControllerIdx, &transform);
+		} else if (s.positioningMethod == Overlay::PositioningMethod::FixedWorld) {
+			// Snap on first-show OR when user just flipped HMDRelative -> Fixed.
+			// Also re-snap if the saved matrix was zeroed somehow.
+			if (!fw.initialized || justSwitchedToFixed) {
+				vr::HmdMatrix34_t snap = Util::ComputeOverlayTransformFromHMD(
+					s.hmdOffsetX, s.hmdOffsetY, s.hmdOffsetZ);
+				fw.m = Util::HmdMatrix34ToMatrix(snap);
+				fw.initialized = true;
+				logs::info("OverlayManager: snapped fixed-world overlay to current HMD pose");
+			}
+			vr::HmdMatrix34_t transform = Util::MatrixToHmdMatrix34(fw.m);
+			ctx.overlay->SetOverlayTransformAbsolute(
+				g_handle, vr::TrackingUniverseStanding, &transform);
+		} else {
+			// HMDRelative: overlay glued to head pose every frame.
+			vr::HmdMatrix34_t transform = Util::ComputeOverlayTransformFromHMD(
+				s.hmdOffsetX, s.hmdOffsetY, s.hmdOffsetZ);
+			ctx.overlay->SetOverlayTransformAbsolute(
+				g_handle, vr::TrackingUniverseStanding, &transform);
+		}
+
 		ctx.overlay->SetOverlayWidthInMeters(g_handle, s.menuScale);
 
 		if (cleanOverlay) {

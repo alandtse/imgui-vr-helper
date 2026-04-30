@@ -44,6 +44,15 @@ namespace ImGuiVRHelper::Util
 	/// HMD-local offsets in meters. Returns identity if HMD pose is invalid.
 	vr::HmdMatrix34_t ComputeOverlayTransformFromHMD(float offsetX, float offsetY, float offsetZ);
 
+	/// Build a 3x4 transform suitable for SetOverlayTransformTrackedDeviceRelative:
+	/// width/height go on the first two diagonal entries, the offset on the
+	/// last column. SteamVR places the overlay at this transform in the
+	/// parent device's local space. Pass width=height=1.0 if you set the
+	/// physical size separately via SetOverlayWidthInMeters.
+	vr::HmdMatrix34_t CreateControllerOverlayTransform(
+		float offsetX, float offsetY, float offsetZ,
+		float width, float height);
+
 	/// Map InputDeviceType {Primary,Secondary} to an OpenVR tracked device
 	/// index, accounting for the player's handedness.
 	vr::TrackedDeviceIndex_t GetControllerIndexForDevice(InputDeviceType device, bool isLeftHanded);
