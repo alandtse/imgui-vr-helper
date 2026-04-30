@@ -12,15 +12,8 @@
 
 #pragma once
 
-struct ImGuiContext;
-
 namespace ImGuiVRHelper::SettingsUI
 {
-	/// Returns the ImGui context owned by this module, or nullptr before
-	/// Init has run. OverlayManager uses this to inject SteamVR overlay
-	/// input events (mouse move/click/scroll) into the right context
-	/// without relying on the global current-context pointer.
-	ImGuiContext* GetContext();
 	/// Allocate the ImGui context, init ImGui_ImplDX11. Idempotent.
 	/// Call after Globals::IsReady().
 	bool Init();

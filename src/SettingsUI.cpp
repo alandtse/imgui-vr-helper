@@ -149,8 +149,6 @@ namespace ImGuiVRHelper::SettingsUI
 
 	bool IsInitialized() { return g_ctx != nullptr; }
 
-	ImGuiContext* GetContext() { return g_ctx; }
-
 	void Toggle()
 	{
 		const bool wasVisible = g_visible;
@@ -178,38 +176,21 @@ namespace ImGuiVRHelper::SettingsUI
 		ImGuiIO& io = ImGui::GetIO();
 		io.DeltaTime = dt > 0.0f ? dt : 1.0f / 60.0f;
 
-		// Three cursor sources, last-writer-wins per frame:
-		//
-		// 1. SteamVR overlay events drained by OverlayManager::PumpOverlayEvents
-		//    (laser pointer hit-test → VREvent_MouseMove with pixel coords).
-		//    Native SteamVR free-feature; OpenComposite delivers partial
-		//    or no events here.
-		// 2. WandPointing → ray-quad intersection in our internal
-		//    transform model. Filled into Overlay::State::wandState by
-		//    HelperImpl::DispatchFrame each frame the wand intersects.
-		//    Provides a laser-pointer-like cursor on runtimes where (1)
-		//    is missing — gated on settings.enableWandPointing.
-		// 3. Controller thumbstick deflection driving cursor delta.
-		//    Bulletproof fallback. Mirrors SCS src/Features/VR.cpp:1670+.
+		// One cursor source, matching SCS exactly: thumbstick deflection
+		// drives cursor delta; trigger / grip / etc. drive button events.
+		// SCS does this in src/Features/VR.cpp:1670-1745 and nowhere else
+		// — no PollNextOverlayEvent for the menu, no WandPointing UV
+		// injection. The path is universal across SteamVR and
+		// OpenComposite, and adding alternate sources only invites
+		// last-writer-wins surprises. WandPointing still computes
+		// intersection state for the public GetPointer API (clients can
+		// read it), but the helper's own UI does not consume it.
 		//
 		// Buttons: trigger=left, grip=right, joystick-click/touchpad=middle.
 		// kBY=Tab, kXA=Enter — keyboard shortcuts for menu navigation.
 		// Edge-detected per controller so we only fire transitions.
 		auto& vrState = Overlay::State::GetSingleton();
 		const auto& settings = vrState.settings;
-
-		// (2) WandPointing: ImVec2 uvCoordinates is set by
-		// HelperImpl::DispatchFrame's WandPointing::ComputeIntersection.
-		// When the wand laser hits our overlay's internal panel model
-		// AND user has enableWandPointing on, project UV to pixel coords
-		// and feed as a mouse pos. Runs BEFORE thumbstick so a stick
-		// deflection can override a stale wand hit (last-writer-wins).
-		if (settings.enableWandPointing && vrState.wandState.isIntersecting) {
-			const float x = vrState.wandState.uvCoordinates.x * io.DisplaySize.x;
-			const float y = vrState.wandState.uvCoordinates.y * io.DisplaySize.y;
-			io.AddMousePosEvent(x, y);
-			io.MouseDrawCursor = true;
-		}
 
 		auto driveCursorAndScrollFrom = [&](const RE::VRControllerState& cursorCtl,
 											const RE::VRControllerState& scrollCtl,

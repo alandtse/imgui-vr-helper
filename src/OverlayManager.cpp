@@ -9,7 +9,6 @@
 #include "HelperImpl.h"
 #include "Overlay.h"
 #include "OverlayTinter.h"
-#include "SettingsUI.h"
 #include "internal/VRUtils.h"
 
 #include <RE/B/BSOpenVR.h>
@@ -70,97 +69,9 @@ namespace ImGuiVRHelper::OverlayManager
 		ctx.overlay->SetOverlayWidthInMeters(g_handle, 1.0f);
 		ctx.overlay->SetOverlayAlpha(g_handle, 1.0f);
 
-		// Tell SteamVR the texture is 1920×1080 so its laser-pointer
-		// hit-test can map ray-quad UV to pixel coordinates and emit
-		// VREvent_MouseMove with x/y in our texture's pixel space. Without
-		// this, mouse events deliver UV in [0,1] which we'd have to
-		// re-multiply ourselves — easier to let SteamVR do it.
-		vr::HmdVector2_t mouseScale{
-			static_cast<float>(Overlay::Config::kOverlayWidth),
-			static_cast<float>(Overlay::Config::kOverlayHeight),
-		};
-		ctx.overlay->SetOverlayMouseScale(g_handle, &mouseScale);
-
 		logs::info("OverlayManager: created IVROverlay handle 0x{:X} (key='{}')",
 			g_handle, key);
 		return true;
-	}
-
-	namespace
-	{
-		// Drains every pending overlay event for our handle and translates
-		// the relevant ones into ImGui IO calls on the helper's context.
-		// SCS does cursor + click via thumbstick + trigger (see VR.cpp
-		// 1670+); we do that too, plus we honor SteamVR's own pointer
-		// events when the user points the laser at the overlay. Both
-		// sources can drive the cursor; whichever moved last wins.
-		void PumpOverlayEvents(vr::IVROverlay* overlay, vr::VROverlayHandle_t handle)
-		{
-			if (!overlay || handle == vr::k_ulOverlayHandleInvalid)
-				return;
-			ImGuiContext* ctx = SettingsUI::GetContext();
-			if (!ctx)
-				return;
-			ImGuiContext* prev = ImGui::GetCurrentContext();
-			ImGui::SetCurrentContext(ctx);
-			ImGuiIO& io = ImGui::GetIO();
-
-			vr::VREvent_t event{};
-			while (overlay->PollNextOverlayEvent(handle, &event, sizeof(event))) {
-				switch (event.eventType) {
-				case vr::VREvent_MouseMove:
-					{
-						const float x = event.data.mouse.x;
-						// SteamVR uses bottom-left origin for overlay
-						// space; ImGui uses top-left. Flip Y so the
-						// cursor lands where the user expects.
-						const float y = io.DisplaySize.y - event.data.mouse.y;
-						io.AddMousePosEvent(x, y);
-						break;
-					}
-				case vr::VREvent_MouseButtonDown:
-				case vr::VREvent_MouseButtonUp:
-					{
-						const bool down = event.eventType == vr::VREvent_MouseButtonDown;
-						int imguiButton = 0;
-						switch (event.data.mouse.button) {
-						case vr::VRMouseButton_Left:
-							imguiButton = ImGuiMouseButton_Left;
-							break;
-						case vr::VRMouseButton_Right:
-							imguiButton = ImGuiMouseButton_Right;
-							break;
-						case vr::VRMouseButton_Middle:
-							imguiButton = ImGuiMouseButton_Middle;
-							break;
-						default:
-							goto next_event;
-						}
-						io.AddMouseButtonEvent(imguiButton, down);
-						break;
-					}
-				case vr::VREvent_Scroll:
-					// Older openvr.h (the one vendored with our
-					// CommonLibSSE-NG) collapses Discrete and Smooth
-					// scroll into a single VREvent_Scroll. Either way,
-					// xdelta/ydelta is the value to forward.
-					io.AddMouseWheelEvent(event.data.scroll.xdelta, event.data.scroll.ydelta);
-					break;
-				case vr::VREvent_FocusEnter:
-				case vr::VREvent_FocusLeave:
-					// Could plumb hover-leave events into ImGui later;
-					// for now ignore — ImGui handles its own hover.
-					break;
-				default:
-					break;
-				}
-next_event:;
-			}
-
-			if (prev != ctx) {
-				ImGui::SetCurrentContext(prev);
-			}
-		}
 	}
 
 	void Tick()
@@ -188,12 +99,6 @@ next_event:;
 		auto& overlayState = Overlay::State::GetSingleton();
 		const auto& s = overlayState.settings;
 		const uint32_t focused = HelperImpl::GetSingleton().GetFocusedClientId();
-
-		// Drain pending input events from SteamVR every frame, regardless
-		// of whether the overlay is visible — keeps the queue from
-		// growing while hidden, and lets us notice visibility changes
-		// SteamVR signals via FocusEnter/Leave.
-		PumpOverlayEvents(ctx.overlay, g_handle);
 
 		const bool wantShow = (focused != 0) &&
 		                      (s.attachMode != Overlay::AttachMode::None);
