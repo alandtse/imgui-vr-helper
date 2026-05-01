@@ -377,35 +377,18 @@ namespace ImGuiVRHelper
 			nullptr,
 			ImGuiVRHelperPluginAPI::kClientFlag_None);
 
-		// Default toggle combo: kBY (B/Y face button) on the SECONDARY
-		// controller. Single-button press, no two-handed coordination
-		// required, and crucially leaves both grip buttons free for
-		// drag-to-reposition. Matches one of upstream/dev's
-		// VRMenuOpenKeys defaults (src/Features/VR.h:220-222):
-		//
-		//   ButtonCombo::Secondary(Keys::kXA),
-		//   ButtonCombo::Secondary(Keys::kBY)
-		//
-		// (We pick BY rather than XA so users can rebind to XA later if
-		// they want both. Either is fine — both are secondary face
-		// buttons that don't conflict with weapon/spell use on the
-		// primary hand.)
-		//
-		// Previous defaults that didn't work:
-		//   - kBY on Both: collided with main-menu back/cancel handling.
-		//   - kGrip on Both: collided with the drag-to-reposition gesture.
-		//
-		// Users can also use the keyboard toggle (default F2) which
-		// always reaches us regardless of menu state, or rebind via the
-		// "Rebind toggle key" button in the helper's settings panel.
-		using namespace ImGuiVRHelperPluginAPI;
-		const InputCombo toggle_keys[] = {
-			InputCombo(InputDeviceType::Secondary, RE::BSOpenVRControllerDevice::Keys::kBY),
-		};
-		m_self_toggle_combo = RegisterCombo(m_self_client_id, toggle_keys, 1, 3.0f);
-
-		logs::info("Self-client registered: id={} toggle_combo={} (secondary BY; F2 also toggles)",
-			m_self_client_id, m_self_toggle_combo);
+		// No default controller toggle combo. SCS already binds many of
+		// the obvious face/grip combinations for its own menu, and every
+		// auto-default we've tried has bumped into a SCS or main-menu
+		// conflict (kBY-Both = main-menu back/cancel; kGrip-Both
+		// shadowed drag-to-reposition; Secondary kBY hijacked SCS's
+		// VRMenuOpenKeys). Default toggle is keyboard-only (Shift+F2)
+		// so users on a stock install can't accidentally collide with
+		// their other mods. Users who want a controller binding open
+		// the settings via Shift+F2 once and then click 'Rebind toggle
+		// key' to record any combo they want via ComboRecording.
+		logs::info("Self-client registered: id={} (toggle: Shift+F2; bind controller combo via settings)",
+			m_self_client_id);
 	}
 
 	void HelperImpl::OnKeyboardToggle()

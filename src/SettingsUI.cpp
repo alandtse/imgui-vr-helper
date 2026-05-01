@@ -41,7 +41,11 @@ namespace ImGuiVRHelper::SettingsUI
 
 				const char* methodLabels[] = { "HMD-relative", "Fixed in world" };
 				int methodIndex = static_cast<int>(s.positioningMethod);
-				if (ImGui::Combo("Positioning", &methodIndex, methodLabels, IM_ARRAYSIZE(methodLabels))) {
+				// Label deliberately differs from the enclosing
+				// CollapsingHeader("Positioning") — ImGui hashes the
+				// label into a widget ID, and two widgets in the same
+				// window with the same label collide.
+				if (ImGui::Combo("Positioning method", &methodIndex, methodLabels, IM_ARRAYSIZE(methodLabels))) {
 					s.positioningMethod = static_cast<Overlay::PositioningMethod>(methodIndex);
 				}
 
@@ -77,7 +81,8 @@ namespace ImGuiVRHelper::SettingsUI
 					&s.autoResetDistance, 0.0f, 5000.0f, "%.0f units");
 
 				ImGui::Separator();
-				ImGui::TextUnformatted("Toggle hotkey: bound to a controller combo.");
+				ImGui::TextUnformatted("Toggle hotkey: Shift+F2 (keyboard).");
+				ImGui::TextDisabled("Click below to bind a controller combo too.");
 				if (ImGui::Button("Rebind toggle key")) {
 					auto& impl = HelperImpl::GetSingleton();
 					ComboRecording::Begin(impl.GetSelfClientId(), "ImGuiVRHelper toggle", +[](const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n, void* /*user*/) {
