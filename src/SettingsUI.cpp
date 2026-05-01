@@ -157,13 +157,14 @@ namespace ImGuiVRHelper::SettingsUI
 
 	void Toggle()
 	{
-		const bool wasVisible = g_visible;
+		// Just flip the visibility flag. Focus management and settings
+		// persistence are owned by HelperImpl::DispatchFrame's
+		// SyncSelfFocus reconciler, which fires every frame and catches
+		// every close path (this Toggle, the X button on the ImGui
+		// window, programmatic visibility flips). Keeping Toggle a pure
+		// flag-flip keeps the close paths from each having their own
+		// version of the cleanup logic.
 		g_visible = !g_visible;
-		// Persist on every close — it's cheap (small JSON) and avoids
-		// silent loss of changes if Skyrim crashes before a graceful exit.
-		if (wasVisible && !g_visible) {
-			Overlay::SaveSettings();
-		}
 	}
 
 	bool IsVisible() { return g_visible; }

@@ -393,19 +393,12 @@ namespace ImGuiVRHelper
 
 	void HelperImpl::OnKeyboardToggle()
 	{
-		// Mirrors the controller-combo path in DispatchFrame: flip
-		// visibility, then take focus on show / release on hide.
 		SettingsUI::Toggle();
-		const bool visible = SettingsUI::IsVisible();
-		logs::info("Keyboard toggle (F2): settings UI now {}",
-			visible ? "VISIBLE" : "hidden");
-		if (m_self_client_id == 0)
-			return;
-		if (visible) {
-			RequestFocus(m_self_client_id);
-		} else if (m_focused_client == m_self_client_id) {
-			ReleaseFocus(m_self_client_id);
-		}
+		logs::info("Keyboard toggle (Shift+F2): settings UI now {}",
+			SettingsUI::IsVisible() ? "VISIBLE" : "hidden");
+		// Focus + SaveSettings handled by SyncSelfFocus reconciler
+		// in DispatchFrame — every close path goes through the same
+		// single source of truth.
 	}
 
 	void HelperImpl::RequestFocus(uint32_t client_id)
@@ -541,25 +534,53 @@ namespace ImGuiVRHelper
 		OverlayDrag::Update();
 
 		// Combo recording: detect press/release edges, accumulate the
-		// recorded combo, deliver via callback when done. While active
-		// the helper takes self-focus so the modal is visible.
+		// recorded combo, deliver via callback when done. The
+		// SyncSelfFocus reconciler below treats ComboRecording::IsActive()
+		// as part of the "self-active" predicate, so the modal pulls
+		// focus automatically without an explicit RequestFocus here.
 		ComboRecording::Tick(dt);
-		if (ComboRecording::IsActive() && m_self_client_id != 0) {
-			RequestFocus(m_self_client_id);
-		}
 
-		// Self-toggle combo (default: Both grip buttons). When fired,
-		// flip the helper's settings UI visibility. The combo machinery
-		// latches rising edges, so this fires once per held cycle.
+		// Self-toggle combo (only registered if the user binds one via
+		// the "Rebind toggle key" UI; default keyboard toggle is
+		// Shift+F2 in OnKeyboardToggle). The combo machinery latches
+		// rising edges, so this fires once per held cycle.
 		if (m_self_toggle_combo != 0 && ComboFired(m_self_toggle_combo)) {
 			SettingsUI::Toggle();
-			const bool visible = SettingsUI::IsVisible();
 			logs::info("Controller toggle combo: settings UI now {}",
-				visible ? "VISIBLE" : "hidden");
-			if (visible && m_self_client_id != 0) {
-				RequestFocus(m_self_client_id);
-			} else if (m_self_client_id != 0 && m_focused_client == m_self_client_id) {
+				SettingsUI::IsVisible() ? "VISIBLE" : "hidden");
+			// Focus state will be reconciled by the SyncSelfFocus block
+			// below — any path that flips SettingsUI visibility (combo,
+			// keyboard, ImGui's window-X-button, programmatic Toggle)
+			// goes through the same single source of truth.
+		}
+
+		// Self-focus reconciler. Single source of truth for "is the
+		// helper's settings UI active right now" → "should the
+		// self-client hold focus." Runs AFTER any path that might have
+		// flipped SettingsUI visibility this frame (keyboard hotkey in
+		// PollInputDevices, combo above, or ImGui's own X-button click
+		// during last frame's Render). Without this, clicking the
+		// window's X stops further input but leaves m_focused_client
+		// pointing at the self-client — InSceneOverlay would keep
+		// reading the stale panel texture and painting it to both
+		// eyes every frame, even though the user thinks it's closed.
+		if (m_self_client_id != 0) {
+			const bool selfActive =
+				SettingsUI::IsVisible() || ComboRecording::IsActive();
+			if (selfActive) {
+				if (m_focused_client != m_self_client_id) {
+					RequestFocus(m_self_client_id);
+				}
+			} else if (m_focused_client == m_self_client_id) {
 				ReleaseFocus(m_self_client_id);
+				// Persist on every close — cheap (small TOML), keeps
+				// edits safe against a crash before the user closes
+				// gracefully. Single SaveSettings call site so we
+				// can't miss a close path. (Toggle()'s old inline
+				// SaveSettings is now redundant; left a no-op there
+				// in case a future caller hits Toggle directly.)
+				Overlay::SaveSettings();
+				logs::info("Self-UI close detected; focus released, settings persisted");
 			}
 		}
 
