@@ -362,7 +362,12 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		SubmitDetour::FnType SubmitDetour::original = nullptr;
 
-		// Vtable slot 4 in IVRCompositor for Submit (per openvr.h order).
+		// IVRCompositor::Submit is vtable slot 5. Order in openvr.h is:
+		//   0 SetTrackingSpace        3 GetLastPoses
+		//   1 GetTrackingSpace        4 GetLastPoseForTrackedDeviceIndex
+		//   2 WaitGetPoses            5 Submit  <-- this one
+		// Matches upstream/dev:src/Features/VR/InSceneOverlay.cpp:607
+		// (`detour_vfunc<5, IVRCompositor_Submit>`).
 		// Using the same manual-detour helper as Hooks.cpp.
 		template <class FnPtr>
 		FnPtr DetourClassVTable(void* obj, std::size_t slot, FnPtr replacement)
@@ -529,9 +534,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 			return;
 		}
 
-		// Slot 4 is Submit in IVRCompositor (per openvr.h declaration order).
 		SubmitDetour::original = DetourClassVTable<SubmitDetour::FnType>(
-			compositor, 4, &SubmitDetour::thunk);
+			compositor, 5, &SubmitDetour::thunk);
 		g_hookInstalled = true;
 		logs::info("InSceneOverlay: IVRCompositor::Submit detour installed (original={})",
 			reinterpret_cast<void*>(SubmitDetour::original));
