@@ -128,17 +128,22 @@ namespace ImGuiVRHelper::WandPointing
 
 	void UpdateCursorFromWandPointing()
 	{
-		// Lifted from SCS VR::UpdateCursorFromWandPointing
-		// (origin/open_composite src/Features/VR/WandPointing.cpp:104-145).
+		// One-to-one port of upstream/dev:src/Features/VR/WandPointing.cpp
+		// :104-145 (VR::UpdateCursorFromWandPointing). Same control flow,
+		// same gating, same MouseDrawCursor / WantSetMousePos handling on
+		// both branches. Helper-side adaptation: use Overlay::State /
+		// Settings instead of the SCS VR class members.
 		auto& state = Overlay::State::GetSingleton();
 		const auto& s = state.settings;
 		if (!s.enableWandPointing)
 			return;
 
+		ImGuiIO& io = ImGui::GetIO();
+
 		namespace API = ImGuiVRHelperPluginAPI;
 
-		// Pick the pointing hand: when the menu is attached to a controller,
-		// the OTHER hand points; otherwise primary.
+		// Pointing hand: opposite of menu's attach hand (controller-attached
+		// modes), otherwise primary. Matches dev's selector.
 		API::InputDeviceType pointingDevice;
 		if (s.attachMode == Overlay::AttachMode::ControllerOnly ||
 			s.attachMode == Overlay::AttachMode::Both) {
@@ -158,22 +163,19 @@ namespace ImGuiVRHelper::WandPointing
 
 		ImVec2 uv;
 		const bool intersected = ComputeIntersection(controllerIndex, uv);
-		if (!intersected) {
-			return;  // ComputeIntersection already cleared isIntersecting
+		if (intersected) {
+			float screenX = uv.x * io.DisplaySize.x;
+			float screenY = uv.y * io.DisplaySize.y;
+			screenX = std::clamp(screenX, 0.0f, io.DisplaySize.x);
+			screenY = std::clamp(screenY, 0.0f, io.DisplaySize.y);
+			io.MousePos = ImVec2(screenX, screenY);
+			io.AddMousePosEvent(screenX, screenY);
+			io.MouseDrawCursor = true;
+			io.WantSetMousePos = true;
+		} else {
+			state.wandState.isIntersecting = false;
+			io.MouseDrawCursor = false;
+			io.WantSetMousePos = false;
 		}
-
-		// Project [0,1] UV into the overlay's pixel space and feed ImGui.
-		// Caller's responsibility to have already activated the right
-		// ImGui context (SettingsUI does this in Render before calling
-		// us via the DispatchFrame pipeline).
-		ImGuiIO& io = ImGui::GetIO();
-		float screenX = uv.x * io.DisplaySize.x;
-		float screenY = uv.y * io.DisplaySize.y;
-		screenX = std::clamp(screenX, 0.0f, io.DisplaySize.x);
-		screenY = std::clamp(screenY, 0.0f, io.DisplaySize.y);
-		io.MousePos = ImVec2(screenX, screenY);
-		io.AddMousePosEvent(screenX, screenY);
-		io.MouseDrawCursor = true;
-		io.WantSetMousePos = true;
 	}
 }

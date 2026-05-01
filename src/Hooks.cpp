@@ -13,7 +13,7 @@
 // — both runtimes route eye textures through Submit, and we render
 // directly into those eye buffers rather than asking SteamVR's IVROverlay
 // layer system to composite for us. This matches the canonical SCS path
-// on origin/open_composite.
+// on upstream/dev:src/Features/VR/InSceneOverlay.cpp.
 
 #include "pch.h"
 
