@@ -106,6 +106,32 @@ namespace ImGuiVRHelperPluginAPI
 	{
 		kClientFlag_None = 0,
 		kClientFlag_RequiresFocus = 1u << 0,  ///< only invoke on_frame when this client holds focus
+
+		/// Render this client's panel as a fully transparent, screen-space
+		/// overlay covering the entire eye viewport in BOTH eyes — instead
+		/// of as a 3D quad floating in front of the user.
+		///
+		/// Use cases: subtitle text positioned over an NPC's head, damage
+		/// numbers, world-locked 2D HUD elements where the client
+		/// computes screen-space coordinates from world-space positions.
+		///
+		/// Behavior:
+		///   - The panel RTV is the same 1920×1080 RGBA8 the helper hands
+		///     to all clients. The client should clear it transparent
+		///     (ImGui windows with NoBackground / alpha 0) and draw text
+		///     or shapes at the screen positions it wants to overlay.
+		///   - The helper composites the panel as a full-viewport
+		///     alpha-blended quad on each eye buffer, so transparent
+		///     pixels show the underlying scene unchanged.
+		///   - Same content goes to both eyes (no stereo offset). For
+		///     world-anchored elements, the client must project world
+		///     positions into screen space and place ImGui content
+		///     there itself.
+		///   - HUD clients are NOT subject to focus or attachMode
+		///     gating; they render every frame they exist. The focused
+		///     panel-mode client (if any) renders ON TOP of the HUD
+		///     layer as the 3D quad.
+		kClientFlag_HUDMode = 1u << 1,
 	};
 
 }  // namespace ImGuiVRHelperPluginAPI

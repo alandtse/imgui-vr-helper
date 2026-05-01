@@ -63,6 +63,23 @@ namespace ImGuiVRHelper
 		/// compositing pass.
 		ID3D11Texture2D* GetClientPanelTexture(uint32_t client_id);
 
+		/// Snapshot of all currently-registered HUD-mode clients
+		/// (kClientFlag_HUDMode set in their flags), returned as
+		/// (client_id, panel_texture) pairs. Both fields filled — the
+		/// texture is the result of EnsureClientTextureLocked, so it's
+		/// either a valid ID3D11Texture2D* or nullptr if D3D isn't
+		/// ready / texture creation failed. InSceneOverlay::RenderForEye
+		/// iterates this list and composites each as a full-viewport
+		/// alpha-blended quad before drawing the focused panel-mode
+		/// client. Iteration order matches registration order so HUD
+		/// layers stack predictably.
+		struct HUDClientSnapshot
+		{
+			uint32_t client_id;
+			ID3D11Texture2D* texture;
+		};
+		std::vector<HUDClientSnapshot> SnapshotHUDClients();
+
 		/// Returns the currently-focused client_id, or 0 if no client
 		/// holds focus. Used by InSceneOverlay to pick which client's
 		/// panel to draw on each Submit.

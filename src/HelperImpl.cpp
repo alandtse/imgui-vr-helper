@@ -291,6 +291,26 @@ namespace ImGuiVRHelper
 		return it->second.texture.get();
 	}
 
+	std::vector<HelperImpl::HUDClientSnapshot> HelperImpl::SnapshotHUDClients()
+	{
+		std::vector<HUDClientSnapshot> out;
+		std::scoped_lock lk{ m_mutex };
+		// Reserve once. Most setups have 0–1 HUD clients; bumping
+		// reserve to 4 covers the common multi-HUD case (subtitles +
+		// damage numbers + radar + ...) without reallocating.
+		out.reserve(4);
+		for (auto& [id, rec] : m_clients) {
+			if ((rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_HUDMode) == 0)
+				continue;
+			ID3D11Texture2D* tex = nullptr;
+			if (EnsureClientTextureLocked(rec)) {
+				tex = rec.texture.get();
+			}
+			out.push_back({ id, tex });
+		}
+		return out;
+	}
+
 	uint32_t HelperImpl::GetFocusedClientId()
 	{
 		std::scoped_lock lk{ m_mutex };

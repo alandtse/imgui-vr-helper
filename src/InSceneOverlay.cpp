@@ -541,6 +541,36 @@ float4 main(PS_INPUT input) : SV_TARGET
 			reinterpret_cast<void*>(SubmitDetour::original));
 	}
 
+	namespace
+	{
+		// Per-client SRV cache for HUD-mode panels. Keyed by texture
+		// pointer so we rebuild only when a client's RTV is reallocated.
+		// The single 'menuSRV' field above only handles the focused
+		// panel client; HUD clients need their own SRV slot each.
+		struct HUDSRVCache
+		{
+			ID3D11Texture2D* texture = nullptr;
+			winrt::com_ptr<ID3D11ShaderResourceView> srv;
+		};
+		std::unordered_map<uint32_t /*client_id*/, HUDSRVCache> g_hudSRVs;
+
+		ID3D11ShaderResourceView* GetOrCreateHUDSRV(uint32_t client_id, ID3D11Texture2D* tex)
+		{
+			if (!tex)
+				return nullptr;
+			auto& cache = g_hudSRVs[client_id];
+			if (cache.texture == tex && cache.srv)
+				return cache.srv.get();
+			cache.srv = nullptr;
+			if (FAILED(Globals::GetD3D().device->CreateShaderResourceView(tex, nullptr, cache.srv.put()))) {
+				logs::error("InSceneOverlay: failed to create HUD SRV for client_id={}", client_id);
+				return nullptr;
+			}
+			cache.texture = tex;
+			return cache.srv.get();
+		}
+	}
+
 	void RenderForEye(vr::EVREye eye, ID3D11Texture2D* targetTexture,
 		const vr::VRTextureBounds_t* bounds)
 	{
@@ -550,15 +580,30 @@ float4 main(PS_INPUT input) : SV_TARGET
 		auto& overlayState = Overlay::State::GetSingleton();
 		const auto& s = overlayState.settings;
 
-		// Visibility gate: skip the draw entirely if no client is registered
-		// or the helper isn't currently advertising overlay visibility.
+		// Two passes per eye:
+		//
+		// 1. HUD pass: every kClientFlag_HUDMode client gets composited as
+		//    a full-viewport alpha-blended quad. Always rendered, no
+		//    focus / attachMode gating — HUD content (subtitles, damage
+		//    numbers, world-anchored 2D labels) is meant to be persistent.
+		// 2. Panel pass: the focused (panel-mode) client gets rendered
+		//    as a 3D quad in head/world/controller space, gated by the
+		//    user's attachMode / positioningMethod settings.
+		//
+		// Either pass is allowed to be empty. If both are empty, we skip
+		// the whole frame.
 		const uint32_t focused = HelperImpl::GetSingleton().GetFocusedClientId();
-		if (focused == 0)
-			return;
-		auto* menuTex = HelperImpl::GetSingleton().GetClientPanelTexture(focused);
-		if (!menuTex)
-			return;
-		if (s.attachMode == Overlay::AttachMode::None)
+		auto hudClients = HelperImpl::GetSingleton().SnapshotHUDClients();
+
+		// Focused panel-mode client gate (existing semantics).
+		ID3D11Texture2D* menuTex = nullptr;
+		bool wantPanelPass = false;
+		if (focused != 0 && s.attachMode != Overlay::AttachMode::None) {
+			menuTex = HelperImpl::GetSingleton().GetClientPanelTexture(focused);
+			wantPanelPass = (menuTex != nullptr);
+		}
+
+		if (!wantPanelPass && hudClients.empty())
 			return;
 
 		if (!InitResources())
@@ -574,16 +619,26 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		// While dragging, the OverlayTinter compute pass writes the
 		// tinted panel into its post-process texture each Present.
-		// Sample that instead so the drag highlight appears.
+		// Sample that instead so the drag highlight appears. Only
+		// applies to the panel-mode pass.
 		const bool dragging = overlayState.dragState.dragging && s.enableDragToReposition;
-		auto* srv = dragging ? OverlayTinter::GetOutputSRV() : GetMenuSRV(menuTex);
-		if (!srv)
-			srv = GetMenuSRV(menuTex);  // fallback if tinter not ready
-		if (!srv)
-			return;
+		ID3D11ShaderResourceView* panelSRV = nullptr;
+		if (wantPanelPass) {
+			panelSRV = dragging ? OverlayTinter::GetOutputSRV() : GetMenuSRV(menuTex);
+			if (!panelSRV)
+				panelSRV = GetMenuSRV(menuTex);
+		}
 
-		const auto matrices = ComputeEyeMatrices(eye);
-		if (!matrices.valid)
+		// Eye view-projection only needed for the panel pass.
+		EyeMatrices matrices;
+		if (wantPanelPass) {
+			matrices = ComputeEyeMatrices(eye);
+			if (!matrices.valid) {
+				wantPanelPass = false;
+			}
+		}
+
+		if (!wantPanelPass && hudClients.empty())
 			return;
 
 		// Save current render state so we don't clobber Skyrim's submit.
@@ -609,6 +664,29 @@ float4 main(PS_INPUT input) : SV_TARGET
 		vp.MaxDepth = 1.0f;
 		ctx->RSSetViewports(1, &vp);
 
+		// Pass 1: HUD-mode clients. Each renders as a full-viewport
+		// alpha-blended quad. The unit quad's geometry is at [-0.5, 0.5]
+		// in XY; setting wvp to scale(2, 2, 1) maps that directly into
+		// clip-space [-1, 1] without any view/projection transform.
+		// Iteration order = registration order so HUD layers stack
+		// predictably (last registered draws on top).
+		for (const auto& hud : hudClients) {
+			if (!hud.texture)
+				continue;
+			auto* hudSRV = GetOrCreateHUDSRV(hud.client_id, hud.texture);
+			if (!hudSRV)
+				continue;
+			ConstantBufferData cb;
+			cb.wvp = Matrix::CreateScale(2.0f, 2.0f, 1.0f).Transpose();
+			DrawQuad(ctx, cb, hudSRV);
+		}
+
+		// Pass 2: panel-mode focused client (existing 3D quad logic).
+		if (!wantPanelPass) {
+			backup.Restore(ctx);
+			return;
+		}
+
 		// HMD-attached pass.
 		if (s.attachMode == Overlay::AttachMode::HMDOnly ||
 			s.attachMode == Overlay::AttachMode::Both) {
@@ -624,7 +702,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 			}
 			ConstantBufferData cb;
 			cb.wvp = (model * vpMat).Transpose();
-			DrawQuad(ctx, cb, srv);
+			DrawQuad(ctx, cb, panelSRV);
 		}
 
 		// Controller-attached pass (with backface culling).
@@ -657,7 +735,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 					if (overlayNormal.Dot(toEye) > 0.0f) {
 						ConstantBufferData cb;
 						cb.wvp = (model * matrices.vpWorldSpace).Transpose();
-						DrawQuad(ctx, cb, srv);
+						DrawQuad(ctx, cb, panelSRV);
 					}
 				}
 			}
