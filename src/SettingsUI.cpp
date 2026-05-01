@@ -9,6 +9,7 @@
 #include "Globals.h"
 #include "HelperImpl.h"
 #include "Overlay.h"
+#include "WandPointing.h"
 
 namespace ImGuiVRHelper::SettingsUI
 {
@@ -176,21 +177,27 @@ namespace ImGuiVRHelper::SettingsUI
 		ImGuiIO& io = ImGui::GetIO();
 		io.DeltaTime = dt > 0.0f ? dt : 1.0f / 60.0f;
 
-		// One cursor source, matching SCS exactly: thumbstick deflection
-		// drives cursor delta; trigger / grip / etc. drive button events.
-		// SCS does this in src/Features/VR.cpp:1670-1745 and nowhere else
-		// — no PollNextOverlayEvent for the menu, no WandPointing UV
-		// injection. The path is universal across SteamVR and
-		// OpenComposite, and adding alternate sources only invites
-		// last-writer-wins surprises. WandPointing still computes
-		// intersection state for the public GetPointer API (clients can
-		// read it), but the helper's own UI does not consume it.
+		// Two cursor sources, matching SCS open_composite exactly:
+		//
+		// 1. Wand pointing: UpdateCursorFromWandPointing raycasts the
+		//    OPPOSITE controller's forward vector against the overlay
+		//    panel's internal transform model and feeds the UV*size
+		//    pixel coords as a mouse position. Mirrors SCS's
+		//    VR::UpdateCursorFromWandPointing
+		//    (origin/open_composite src/Features/VR/WandPointing.cpp:104-145).
+		//
+		// 2. Thumbstick deflection driving cursor delta — also injects
+		//    AddMousePosEvent. Last-writer-wins per frame, so an active
+		//    stick deflection overrides a stale wand hit, and a steady
+		//    wand hit overrides a centered stick. Matches SCS Input.cpp.
 		//
 		// Buttons: trigger=left, grip=right, joystick-click/touchpad=middle.
 		// kBY=Tab, kXA=Enter — keyboard shortcuts for menu navigation.
 		// Edge-detected per controller so we only fire transitions.
 		auto& vrState = Overlay::State::GetSingleton();
 		const auto& settings = vrState.settings;
+
+		WandPointing::UpdateCursorFromWandPointing();
 
 		auto driveCursorAndScrollFrom = [&](const RE::VRControllerState& cursorCtl,
 											const RE::VRControllerState& scrollCtl,

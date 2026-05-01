@@ -125,4 +125,55 @@ namespace ImGuiVRHelper::WandPointing
 		}
 		return intersected;
 	}
+
+	void UpdateCursorFromWandPointing()
+	{
+		// Lifted from SCS VR::UpdateCursorFromWandPointing
+		// (origin/open_composite src/Features/VR/WandPointing.cpp:104-145).
+		auto& state = Overlay::State::GetSingleton();
+		const auto& s = state.settings;
+		if (!s.enableWandPointing)
+			return;
+
+		namespace API = ImGuiVRHelperPluginAPI;
+
+		// Pick the pointing hand: when the menu is attached to a controller,
+		// the OTHER hand points; otherwise primary.
+		API::InputDeviceType pointingDevice;
+		if (s.attachMode == Overlay::AttachMode::ControllerOnly ||
+			s.attachMode == Overlay::AttachMode::Both) {
+			pointingDevice = (s.attachController == API::InputDeviceType::Primary) ?
+			                     API::InputDeviceType::Secondary :
+			                     API::InputDeviceType::Primary;
+		} else {
+			pointingDevice = API::InputDeviceType::Primary;
+		}
+
+		const auto controllerIndex = Util::GetControllerIndexForDevice(
+			pointingDevice, state.lastKnownLeftHandedMode);
+		if (controllerIndex == vr::k_unTrackedDeviceIndexInvalid) {
+			state.wandState.isIntersecting = false;
+			return;
+		}
+
+		ImVec2 uv;
+		const bool intersected = ComputeIntersection(controllerIndex, uv);
+		if (!intersected) {
+			return;  // ComputeIntersection already cleared isIntersecting
+		}
+
+		// Project [0,1] UV into the overlay's pixel space and feed ImGui.
+		// Caller's responsibility to have already activated the right
+		// ImGui context (SettingsUI does this in Render before calling
+		// us via the DispatchFrame pipeline).
+		ImGuiIO& io = ImGui::GetIO();
+		float screenX = uv.x * io.DisplaySize.x;
+		float screenY = uv.y * io.DisplaySize.y;
+		screenX = std::clamp(screenX, 0.0f, io.DisplaySize.x);
+		screenY = std::clamp(screenY, 0.0f, io.DisplaySize.y);
+		io.MousePos = ImVec2(screenX, screenY);
+		io.AddMousePosEvent(screenX, screenY);
+		io.MouseDrawCursor = true;
+		io.WantSetMousePos = true;
+	}
 }

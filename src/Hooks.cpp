@@ -6,11 +6,14 @@
 //       REL::RelocationID(75595, 77226).address() + REL::Relocate(0x50, 0x2BC));
 //
 // Captures the renderer's device/context/swapchain into Globals after
-// the original InitD3D returns, then installs the Present detour (used as
-// the per-frame tick) and the input poll thunk. The actual menu pixels
-// reach the headset via SteamVR's IVROverlay layer system, driven from
-// HelperImpl::DispatchFrame -> OverlayManager::Tick — no Submit/eye-render
-// hook required.
+// the original InitD3D returns, then installs the per-frame Present
+// detour, the input poll thunk, and the IVRCompositor::Submit detour
+// owned by InSceneOverlay (which composites the focused client's panel
+// into each eye render target). Universal across SteamVR + OpenComposite
+// — both runtimes route eye textures through Submit, and we render
+// directly into those eye buffers rather than asking SteamVR's IVROverlay
+// layer system to composite for us. This matches the canonical SCS path
+// on origin/open_composite.
 
 #include "pch.h"
 
@@ -18,8 +21,8 @@
 
 #include "Globals.h"
 #include "HelperImpl.h"
+#include "InSceneOverlay.h"
 #include "Input.h"
-#include "OverlayManager.h"
 #include "SettingsUI.h"
 
 #include <RE/B/BSOpenVRControllerDevice.h>
@@ -225,11 +228,12 @@ namespace ImGuiVRHelper::Hooks
 				logs::info("IDXGISwapChain::Present detour installed (original={})",
 					reinterpret_cast<void*>(g_originalPresent));
 
-				// IVROverlay handle creation is deferred until the first
-				// OverlayManager::Tick — it requires BSOpenVR's vrContext
-				// to be populated, which doesn't happen until somewhat
-				// after InitD3D. Tick is idempotent and re-tries until it
-				// succeeds.
+				// Install the IVRCompositor::Submit detour so the helper
+				// composites the focused client's panel into each eye
+				// render target. Universal across SteamVR + OpenComposite.
+				// This is the canonical SCS path (origin/open_composite
+				// src/Features/VR/InSceneOverlay.cpp).
+				InSceneOverlay::Install();
 
 				// Initialize the helper's own ImGui context for its
 				// settings panel; register the synthetic self-client so
