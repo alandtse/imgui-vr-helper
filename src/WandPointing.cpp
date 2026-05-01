@@ -173,9 +173,19 @@ namespace ImGuiVRHelper::WandPointing
 			io.MouseDrawCursor = true;
 			io.WantSetMousePos = true;
 		} else {
+			// Deliberate deviation from upstream/dev:WandPointing.cpp:140-145.
+			// Dev clears MouseDrawCursor and WantSetMousePos here, which
+			// makes the cursor blink off the moment the wand stops
+			// intersecting — even if the user had just been driving the
+			// cursor with the thumbstick. The user wants the cursor to
+			// stay visible at its last position once it's been placed
+			// (matches their perception of how SCS behaves in practice).
+			// We only clear the intersection bit so combo / GetPointer
+			// API consumers see the right state. Cursor visibility is
+			// owned by whoever last set it (thumbstick path keeps
+			// MouseDrawCursor=true while pushing; this no-op on release
+			// preserves that).
 			state.wandState.isIntersecting = false;
-			io.MouseDrawCursor = false;
-			io.WantSetMousePos = false;
 		}
 	}
 }

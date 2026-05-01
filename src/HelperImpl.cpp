@@ -357,22 +357,34 @@ namespace ImGuiVRHelper
 			nullptr,
 			ImGuiVRHelperPluginAPI::kClientFlag_None);
 
-		// Default toggle combo: hold both grip buttons simultaneously.
-		// Grip is rarely consumed by Skyrim's main menu (which uses face
-		// buttons + trigger + stick), so it actually reaches our combo
-		// matcher. The previous default (kBY-on-both) collided with the
-		// main menu's BY = "back/cancel" handling and fired unreliably.
-		// kGrip matches kGripAlt too (Input.cpp folds Oculus's axis-2
-		// grip into the same button).
+		// Default toggle combo: kBY (B/Y face button) on the SECONDARY
+		// controller. Single-button press, no two-handed coordination
+		// required, and crucially leaves both grip buttons free for
+		// drag-to-reposition. Matches one of upstream/dev's
+		// VRMenuOpenKeys defaults (src/Features/VR.h:220-222):
+		//
+		//   ButtonCombo::Secondary(Keys::kXA),
+		//   ButtonCombo::Secondary(Keys::kBY)
+		//
+		// (We pick BY rather than XA so users can rebind to XA later if
+		// they want both. Either is fine — both are secondary face
+		// buttons that don't conflict with weapon/spell use on the
+		// primary hand.)
+		//
+		// Previous defaults that didn't work:
+		//   - kBY on Both: collided with main-menu back/cancel handling.
+		//   - kGrip on Both: collided with the drag-to-reposition gesture.
+		//
 		// Users can also use the keyboard toggle (default F2) which
-		// always reaches us regardless of menu state.
+		// always reaches us regardless of menu state, or rebind via the
+		// "Rebind toggle key" button in the helper's settings panel.
 		using namespace ImGuiVRHelperPluginAPI;
 		const InputCombo toggle_keys[] = {
-			InputCombo(InputDeviceType::Both, RE::BSOpenVRControllerDevice::Keys::kGrip),
+			InputCombo(InputDeviceType::Secondary, RE::BSOpenVRControllerDevice::Keys::kBY),
 		};
 		m_self_toggle_combo = RegisterCombo(m_self_client_id, toggle_keys, 1, 3.0f);
 
-		logs::info("Self-client registered: id={} toggle_combo={} (grip+grip; F2 also toggles)",
+		logs::info("Self-client registered: id={} toggle_combo={} (secondary BY; F2 also toggles)",
 			m_self_client_id, m_self_toggle_combo);
 	}
 
