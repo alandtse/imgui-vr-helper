@@ -78,59 +78,93 @@ namespace ImGuiVRHelper::HUDDemo
 		ImGui_ImplDX11_NewFrame();
 		ImGui::NewFrame();
 
-		// Demo window centered horizontally, in the upper third of the
-		// viewport. ImGuiWindowFlags chosen so the window can't take
-		// focus (no input routes to it — it's purely visual) and
-		// doesn't try to persist position.
-		ImGui::SetNextWindowPos(
-			ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.18f),
-			ImGuiCond_Always, ImVec2(0.5f, 0.0f));
-		ImGui::SetNextWindowSize(ImVec2(900, 0), ImGuiCond_Always);
-		ImGui::SetNextWindowBgAlpha(0.55f);
-		if (ImGui::Begin("HUDDemoWindow", nullptr,
+		// Calibration grid drawn on the background drawlist. Far more
+		// useful for HUD pipeline debugging than free-form Lorem Ipsum:
+		//
+		//   - Outer border at exact panel bounds (0,0)-(1920,1080):
+		//     confirms the full RTV reaches the eye buffer without the
+		//     3D-quad-at-HMD-depth math cropping edges.
+		//   - Major gridlines every 240px (8 vertical, 4-5 horizontal):
+		//     plotted with labels so a HUD client author can verify
+		//     "if I draw at (960, 540), it lands at the center."
+		//   - Minor gridlines every 60px: visible spatial reference
+		//     for finer-grained positioning.
+		//   - Center crosshair: quick visual check the geometric center
+		//     is where you expect (no off-axis stretching from the
+		//     quad's per-eye projection).
+		//   - Diagonal X across the full panel: confirms aspect ratio
+		//     is preserved end-to-end — if the diagonal looks straight
+		//     in the headset, neither the 3D quad's scaling nor the
+		//     eye-buffer composite is squashing one axis.
+		auto* dl = ImGui::GetBackgroundDrawList();
+		const float w = io.DisplaySize.x;
+		const float h = io.DisplaySize.y;
+		const ImU32 colMinor = IM_COL32(120, 120, 160, 90);
+		const ImU32 colMajor = IM_COL32(180, 220, 255, 200);
+		const ImU32 colBorder = IM_COL32(255, 200, 80, 220);
+		const ImU32 colCenter = IM_COL32(255, 100, 100, 230);
+		const ImU32 colDiagonal = IM_COL32(120, 255, 120, 130);
+		const ImU32 colLabel = IM_COL32(255, 230, 120, 230);
+
+		// Minor gridlines every 60px.
+		constexpr float kMinorStep = 60.0f;
+		for (float x = kMinorStep; x < w; x += kMinorStep) {
+			dl->AddLine(ImVec2(x, 0), ImVec2(x, h), colMinor, 1.0f);
+		}
+		for (float y = kMinorStep; y < h; y += kMinorStep) {
+			dl->AddLine(ImVec2(0, y), ImVec2(w, y), colMinor, 1.0f);
+		}
+
+		// Major gridlines every 240px with labels.
+		constexpr float kMajorStep = 240.0f;
+		char label[16];
+		for (float x = kMajorStep; x < w; x += kMajorStep) {
+			dl->AddLine(ImVec2(x, 0), ImVec2(x, h), colMajor, 2.0f);
+			std::snprintf(label, sizeof(label), "%d", static_cast<int>(x));
+			dl->AddText(ImVec2(x + 4.0f, 4.0f), colLabel, label);
+		}
+		for (float y = kMajorStep; y < h; y += kMajorStep) {
+			dl->AddLine(ImVec2(0, y), ImVec2(w, y), colMajor, 2.0f);
+			std::snprintf(label, sizeof(label), "%d", static_cast<int>(y));
+			dl->AddText(ImVec2(4.0f, y + 2.0f), colLabel, label);
+		}
+
+		// Diagonal X confirms aspect ratio integrity.
+		dl->AddLine(ImVec2(0, 0), ImVec2(w, h), colDiagonal, 1.5f);
+		dl->AddLine(ImVec2(w, 0), ImVec2(0, h), colDiagonal, 1.5f);
+
+		// Outer panel border (sits at the exact RTV edge).
+		dl->AddRect(ImVec2(0.5f, 0.5f), ImVec2(w - 0.5f, h - 0.5f),
+			colBorder, 0, 0, 3.0f);
+
+		// Center crosshair + filled dot.
+		const ImVec2 ctr(w * 0.5f, h * 0.5f);
+		dl->AddLine(ImVec2(ctr.x - 40, ctr.y), ImVec2(ctr.x + 40, ctr.y), colCenter, 2.0f);
+		dl->AddLine(ImVec2(ctr.x, ctr.y - 40), ImVec2(ctr.x, ctr.y + 40), colCenter, 2.0f);
+		dl->AddCircleFilled(ctr, 6.0f, colCenter);
+		dl->AddText(ImVec2(ctr.x + 12, ctr.y - 24), colCenter, "(960, 540)");
+
+		// Resolution + scale info window in the upper-left, kept small
+		// so it doesn't dominate the calibration view. NoBackground +
+		// NoInputs so it's purely informational.
+		ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Always);
+		ImGui::SetNextWindowBgAlpha(0.6f);
+		if (ImGui::Begin("HUDDemoInfo", nullptr,
 				ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
 					ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
 					ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs |
-					ImGuiWindowFlags_NoCollapse)) {
+					ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
 			ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f),
-				"ImGuiVRHelper — kClientFlag_HUDMode smoke test");
+				"HUDMode smoke test — calibration grid");
 			ImGui::Separator();
+			ImGui::Text("Panel: %.0f x %.0f", w, h);
+			ImGui::Text("Major lines: every %.0f px", kMajorStep);
+			ImGui::Text("Minor lines: every %.0f px", kMinorStep);
 			ImGui::Spacing();
-			ImGui::TextWrapped("%s", kLoremIpsum);
-			ImGui::Spacing();
-			ImGui::Separator();
-			ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f),
-				"If you can read this through your headset,");
-			ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f),
-				"the HUD compositing pipeline works end-to-end.");
-			ImGui::Spacing();
-			ImGui::TextDisabled("Toggle off in helper Settings -> Diagnostics.");
+			ImGui::TextDisabled("Toggle off in Settings -> Diagnostics.");
+			(void)kLoremIpsum;  // kept around for potential future text test
 		}
 		ImGui::End();
-
-		// A few shapes on the background drawlist — at the bottom of
-		// the viewport, away from the window so they're independently
-		// visible. Mix of color/alpha values so the user can confirm
-		// alpha blending is correctly weighted (not just opaque-or-
-		// nothing).
-		auto* dl = ImGui::GetBackgroundDrawList();
-		const ImVec2 anchor(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.78f);
-		dl->AddCircle(ImVec2(anchor.x - 220, anchor.y), 60.0f,
-			IM_COL32(80, 220, 255, 220), 0, 6.0f);
-		dl->AddCircleFilled(ImVec2(anchor.x - 220, anchor.y), 30.0f,
-			IM_COL32(80, 220, 255, 100));
-		dl->AddRect(ImVec2(anchor.x - 60, anchor.y - 60),
-			ImVec2(anchor.x + 60, anchor.y + 60),
-			IM_COL32(255, 220, 80, 220), 0, 0, 6.0f);
-		dl->AddRectFilled(ImVec2(anchor.x - 30, anchor.y - 30),
-			ImVec2(anchor.x + 30, anchor.y + 30),
-			IM_COL32(255, 220, 80, 100));
-		dl->AddLine(ImVec2(anchor.x + 100, anchor.y - 60),
-			ImVec2(anchor.x + 280, anchor.y + 60),
-			IM_COL32(255, 100, 200, 255), 6.0f);
-		dl->AddLine(ImVec2(anchor.x + 280, anchor.y - 60),
-			ImVec2(anchor.x + 100, anchor.y + 60),
-			IM_COL32(255, 100, 200, 255), 6.0f);
 
 		ImGui::Render();
 
