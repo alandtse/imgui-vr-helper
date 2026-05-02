@@ -143,6 +143,56 @@ namespace ImGuiVRHelper::SettingsUI
 				}
 			}
 
+			if (ImGui::CollapsingHeader("Registered Clients")) {
+				const auto clients = HelperImpl::GetSingleton().SnapshotClients();
+				ImGui::Text("Active clients: %zu", clients.size());
+				ImGui::Spacing();
+				if (ImGui::BeginTable("##ClientsTable", 4,
+						ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+							ImGuiTableFlags_SizingStretchProp)) {
+					ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+					ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+					ImGui::TableSetupColumn("Mode", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+					ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+					ImGui::TableHeadersRow();
+					namespace API = ImGuiVRHelperPluginAPI;
+					for (const auto& c : clients) {
+						ImGui::TableNextRow();
+						ImGui::TableNextColumn();
+						ImGui::Text("%u", c.client_id);
+						ImGui::TableNextColumn();
+						ImGui::TextUnformatted(c.name.c_str());
+						ImGui::TableNextColumn();
+						if (c.flags & API::kClientFlag_HUDMode) {
+							ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "HUD");
+						} else {
+							ImGui::TextColored(ImVec4(0.7f, 1.0f, 0.4f, 1.0f), "Panel");
+						}
+						if (c.flags & API::kClientFlag_RequiresFocus) {
+							ImGui::SameLine();
+							ImGui::TextDisabled("+focus");
+						}
+						ImGui::TableNextColumn();
+						if (c.has_focus) {
+							ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "FOCUS");
+							ImGui::SameLine();
+						}
+						if (c.has_texture) {
+							ImGui::TextDisabled("alloc");
+						} else {
+							ImGui::TextDisabled("idle");
+						}
+					}
+					ImGui::EndTable();
+				}
+				ImGui::Spacing();
+				ImGui::TextDisabled("Mode badge:  Panel = 3D quad in space");
+				ImGui::TextDisabled("             HUD   = full-viewport on both eyes");
+				ImGui::TextDisabled("State badge: FOCUS = receives input + drives 3D quad");
+				ImGui::TextDisabled("             alloc = panel RTV created");
+				ImGui::TextDisabled("             idle  = no RTV yet (lazy)");
+			}
+
 			if (ImGui::CollapsingHeader("Diagnostics")) {
 				ImGui::Text("Overlay visible: %s", state.overlayVisible ? "yes" : "no");
 				ImGui::Text("Left-handed: %s", state.lastKnownLeftHandedMode ? "yes" : "no");
@@ -157,10 +207,10 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::Spacing();
 				ImGui::Separator();
 				ImGui::TextDisabled("HUD-mode smoke test");
-				ImGui::Checkbox("Show HUD demo (red wash)", &s.showHUDDemo);
+				ImGui::Checkbox("Show HUD demo", &s.showHUDDemo);
 				if (s.showHUDDemo) {
-					ImGui::TextDisabled("    World should be tinted red.");
-					ImGui::TextDisabled("    If yes: kClientFlag_HUDMode is wired correctly.");
+					ImGui::TextDisabled("    A Lorem-Ipsum window + shapes appear over both eyes.");
+					ImGui::TextDisabled("    If you see them: kClientFlag_HUDMode is wired correctly.");
 				}
 			}
 

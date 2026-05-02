@@ -292,6 +292,29 @@ namespace ImGuiVRHelper
 		return it->second.texture.get();
 	}
 
+	std::vector<HelperImpl::ClientSnapshot> HelperImpl::SnapshotClients()
+	{
+		std::vector<ClientSnapshot> out;
+		std::scoped_lock lk{ m_mutex };
+		out.reserve(m_clients.size());
+		for (const auto& [id, rec] : m_clients) {
+			ClientSnapshot snap{};
+			snap.client_id = id;
+			snap.name = rec.name;
+			snap.flags = rec.flags;
+			snap.has_texture = (rec.texture != nullptr);
+			snap.has_focus = (m_focused_client == id);
+			out.push_back(std::move(snap));
+		}
+		// Stable order by client_id so the list doesn't reshuffle
+		// frame-to-frame when the underlying unordered_map rehashes.
+		std::sort(out.begin(), out.end(),
+			[](const ClientSnapshot& a, const ClientSnapshot& b) {
+				return a.client_id < b.client_id;
+			});
+		return out;
+	}
+
 	std::vector<HelperImpl::HUDClientSnapshot> HelperImpl::SnapshotHUDClients()
 	{
 		std::vector<HUDClientSnapshot> out;

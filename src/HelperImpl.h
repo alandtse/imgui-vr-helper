@@ -80,6 +80,20 @@ namespace ImGuiVRHelper
 		};
 		std::vector<HUDClientSnapshot> SnapshotHUDClients();
 
+		/// Snapshot of every registered client for diagnostic display.
+		/// Used by the helper's settings UI to show a 'Registered
+		/// Clients' section. Read-only — modifying a client's flags
+		/// or focus state via this snapshot does nothing.
+		struct ClientSnapshot
+		{
+			uint32_t client_id;
+			std::string name;
+			uint32_t flags;
+			bool has_texture;  ///< texture was allocated (client has called GetPanel)
+			bool has_focus;    ///< this client currently holds focus
+		};
+		std::vector<ClientSnapshot> SnapshotClients();
+
 		/// Returns the currently-focused client_id, or 0 if no client
 		/// holds focus. Used by InSceneOverlay to pick which client's
 		/// panel to draw on each Submit.
