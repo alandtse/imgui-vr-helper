@@ -346,14 +346,51 @@ namespace ImGuiVRHelper::SettingsUI
 
 		WandPointing::UpdateCursorFromWandPointing();
 
-		auto driveCursorAndScrollFrom = [&](const RE::VRControllerState& cursorCtl,
-											const RE::VRControllerState& scrollCtl,
-											size_t cursorThumbIdx, size_t scrollThumbIdx) {
-			// Cursor (SCS uses ~10 px/frame at full deflection).
+		// Per-thumbstick scroll accumulators. Mirrors upstream/dev's
+		// `static std::unordered_map<size_t, ScrollAccum>` in
+		// VR::ProcessThumbstickScroll — accumulator is keyed by stick
+		// so two sticks scrolling simultaneously don't cross-contaminate.
+		// Two sticks (primary/secondary) so two struct slots suffice.
+		struct StickAccum
+		{
+			float x = 0.0f;
+			float y = 0.0f;
+		};
+		static StickAccum primAccum;
+		static StickAccum secAccum;
+
+		auto processScroll = [&](const RE::VRControllerState& ctl,
+								 size_t thumbIdx, StickAccum& accum) {
+			const float sx = ctl.thumbsticks[thumbIdx].x;
+			const float sy = ctl.thumbsticks[thumbIdx].y;
+			if (std::abs(sx) > settings.mouseDeadzone)
+				accum.x += sx * 0.1f;
+			if (std::abs(sy) > settings.mouseDeadzone)
+				accum.y += sy * 0.1f;
+			float wheelX = 0.0f, wheelY = 0.0f;
+			if (std::abs(accum.x) > 0.3f) {
+				wheelX = accum.x > 0 ? 1.0f : -1.0f;
+				accum.x = 0.0f;
+			}
+			if (std::abs(accum.y) > 0.3f) {
+				wheelY = accum.y > 0 ? 1.0f : -1.0f;
+				accum.y = 0.0f;
+			}
+			if (wheelX != 0.0f || wheelY != 0.0f) {
+				// X is negated to match upstream/dev:Input.cpp:305
+				// (`io.AddMouseWheelEvent(-scrollEventX, scrollEventY)`).
+				// Right stick deflection pushes content LEFT in ImGui,
+				// like a touchpad scroll gesture.
+				io.AddMouseWheelEvent(-wheelX, wheelY);
+			}
+		};
+
+		auto processCursor = [&](const RE::VRControllerState& ctl, size_t thumbIdx) {
 			constexpr float kMouseSpeed = 12.0f;
-			const float cx = cursorCtl.thumbsticks[cursorThumbIdx].x;
-			const float cy = cursorCtl.thumbsticks[cursorThumbIdx].y;
-			if (std::abs(cx) > settings.mouseDeadzone || std::abs(cy) > settings.mouseDeadzone) {
+			const float cx = ctl.thumbsticks[thumbIdx].x;
+			const float cy = ctl.thumbsticks[thumbIdx].y;
+			if (std::abs(cx) > settings.mouseDeadzone ||
+				std::abs(cy) > settings.mouseDeadzone) {
 				ImVec2 pos = io.MousePos;
 				if (pos.x < 0.0f || pos.x > io.DisplaySize.x ||
 					pos.y < 0.0f || pos.y > io.DisplaySize.y) {
@@ -369,45 +406,49 @@ namespace ImGuiVRHelper::SettingsUI
 				io.AddMousePosEvent(pos.x, pos.y);
 				io.MouseDrawCursor = true;
 			}
-
-			// Scroll: discrete tick when the other stick crosses 0.3
-			// accumulated deflection (SCS pattern, prevents 90Hz spam).
-			static float scrollAccumX = 0.0f;
-			static float scrollAccumY = 0.0f;
-			const float sx = scrollCtl.thumbsticks[scrollThumbIdx].x;
-			const float sy = scrollCtl.thumbsticks[scrollThumbIdx].y;
-			if (std::abs(sx) > settings.mouseDeadzone)
-				scrollAccumX += sx * 0.1f;
-			if (std::abs(sy) > settings.mouseDeadzone)
-				scrollAccumY += sy * 0.1f;
-			float wheelX = 0.0f, wheelY = 0.0f;
-			if (std::abs(scrollAccumX) > 0.3f) {
-				wheelX = scrollAccumX > 0 ? 1.0f : -1.0f;
-				scrollAccumX = 0.0f;
-			}
-			if (std::abs(scrollAccumY) > 0.3f) {
-				wheelY = scrollAccumY > 0 ? 1.0f : -1.0f;
-				scrollAccumY = 0.0f;
-			}
-			if (wheelX != 0.0f || wheelY != 0.0f) {
-				io.AddMouseWheelEvent(wheelX, wheelY);
-			}
 		};
 
-		// Pick which controller drives cursor vs scroll. When the menu is
-		// attached to a controller, that hand's stick is awkward to reach
-		// while holding the menu, so the OPPOSITE hand drives the cursor
-		// (SCS does this swap explicitly). Otherwise primary=cursor,
-		// secondary=scroll.
+		// Branch on whether the wand laser is currently on the panel —
+		// mirrors upstream/dev:Input.cpp:329-345's
+		// `if (wandHandledCursor && !isDragging)` switch:
+		//
+		//   Wand on panel: BOTH thumbsticks scroll. The wand is already
+		//                  driving the cursor (UpdateCursorFromWandPointing
+		//                  ran above), so neither stick should fight it.
+		//   Wand off panel: one stick drives the cursor, the other
+		//                   drives scroll. Cursor stick is the OPPOSITE
+		//                   hand of whichever the menu is attached to so
+		//                   the user isn't reaching across.
+		//
+		// Drag mode disables both stick paths; OverlayDrag already owns
+		// the cursor and scroll behavior would interfere.
 		namespace API = ImGuiVRHelperPluginAPI;
-		const bool menuOnPrimary = (settings.attachMode == Overlay::AttachMode::ControllerOnly &&
-									settings.attachController == API::InputDeviceType::Primary);
-		if (menuOnPrimary) {
-			driveCursorAndScrollFrom(vrState.secondaryControllerState,
-				vrState.primaryControllerState, 1, 0);  // secondary stick=cursor, primary stick=scroll
-		} else {
-			driveCursorAndScrollFrom(vrState.primaryControllerState,
-				vrState.secondaryControllerState, 0, 1);
+		const bool isDragging = vrState.dragState.dragging;
+		const bool wandHandledCursor = settings.enableWandPointing &&
+		                               vrState.wandState.isIntersecting;
+
+		if (wandHandledCursor && !isDragging) {
+			processScroll(vrState.primaryControllerState,
+				static_cast<size_t>(RE::ControllerRole::Primary), primAccum);
+			processScroll(vrState.secondaryControllerState,
+				static_cast<size_t>(RE::ControllerRole::Secondary), secAccum);
+		} else if (!isDragging) {
+			const bool menuOnPrimary =
+				(settings.attachMode == Overlay::AttachMode::ControllerOnly &&
+					settings.attachController == API::InputDeviceType::Primary);
+			if (menuOnPrimary) {
+				// Menu is on primary hand — secondary drives cursor,
+				// primary drives scroll.
+				processCursor(vrState.secondaryControllerState,
+					static_cast<size_t>(RE::ControllerRole::Secondary));
+				processScroll(vrState.primaryControllerState,
+					static_cast<size_t>(RE::ControllerRole::Primary), primAccum);
+			} else {
+				processCursor(vrState.primaryControllerState,
+					static_cast<size_t>(RE::ControllerRole::Primary));
+				processScroll(vrState.secondaryControllerState,
+					static_cast<size_t>(RE::ControllerRole::Secondary), secAccum);
+			}
 		}
 
 		// Button → mouse/key edge-detector. Tracks per-controller per-key
