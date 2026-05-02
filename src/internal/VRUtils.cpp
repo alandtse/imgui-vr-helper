@@ -56,6 +56,48 @@ namespace ImGuiVRHelper::Util
 		return transform;
 	}
 
+	bool FillEyeViewProjMatrices(vr::EVREye eye, float outView[16], float outProj[16])
+	{
+		using DirectX::SimpleMath::Matrix;
+
+		auto* openvr = RE::BSOpenVR::GetSingleton();
+		if (!openvr || !openvr->vrSystem)
+			return false;
+
+		vr::TrackedDevicePose_t hmdPose;
+		if (!GetDeviceToAbsoluteTrackingPoseCompatible(
+				vr::TrackingUniverseStanding, 0, &hmdPose, 1)) {
+			return false;
+		}
+		if (!hmdPose.bPoseIsValid)
+			return false;
+
+		// View: world-space -> eye-space. eyeToWorld = eyeToHead * hmdWorld
+		// (DirectX row-vector convention). View = inverse(eyeToWorld).
+		const Matrix eyeToHead = HmdMatrix34ToMatrix(
+			openvr->vrSystem->GetEyeToHeadTransform(eye));
+		const Matrix hmdWorld = HmdMatrix34ToMatrix(hmdPose.mDeviceToAbsoluteTracking);
+		const Matrix view = (eyeToHead * hmdWorld).Invert();
+
+		// Projection from raw left/right/bottom/top tangents. Note Valve's
+		// known parameter-name mismatch in GetProjectionRaw — the 3rd
+		// param is bottom, the 4th is top. Use named locals matching
+		// the actual values.
+		float left, right, bottom, top;
+		openvr->vrSystem->GetProjectionRaw(eye, &left, &right, &bottom, &top);
+		constexpr float nearZ = 0.1f;
+		constexpr float farZ = 1000.0f;
+		const Matrix proj = DirectX::XMMatrixPerspectiveOffCenterRH(
+			left * nearZ, right * nearZ, bottom * nearZ, top * nearZ, nearZ, farZ);
+
+		// SimpleMath::Matrix derives from XMFLOAT4X4: 16 floats laid out
+		// row-major (_11, _12, _13, _14, _21, ...). Same memory layout
+		// as the float[16] the API specifies, so memcpy is exact.
+		std::memcpy(outView, &view, sizeof(float) * 16);
+		std::memcpy(outProj, &proj, sizeof(float) * 16);
+		return true;
+	}
+
 	vr::HmdMatrix34_t CreateControllerOverlayTransform(
 		float offsetX, float offsetY, float offsetZ,
 		float width, float height)

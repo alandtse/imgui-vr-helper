@@ -70,6 +70,14 @@ namespace ImGuiVRHelperPluginAPI
 	};
 
 	/// Per-frame snapshot delivered to each registered client via OnFrameFn.
+	///
+	/// Frame is forward-extensible. Fields appended after `flags` are
+	/// only valid when `struct_size >= offsetof(Frame, <field>) +
+	/// sizeof(<field>)`. Older helpers hand back smaller structs;
+	/// clients built against newer headers MUST gate per-field reads
+	/// through struct_size before dereferencing. abi_version stays at
+	/// kInputAbiVersion across additive changes — bump it only when
+	/// existing field semantics change.
 	struct Frame
 	{
 		uint32_t abi_version;  ///< == kInputAbiVersion
@@ -81,6 +89,35 @@ namespace ImGuiVRHelperPluginAPI
 		uint32_t flags;  ///< bit0 client_has_focus
 						 ///< bit1 overlay_visible
 						 ///< bit2 client_pointer_in_panel
+
+		// ---- Forward-extension boundary ---------------------------------
+		// Fields below this point must be guarded by:
+		//   if (frame->struct_size >= offsetof(Frame, eye_view) + sizeof(eye_view))
+		//       use frame->eye_view;
+		// when the client wants to support both old and new helper builds.
+
+		/// Per-eye view matrix. World-space -> eye-space transform,
+		/// suitable for `clip = projection * view * world`. Index 0 =
+		/// left eye, 1 = right. Row-major float[4][4] flattened to
+		/// float[16]: element [row * 4 + col]. Filled from
+		/// `inverse(GetEyeToHeadTransform(eye) * hmdWorldPose)` each
+		/// frame. All zeros if HMD pose is invalid this frame.
+		///
+		/// Use case: world-anchored HUD content (subtitles over an
+		/// NPC's head). Compute screen-space coordinates with:
+		///   clip = eye_proj[eye] * eye_view[eye] * float4(worldPos, 1)
+		///   ndc  = clip.xyz / clip.w
+		///   pixel.xy = (ndc.xy * 0.5 + 0.5) * displaySize
+		/// (flip Y in pixel.y if your render target has top-left origin)
+		float eye_view[2][16];
+
+		/// Per-eye projection matrix. Built from
+		/// `IVRSystem::GetProjectionRaw(eye, ...)` tangents with
+		/// near=0.1, far=1000.0 — the same values the helper's own
+		/// in-scene overlay uses, so the projection matches what the
+		/// game sees through that eye. Row-major. All zeros if HMD
+		/// pose is invalid this frame.
+		float eye_proj[2][16];
 	};
 
 	/// Helper-owned render target the client renders its ImGui frame into.
