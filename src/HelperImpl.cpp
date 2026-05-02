@@ -9,6 +9,7 @@
 
 #include "ComboRecording.h"
 #include "Globals.h"
+#include "HUDDemo.h"
 #include "HelperImpl.h"
 #include "Input.h"
 #include "Overlay.h"
@@ -693,19 +694,30 @@ namespace ImGuiVRHelper
 			}
 		}
 
-		// HUD-mode smoke test. When showHUDDemo is on, paint the synthetic
-		// HUD demo client's panel a translucent red. InSceneOverlay's HUD
-		// pass picks it up via SnapshotHUDClients and composites it onto
-		// both eyes — user sees the world tinted red, confirming the
-		// kClientFlag_HUDMode pipeline works end-to-end. When the toggle
-		// is off, we skip allocation entirely so dormant overhead is zero.
-		if (overlayState.settings.showHUDDemo && m_hud_demo_client_id != 0) {
+		// HUD-mode smoke test. When showHUDDemo is on, render Lorem-Ipsum
+		// + shapes via HUDDemo's separate ImGui context into the demo
+		// client's RTV. InSceneOverlay's HUD pass picks it up via
+		// SnapshotHUDClients and composites it onto both eyes.
+		//
+		// Edge handling: track previous showHUDDemo state. On true→false
+		// transition, clear the RTV transparent ONCE so the previous
+		// frame's pixels don't keep getting composited (the texture
+		// retains its contents until something writes new pixels — without
+		// this, toggling the demo off leaves the headset still tinted).
+		// While off-and-was-off-last-frame, do nothing (zero cost).
+		static bool s_prevDemoOn = false;
+		const bool demoOn = overlayState.settings.showHUDDemo;
+		if (m_hud_demo_client_id != 0 && (demoOn || s_prevDemoOn)) {
 			ImGuiVRHelperPluginAPI::PanelHandle handle{};
 			if (GetPanel(m_hud_demo_client_id, &handle) && handle.rtv) {
-				const float demoTint[4] = { 1.0f, 0.0f, 0.0f, 0.4f };  // 40% red
-				Globals::GetD3D().context->ClearRenderTargetView(handle.rtv, demoTint);
+				if (demoOn) {
+					HUDDemo::Render(handle.rtv);
+				} else {
+					HUDDemo::ClearToTransparent(handle.rtv);
+				}
 			}
 		}
+		s_prevDemoOn = demoOn;
 
 		// Note: actual texture submission to the headset happens lazily
 		// from the IVRCompositor::Submit detour (InSceneOverlay), which
