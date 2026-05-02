@@ -115,12 +115,27 @@ namespace ImGuiVRHelper::Overlay
 		std::string logLevel = "info";
 
 		/// Smoke test for kClientFlag_HUDMode. When on, the helper
-		/// registers a synthetic HUD-mode client and every frame
-		/// clears its panel RTV with a 40% red wash. If the HUD
-		/// composite path is alive, the user sees the world tinted
-		/// red across both eyes. Toggle off to clear. Lives in the
-		/// Diagnostics section of the settings UI; default off.
+		/// registers a synthetic HUD-mode client and renders a
+		/// calibration grid into its panel RTV every frame. Toggle
+		/// off to clear. Lives in the Diagnostics section of the
+		/// settings UI; default off.
 		bool showHUDDemo = false;
+
+		/// Distance (meters) from the HMD to the HUD-mode plane. All
+		/// kClientFlag_HUDMode clients render onto a flat quad at this
+		/// depth in front of the user. Closer values feel like a
+		/// "thin glass layer" / monitor stuck to the headset; farther
+		/// values feel like a billboard floating in space. 0.5 is
+		/// roughly the minimum comfortable focal distance on most VR
+		/// lenses; pushing closer than that strains the eyes.
+		float hudDepth = 1.0f;
+
+		/// Horizontal FOV (degrees) the HUD plane should cover. The
+		/// helper computes width = 2 * hudDepth * tan(hudFOV/2) and
+		/// height = width * aspect. Default 60° fits comfortably
+		/// inside the lens-visible "mask" region on every common HMD;
+		/// pushing toward 90°+ may clip at the lens edges.
+		float hudFOV = 60.0f;
 	};
 
 	// ---- Runtime state --------------------------------------------------

@@ -684,19 +684,22 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// eye buffer represents a different physical direction than
 		// pixel (x, y) in the right eye buffer.
 		//
-		// Constants chosen empirically:
-		//   depth 1.5m: comfortable focal distance for VR text
-		//   width 2.5m: covers ~80° horizontal FOV at depth 1.5m
-		// Height follows kOverlayAspect (16:9) for the 1920x1080 RTV.
+		// Geometry from settings — depth + FOV control "thin glass
+		// layer" vs "billboard" feel. Width is computed from FOV at
+		// the chosen depth so the panel always covers exactly that
+		// angular slice of the user's view; height follows the RTV's
+		// 16:9 aspect.
 		//
 		// Iteration order = registration order so HUD layers stack
 		// predictably (last registered draws on top, depth-tested
 		// against earlier ones via the same-Z plane).
-		constexpr float kHUDDepth = 1.5f;
-		constexpr float kHUDWidth = 2.5f;
-		const float kHUDHeight = kHUDWidth * Overlay::Config::kOverlayAspect;
-		const Matrix hudScale = Matrix::CreateScale(kHUDWidth, kHUDHeight, 1.0f);
-		const Matrix hudOffset = Matrix::CreateTranslation(0.0f, 0.0f, -kHUDDepth);
+		const float hudDepth = std::max(0.3f, s.hudDepth);  // sanity floor
+		const float hudFOVRad = std::clamp(s.hudFOV, 20.0f, 120.0f) *
+		                        (3.14159265358979323846f / 180.0f);
+		const float hudWidth = 2.0f * hudDepth * std::tan(hudFOVRad * 0.5f);
+		const float hudHeight = hudWidth * Overlay::Config::kOverlayAspect;
+		const Matrix hudScale = Matrix::CreateScale(hudWidth, hudHeight, 1.0f);
+		const Matrix hudOffset = Matrix::CreateTranslation(0.0f, 0.0f, -hudDepth);
 		const Matrix hudModel = hudScale * hudOffset;
 		const Matrix hudWvp = (hudModel * matrices.vpHeadSpace).Transpose();
 		for (const auto& hud : hudClients) {

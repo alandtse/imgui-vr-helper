@@ -59,6 +59,8 @@ namespace ImGuiVRHelper::Overlay
 			s.mouseDeadzone = tomlGet<double>(t, "mouseDeadzone", s.mouseDeadzone);
 			s.logLevel = tomlGet<std::string>(t, "logLevel", s.logLevel);
 			s.showHUDDemo = tomlGet<bool>(t, "showHUDDemo", s.showHUDDemo);
+			s.hudDepth = tomlGet<double>(t, "hudDepth", s.hudDepth);
+			s.hudFOV = tomlGet<double>(t, "hudFOV", s.hudFOV);
 		}
 
 		// Build TOML by hand so we can include section headers and
@@ -102,10 +104,18 @@ namespace ImGuiVRHelper::Overlay
 				<< "autoResetDistance = " << s.autoResetDistance << "  # game units\n\n"
 
 				<< "# HUD-mode smoke test. When true, the helper registers a synthetic\n"
-				<< "# HUD-mode client and clears its panel each frame to a 40% red wash —\n"
-				<< "# verifies the kClientFlag_HUDMode composite path end-to-end without a\n"
-				<< "# real client. Toggle off when done.\n"
-				<< "showHUDDemo = " << (s.showHUDDemo ? "true" : "false") << "\n";
+				<< "# HUD-mode client and renders a calibration grid into its panel each\n"
+				<< "# frame. Verifies kClientFlag_HUDMode end-to-end without a real client.\n"
+				<< "showHUDDemo = " << (s.showHUDDemo ? "true" : "false") << "\n\n"
+
+				<< "# HUD plane geometry. All kClientFlag_HUDMode clients render onto a\n"
+				<< "# flat quad at this depth, sized to cover hudFOV degrees horizontally.\n"
+				<< "# 1.0m / 60° fits inside the lens-visible 'mask' on every common HMD;\n"
+				<< "# closer/wider feels more like a thin glass layer, farther/narrower\n"
+				<< "# feels like a billboard. Don't go below ~0.5m — most VR lenses can't\n"
+				<< "# focus closer than that.\n"
+				<< "hudDepth = " << s.hudDepth << "  # meters\n"
+				<< "hudFOV = " << s.hudFOV << "  # degrees\n";
 			return out.str();
 		}
 

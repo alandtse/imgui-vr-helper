@@ -237,9 +237,19 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::TextDisabled("HUD-mode smoke test");
 				ImGui::Checkbox("Show HUD demo", &s.showHUDDemo);
 				if (s.showHUDDemo) {
-					ImGui::TextDisabled("    A Lorem-Ipsum window + shapes appear over both eyes.");
-					ImGui::TextDisabled("    If you see them: kClientFlag_HUDMode is wired correctly.");
+					ImGui::TextDisabled("    A calibration grid covers the HUD layer.");
+					ImGui::TextDisabled("    If lines + center crosshair are visible:");
+					ImGui::TextDisabled("    kClientFlag_HUDMode is wired correctly.");
 				}
+
+				ImGui::Spacing();
+				ImGui::Separator();
+				ImGui::TextDisabled("HUD-mode geometry (all kClientFlag_HUDMode clients)");
+				ImGui::SliderFloat("HUD depth (m)", &s.hudDepth, 0.5f, 3.0f, "%.2f");
+				ImGui::SliderFloat("HUD FOV (deg)", &s.hudFOV, 30.0f, 100.0f, "%.0f");
+				ImGui::TextDisabled("    Closer + narrower = 'glass layer / monitor' feel.");
+				ImGui::TextDisabled("    Farther + wider = 'billboard in space' feel.");
+				ImGui::TextDisabled("    If panel edges are clipped by the lens, lower FOV.");
 			}
 
 			ImGui::End();
