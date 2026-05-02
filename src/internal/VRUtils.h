@@ -53,15 +53,6 @@ namespace ImGuiVRHelper::Util
 		float offsetX, float offsetY, float offsetZ,
 		float width, float height);
 
-	/// Fill row-major float[16] arrays for an eye's world->eye view
-	/// matrix and its projection matrix. Same math InSceneOverlay uses
-	/// internally for the in-scene overlay quad pass — built from
-	/// GetEyeToHeadTransform * HMD world pose for the view, and
-	/// GetProjectionRaw with near=0.1/far=1000 for the projection.
-	/// Returns false (and leaves outputs untouched) when BSOpenVR is
-	/// unavailable or the HMD pose is invalid this frame.
-	bool FillEyeViewProjMatrices(vr::EVREye eye, float outView[16], float outProj[16]);
-
 	/// Map InputDeviceType {Primary,Secondary} to an OpenVR tracked device
 	/// index, accounting for the player's handedness.
 	vr::TrackedDeviceIndex_t GetControllerIndexForDevice(InputDeviceType device, bool isLeftHanded);

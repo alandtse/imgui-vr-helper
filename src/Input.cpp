@@ -321,14 +321,5 @@ namespace ImGuiVRHelper::Input
 		// to clients (focus, overlay visibility, pointer-in-panel). Leave
 		// flags at 0 here; HelperImpl::DispatchFrame patches them per-client.
 		out.flags = state.overlayVisible ? (1u << 1) : 0u;
-
-		// Per-eye view + projection matrices. Lets clients project
-		// world-space points (NPC heads, item positions) into screen
-		// coordinates per eye for HUD-mode content. On invalid HMD
-		// pose or BSOpenVR unavailable, the helper leaves the arrays
-		// zero-filled (already done by `out = {};` above) so clients
-		// can detect the failure as 'all-zero matrix' if they want.
-		Util::FillEyeViewProjMatrices(vr::Eye_Left, out.eye_view[0], out.eye_proj[0]);
-		Util::FillEyeViewProjMatrices(vr::Eye_Right, out.eye_view[1], out.eye_proj[1]);
 	}
 }
