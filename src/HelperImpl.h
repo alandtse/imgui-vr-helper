@@ -142,6 +142,14 @@ namespace ImGuiVRHelper
 
 		/// Combo IDs the helper registers for its own toggle hotkey.
 		ImGuiVRHelperPluginAPI::ComboId m_self_toggle_combo = 0;
+
+		/// Synthetic HUD-mode client used by the Settings::showHUDDemo
+		/// smoke test. Registered once during EnsureSelfClient. Each
+		/// frame DispatchFrame checks the toggle and clears this
+		/// client's panel RTV with a red wash so the user can verify
+		/// the kClientFlag_HUDMode composite path end-to-end before
+		/// any real client connects.
+		uint32_t m_hud_demo_client_id = 0;
 	};
 
 	struct ClientRecord

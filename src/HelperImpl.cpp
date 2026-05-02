@@ -377,6 +377,17 @@ namespace ImGuiVRHelper
 			nullptr,
 			ImGuiVRHelperPluginAPI::kClientFlag_None);
 
+		// Synthetic HUD-mode client for the Settings::showHUDDemo smoke
+		// test. Always registered (zero overhead until showHUDDemo
+		// flips on — texture allocation is lazy via SnapshotHUDClients).
+		// Lets a user verify kClientFlag_HUDMode end-to-end before any
+		// real HUD client (e.g. a VR-port subtitle mod) connects.
+		m_hud_demo_client_id = RegisterClient(
+			"ImGuiVRHelper.HUDDemo",
+			+[](const ImGuiVRHelperPluginAPI::Frame*, void*) { /* no-op */ },
+			nullptr,
+			ImGuiVRHelperPluginAPI::kClientFlag_HUDMode);
+
 		// No default controller toggle combo. SCS already binds many of
 		// the obvious face/grip combinations for its own menu, and every
 		// auto-default we've tried has bumped into a SCS or main-menu
@@ -679,6 +690,20 @@ namespace ImGuiVRHelper
 					dragging ? overlayState.settings.dragHighlightColor[3] : 0.0f,
 				};
 				OverlayTinter::Dispatch(tex, tint);
+			}
+		}
+
+		// HUD-mode smoke test. When showHUDDemo is on, paint the synthetic
+		// HUD demo client's panel a translucent red. InSceneOverlay's HUD
+		// pass picks it up via SnapshotHUDClients and composites it onto
+		// both eyes — user sees the world tinted red, confirming the
+		// kClientFlag_HUDMode pipeline works end-to-end. When the toggle
+		// is off, we skip allocation entirely so dormant overhead is zero.
+		if (overlayState.settings.showHUDDemo && m_hud_demo_client_id != 0) {
+			ImGuiVRHelperPluginAPI::PanelHandle handle{};
+			if (GetPanel(m_hud_demo_client_id, &handle) && handle.rtv) {
+				const float demoTint[4] = { 1.0f, 0.0f, 0.0f, 0.4f };  // 40% red
+				Globals::GetD3D().context->ClearRenderTargetView(handle.rtv, demoTint);
 			}
 		}
 

@@ -113,6 +113,14 @@ namespace ImGuiVRHelper::Overlay
 		/// Spdlog level name: "trace", "debug", "info", "warn", "err",
 		/// "critical", "off". Applied at plugin load. Default "info".
 		std::string logLevel = "info";
+
+		/// Smoke test for kClientFlag_HUDMode. When on, the helper
+		/// registers a synthetic HUD-mode client and every frame
+		/// clears its panel RTV with a 40% red wash. If the HUD
+		/// composite path is alive, the user sees the world tinted
+		/// red across both eyes. Toggle off to clear. Lives in the
+		/// Diagnostics section of the settings UI; default off.
+		bool showHUDDemo = false;
 	};
 
 	// ---- Runtime state --------------------------------------------------

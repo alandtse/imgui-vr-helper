@@ -58,6 +58,7 @@ namespace ImGuiVRHelper::Overlay
 			s.autoResetDistance = tomlGet<double>(t, "autoResetDistance", s.autoResetDistance);
 			s.mouseDeadzone = tomlGet<double>(t, "mouseDeadzone", s.mouseDeadzone);
 			s.logLevel = tomlGet<std::string>(t, "logLevel", s.logLevel);
+			s.showHUDDemo = tomlGet<bool>(t, "showHUDDemo", s.showHUDDemo);
 		}
 
 		// Build TOML by hand so we can include section headers and
@@ -98,7 +99,13 @@ namespace ImGuiVRHelper::Overlay
 				<< "enableWandPointing = " << (s.enableWandPointing ? "true" : "false") << "\n"
 				<< "enableDragToReposition = " << (s.enableDragToReposition ? "true" : "false") << "\n"
 				<< "mouseDeadzone = " << s.mouseDeadzone << "\n"
-				<< "autoResetDistance = " << s.autoResetDistance << "  # game units\n";
+				<< "autoResetDistance = " << s.autoResetDistance << "  # game units\n\n"
+
+				<< "# HUD-mode smoke test. When true, the helper registers a synthetic\n"
+				<< "# HUD-mode client and clears its panel each frame to a 40% red wash —\n"
+				<< "# verifies the kClientFlag_HUDMode composite path end-to-end without a\n"
+				<< "# real client. Toggle off when done.\n"
+				<< "showHUDDemo = " << (s.showHUDDemo ? "true" : "false") << "\n";
 			return out.str();
 		}
 

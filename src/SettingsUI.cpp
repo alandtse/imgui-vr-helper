@@ -101,6 +101,15 @@ namespace ImGuiVRHelper::SettingsUI
 						state.wandState.uvCoordinates.x, state.wandState.uvCoordinates.y);
 				}
 				ImGui::Text("Drag active: %s", state.dragState.dragging ? "yes" : "no");
+
+				ImGui::Spacing();
+				ImGui::Separator();
+				ImGui::TextDisabled("HUD-mode smoke test");
+				ImGui::Checkbox("Show HUD demo (red wash)", &s.showHUDDemo);
+				if (s.showHUDDemo) {
+					ImGui::TextDisabled("    World should be tinted red.");
+					ImGui::TextDisabled("    If yes: kClientFlag_HUDMode is wired correctly.");
+				}
 			}
 
 			ImGui::End();
