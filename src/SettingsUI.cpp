@@ -11,12 +11,64 @@
 #include "Overlay.h"
 #include "WandPointing.h"
 
+#include <dxgi.h>
+#include <imgui_impl_win32.h>
+
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(
+	HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 namespace ImGuiVRHelper::SettingsUI
 {
 	namespace
 	{
 		ImGuiContext* g_ctx = nullptr;
 		bool g_visible = false;
+
+		// Win32 input plumbing. We hook the swapchain window's WndProc
+		// so desktop mouse + keyboard reach the helper's ImGui context.
+		// Lets users drag sliders with a mouse, type values with a
+		// keyboard, copy/paste — same interaction story flat-Skyrim
+		// users get for any ImGui-based mod.
+		HWND g_hwnd = nullptr;
+		WNDPROC g_origWndProc = nullptr;
+
+		LRESULT CALLBACK WndProcThunk(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+		{
+			// Forward every Win32 message to ImGui's input backend with
+			// the helper's settings context active. Skyrim's WndProc
+			// then sees the message too — we don't swallow input here
+			// because in VR the user usually isn't actively playing
+			// while the menu is up, and intercepting keystrokes would
+			// stop console / debug shortcuts from working.
+			//
+			// Same thread as the render loop (Skyrim's main thread runs
+			// both message pump and Present), so SetCurrentContext is
+			// race-free.
+			if (g_ctx) {
+				ImGuiContext* prev = ImGui::GetCurrentContext();
+				ImGui::SetCurrentContext(g_ctx);
+				ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp);
+				if (prev != g_ctx) {
+					ImGui::SetCurrentContext(prev);
+				}
+			}
+			return CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
+		}
+
+		void InstallWndProcHook()
+		{
+			if (g_origWndProc || !g_hwnd)
+				return;
+			g_origWndProc = reinterpret_cast<WNDPROC>(
+				SetWindowLongPtrA(g_hwnd, GWLP_WNDPROC,
+					reinterpret_cast<LONG_PTR>(WndProcThunk)));
+			if (g_origWndProc) {
+				logs::info("SettingsUI: WndProc hook installed (hwnd={})",
+					reinterpret_cast<void*>(g_hwnd));
+			} else {
+				logs::warn("SettingsUI: SetWindowLongPtrA returned null; keyboard/mouse may not reach ImGui");
+			}
+		}
 
 		void RenderWindow()
 		{
@@ -147,6 +199,25 @@ namespace ImGuiVRHelper::SettingsUI
 			return false;
 		}
 
+		// Win32 input backend. Hooks the swapchain window's WndProc so
+		// the user's desktop mouse + keyboard reach this ImGui context
+		// (slider input fields, copy/paste, ImGui keyboard nav). The
+		// per-context backend data ImGui_ImplWin32 stores in the
+		// context's BackendPlatformUserData makes this safe to coexist
+		// with HUDDemo's separate context.
+		DXGI_SWAP_CHAIN_DESC desc{};
+		if (d3d.swapchain && SUCCEEDED(d3d.swapchain->GetDesc(&desc)) && desc.OutputWindow) {
+			g_hwnd = desc.OutputWindow;
+			if (!ImGui_ImplWin32_Init(g_hwnd)) {
+				logs::warn("SettingsUI::Init: ImGui_ImplWin32_Init failed; keyboard/mouse will not work");
+				g_hwnd = nullptr;
+			} else {
+				InstallWndProcHook();
+			}
+		} else {
+			logs::warn("SettingsUI::Init: couldn't resolve swapchain HWND; keyboard/mouse disabled");
+		}
+
 		logs::info("SettingsUI initialized (helper ImGui context @ {})", static_cast<void*>(g_ctx));
 		return true;
 	}
@@ -156,6 +227,17 @@ namespace ImGuiVRHelper::SettingsUI
 		if (!g_ctx)
 			return;
 		ImGui::SetCurrentContext(g_ctx);
+		// Restore the original WndProc before tearing down ImGui's
+		// Win32 backend — the thunk closes over g_ctx and would
+		// dereference a destroyed context if a stray message arrives
+		// after Shutdown. Idempotent against not-yet-installed hook.
+		if (g_origWndProc && g_hwnd) {
+			SetWindowLongPtrA(g_hwnd, GWLP_WNDPROC,
+				reinterpret_cast<LONG_PTR>(g_origWndProc));
+			g_origWndProc = nullptr;
+		}
+		g_hwnd = nullptr;
+		ImGui_ImplWin32_Shutdown();
 		ImGui_ImplDX11_Shutdown();
 		ImGui::DestroyContext(g_ctx);
 		g_ctx = nullptr;
@@ -324,6 +406,14 @@ namespace ImGuiVRHelper::SettingsUI
 		pumpButtons(vrState.secondaryControllerState, prevSecondary);
 
 		ImGui_ImplDX11_NewFrame();
+		// Win32 input backend's NewFrame captures cursor pos + key state
+		// from Windows and feeds it into this context's IO. Skipped if
+		// the WndProc hook didn't install (e.g. swapchain HWND wasn't
+		// resolvable) — controllers still drive ImGui via the thumbstick
+		// + button paths above, just without desktop input.
+		if (g_hwnd) {
+			ImGui_ImplWin32_NewFrame();
+		}
 		ImGui::NewFrame();
 		if (g_visible) {
 			RenderWindow();
