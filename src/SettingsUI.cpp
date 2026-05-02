@@ -34,24 +34,34 @@ namespace ImGuiVRHelper::SettingsUI
 
 		LRESULT CALLBACK WndProcThunk(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 		{
-			// Forward every Win32 message to ImGui's input backend with
-			// the helper's settings context active. Skyrim's WndProc
-			// then sees the message too — we don't swallow input here
-			// because in VR the user usually isn't actively playing
-			// while the menu is up, and intercepting keystrokes would
-			// stop console / debug shortcuts from working.
+			// Forward every Win32 message to ImGui's input backend
+			// against WHATEVER context is currently active — DO NOT
+			// mutate GImGui from this thread.
 			//
-			// Same thread as the render loop (Skyrim's main thread runs
-			// both message pump and Present), so SetCurrentContext is
-			// race-free.
-			if (g_ctx) {
-				ImGuiContext* prev = ImGui::GetCurrentContext();
-				ImGui::SetCurrentContext(g_ctx);
-				ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp);
-				if (prev != g_ctx) {
-					ImGui::SetCurrentContext(prev);
-				}
-			}
+			// Earlier versions called SetCurrentContext(g_ctx) here so
+			// settings_ctx would receive Win32 events even if the
+			// render thread had switched to a different context (e.g.
+			// HUDDemo's). That introduced a multi-thread race: Skyrim
+			// dispatches WndProc from a different thread than Present
+			// (rendering happens on a JobListManager::ServingThread,
+			// not the message pump's thread), so swapping GImGui from
+			// the WndProc thread mid-render-frame would null-deref the
+			// render thread's NewFrame call when its read of GImGui
+			// landed during our swap window. Crash repro:
+			//   imgui-vr-helper crash-2026-05-02-02-24-32, rax=0 inside
+			//   ImGui::NewFrame called from HUDDemo::Render.
+			//
+			// ImGui_ImplWin32_WndProcHandler reads BackendPlatformUserData
+			// from the current context. If GImGui is settings_ctx (Win32
+			// backend installed), input events are recorded there. If
+			// GImGui is hud_ctx or anything else without a Win32
+			// backend, GetBackendData returns null and the handler is a
+			// no-op — we drop input events that fire during the brief
+			// non-settings-context window. Acceptable: that's a few
+			// frames a session, all input that matters arrives while
+			// the render thread is in SettingsUI::Render with
+			// settings_ctx active.
+			ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp);
 			return CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
 		}
 
