@@ -81,6 +81,24 @@ namespace ImGuiVRHelper::SettingsUI
 				return;
 			}
 
+			// Clamp the window inside the 1920x1080 panel each frame.
+			// ImGui doesn't keep windows fully on-screen by default — the
+			// user could drag this off the edge and lose half of it
+			// behind the overlay's RTV bounds. We snap the position back
+			// only when it's actually drifted out of bounds, so normal
+			// drag inside the panel feels natural.
+			{
+				const ImVec2 winPos = ImGui::GetWindowPos();
+				const ImVec2 winSize = ImGui::GetWindowSize();
+				const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+				const ImVec2 clamped(
+					std::clamp(winPos.x, 0.0f, std::max(0.0f, displaySize.x - winSize.x)),
+					std::clamp(winPos.y, 0.0f, std::max(0.0f, displaySize.y - winSize.y)));
+				if (clamped.x != winPos.x || clamped.y != winPos.y) {
+					ImGui::SetWindowPos(clamped);
+				}
+			}
+
 			ImGui::TextUnformatted("Drag this window with controller grip to reposition the overlay.");
 			ImGui::Separator();
 
