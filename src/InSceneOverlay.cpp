@@ -629,12 +629,20 @@ float4 main(PS_INPUT input) : SV_TARGET
 				panelSRV = GetMenuSRV(menuTex);
 		}
 
-		// Eye view-projection only needed for the panel pass.
+		// Eye view-projection now needed for BOTH passes — HUD-mode
+		// renders its content as a 3D quad at HMD-relative depth so
+		// per-eye stereo converges (without per-eye projection, the
+		// same content at the same eye-buffer pixel coords lands at
+		// different physical directions through each lens and the
+		// brain can't fuse the two images). Skyrim's vanilla HUD does
+		// this same thing — composites onto a virtual plane at a fixed
+		// distance, per-eye projection.
 		EyeMatrices matrices;
-		if (wantPanelPass) {
+		if (wantPanelPass || !hudClients.empty()) {
 			matrices = ComputeEyeMatrices(eye);
 			if (!matrices.valid) {
 				wantPanelPass = false;
+				hudClients.clear();
 			}
 		}
 
@@ -664,12 +672,33 @@ float4 main(PS_INPUT input) : SV_TARGET
 		vp.MaxDepth = 1.0f;
 		ctx->RSSetViewports(1, &vp);
 
-		// Pass 1: HUD-mode clients. Each renders as a full-viewport
-		// alpha-blended quad. The unit quad's geometry is at [-0.5, 0.5]
-		// in XY; setting wvp to scale(2, 2, 1) maps that directly into
-		// clip-space [-1, 1] without any view/projection transform.
+		// Pass 1: HUD-mode clients. Render each as a billboarded 3D
+		// quad anchored to the HMD at a fixed depth, sized large
+		// enough to cover most of the user's FOV. Per-eye stereo
+		// projection (matrices.vpHeadSpace) gives both eyes the
+		// disparity they need to fuse the image at HUD plane depth —
+		// matches what Skyrim's own HUD rendering does, and what the
+		// user's brain expects from "flat panel floating in front of
+		// me." A naive full-viewport composite (same pixels in both
+		// eye buffers) doesn't fuse, since pixel (x, y) in the left
+		// eye buffer represents a different physical direction than
+		// pixel (x, y) in the right eye buffer.
+		//
+		// Constants chosen empirically:
+		//   depth 1.5m: comfortable focal distance for VR text
+		//   width 2.5m: covers ~80° horizontal FOV at depth 1.5m
+		// Height follows kOverlayAspect (16:9) for the 1920x1080 RTV.
+		//
 		// Iteration order = registration order so HUD layers stack
-		// predictably (last registered draws on top).
+		// predictably (last registered draws on top, depth-tested
+		// against earlier ones via the same-Z plane).
+		constexpr float kHUDDepth = 1.5f;
+		constexpr float kHUDWidth = 2.5f;
+		const float kHUDHeight = kHUDWidth * Overlay::Config::kOverlayAspect;
+		const Matrix hudScale = Matrix::CreateScale(kHUDWidth, kHUDHeight, 1.0f);
+		const Matrix hudOffset = Matrix::CreateTranslation(0.0f, 0.0f, -kHUDDepth);
+		const Matrix hudModel = hudScale * hudOffset;
+		const Matrix hudWvp = (hudModel * matrices.vpHeadSpace).Transpose();
 		for (const auto& hud : hudClients) {
 			if (!hud.texture)
 				continue;
@@ -677,7 +706,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 			if (!hudSRV)
 				continue;
 			ConstantBufferData cb;
-			cb.wvp = Matrix::CreateScale(2.0f, 2.0f, 1.0f).Transpose();
+			cb.wvp = hudWvp;
 			DrawQuad(ctx, cb, hudSRV);
 		}
 

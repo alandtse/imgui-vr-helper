@@ -107,30 +107,31 @@ namespace ImGuiVRHelperPluginAPI
 		kClientFlag_None = 0,
 		kClientFlag_RequiresFocus = 1u << 0,  ///< only invoke on_frame when this client holds focus
 
-		/// Render this client's panel as a fully transparent, screen-space
-		/// overlay covering the entire eye viewport in BOTH eyes — instead
-		/// of as a 3D quad floating in front of the user.
+		/// Render this client's panel as a fully transparent, always-on
+		/// overlay anchored to the HMD at a comfortable viewing depth —
+		/// like Skyrim's vanilla HUD plane. The client doesn't have to
+		/// reason about positioning; the helper picks a depth + size
+		/// that fills most of the user's FOV.
 		///
-		/// Use cases: subtitle text positioned over an NPC's head, damage
-		/// numbers, world-locked 2D HUD elements where the client
-		/// computes screen-space coordinates from world-space positions.
+		/// Use cases: subtitle text, damage numbers, nameplates,
+		/// always-on debug overlays — any flat 2D content you'd put on
+		/// a HUD layer in flat-screen Skyrim.
 		///
 		/// Behavior:
-		///   - The panel RTV is the same 1920×1080 RGBA8 the helper hands
-		///     to all clients. The client should clear it transparent
-		///     (ImGui windows with NoBackground / alpha 0) and draw text
-		///     or shapes at the screen positions it wants to overlay.
-		///   - The helper composites the panel as a full-viewport
-		///     alpha-blended quad on each eye buffer, so transparent
-		///     pixels show the underlying scene unchanged.
-		///   - Same content goes to both eyes (no stereo offset). For
-		///     world-anchored elements, the client must project world
-		///     positions into screen space and place ImGui content
-		///     there itself.
+		///   - The panel RTV is the same 1920×1080 RGBA8 the helper
+		///     hands every client. Clear it transparent (ImGui windows
+		///     with NoBackground / alpha 0) and draw text / shapes at
+		///     the panel coordinates you want.
+		///   - The helper renders the RTV as a 3D quad at fixed
+		///     HMD-relative depth (~1.5m forward, ~2.5m wide), with
+		///     proper per-eye projection so the eyes converge on it.
+		///     Transparent pixels pass through to the underlying scene.
 		///   - HUD clients are NOT subject to focus or attachMode
-		///     gating; they render every frame they exist. The focused
-		///     panel-mode client (if any) renders ON TOP of the HUD
-		///     layer as the 3D quad.
+		///     gating — they render every frame they exist. The
+		///     focused panel-mode client (if any) renders separately
+		///     at its own (movable, draggable) position.
+		///   - Multiple HUD clients stack in registration order;
+		///     last-registered draws on top.
 		kClientFlag_HUDMode = 1u << 1,
 	};
 
