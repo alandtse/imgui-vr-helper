@@ -14,7 +14,7 @@
 
 namespace ImGuiVRHelper
 {
-	class HelperImpl final : public ImGuiVRHelperPluginAPI::IImGuiVRHelperInterface002
+	class HelperImpl final : public ImGuiVRHelperPluginAPI::IImGuiVRHelperInterface001
 	{
 	public:
 		static HelperImpl& GetSingleton();
@@ -22,13 +22,9 @@ namespace ImGuiVRHelper
 		// IImGuiVRHelperInterface001
 		uint32_t GetBuildNumber() override;
 
-		uint32_t RegisterClient(const char* name, ImGuiVRHelperPluginAPI::OnFrameFn on_frame,
-			void* user, uint32_t flags) override;
-		void UnregisterClient(uint32_t client_id) override;
-
-		// IImGuiVRHelperInterface002
-		uint32_t RegisterClientV2(const char* name, const char* version,
+		uint32_t RegisterClient(const char* name, const char* version,
 			ImGuiVRHelperPluginAPI::OnFrameFn on_frame, void* user, uint32_t flags) override;
+		void UnregisterClient(uint32_t client_id) override;
 
 		bool GetPanel(uint32_t client_id, ImGuiVRHelperPluginAPI::PanelHandle* out) override;
 		bool GetPointer(uint32_t client_id, float* u, float* v, uint32_t* device_idx) override;
