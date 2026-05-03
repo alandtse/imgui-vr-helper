@@ -14,7 +14,7 @@
 
 namespace ImGuiVRHelper
 {
-	class HelperImpl final : public ImGuiVRHelperPluginAPI::IImGuiVRHelperInterface001
+	class HelperImpl final : public ImGuiVRHelperPluginAPI::IImGuiVRHelperInterface002
 	{
 	public:
 		static HelperImpl& GetSingleton();
@@ -25,6 +25,10 @@ namespace ImGuiVRHelper
 		uint32_t RegisterClient(const char* name, ImGuiVRHelperPluginAPI::OnFrameFn on_frame,
 			void* user, uint32_t flags) override;
 		void UnregisterClient(uint32_t client_id) override;
+
+		// IImGuiVRHelperInterface002
+		uint32_t RegisterClientV2(const char* name, const char* version,
+			ImGuiVRHelperPluginAPI::OnFrameFn on_frame, void* user, uint32_t flags) override;
 
 		bool GetPanel(uint32_t client_id, ImGuiVRHelperPluginAPI::PanelHandle* out) override;
 		bool GetPointer(uint32_t client_id, float* u, float* v, uint32_t* device_idx) override;
@@ -88,6 +92,7 @@ namespace ImGuiVRHelper
 		{
 			uint32_t client_id;
 			std::string name;
+			std::string version;  ///< client-supplied (RegisterClientV2); empty for v001 callers
 			uint32_t flags;
 			bool has_texture;  ///< texture was allocated (client has called GetPanel)
 			bool has_focus;    ///< this client currently holds focus
@@ -169,6 +174,7 @@ namespace ImGuiVRHelper
 	struct ClientRecord
 	{
 		std::string name;
+		std::string version;  ///< client-supplied via RegisterClientV2; empty for v001 callers
 		ImGuiVRHelperPluginAPI::OnFrameFn on_frame = nullptr;
 		void* user = nullptr;
 		uint32_t flags = 0;

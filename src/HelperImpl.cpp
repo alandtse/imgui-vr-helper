@@ -78,8 +78,17 @@ namespace ImGuiVRHelper
 	uint32_t HelperImpl::RegisterClient(const char* name,
 		ImGuiVRHelperPluginAPI::OnFrameFn on_frame, void* user, uint32_t flags)
 	{
+		// Forward to v002 with no version. Keeps the registration code
+		// path single-sourced; v001-only clients show up with empty
+		// version in diagnostics, which is the documented behaviour.
+		return RegisterClientV2(name, nullptr, on_frame, user, flags);
+	}
+
+	uint32_t HelperImpl::RegisterClientV2(const char* name, const char* version,
+		ImGuiVRHelperPluginAPI::OnFrameFn on_frame, void* user, uint32_t flags)
+	{
 		if (!name || !on_frame) {
-			logs::warn("RegisterClient: rejected (name={}, on_frame={})",
+			logs::warn("RegisterClientV2: rejected (name={}, on_frame={})",
 				name ? name : "<null>",
 				static_cast<const void*>(on_frame));
 			return 0;
@@ -89,11 +98,18 @@ namespace ImGuiVRHelper
 		const uint32_t id = m_next_client_id++;
 		auto& rec = m_clients[id];
 		rec.name = name;
+		rec.version = version ? version : "";
 		rec.on_frame = on_frame;
 		rec.user = user;
 		rec.flags = flags;
 
-		logs::info("RegisterClient({}) -> client_id={} flags=0x{:x}", name, id, flags);
+		if (rec.version.empty()) {
+			logs::info("RegisterClientV2({}) -> client_id={} flags=0x{:x}",
+				name, id, flags);
+		} else {
+			logs::info("RegisterClientV2({} v{}) -> client_id={} flags=0x{:x}",
+				name, rec.version, id, flags);
+		}
 		return id;
 	}
 
@@ -301,6 +317,7 @@ namespace ImGuiVRHelper
 			ClientSnapshot snap{};
 			snap.client_id = id;
 			snap.name = rec.name;
+			snap.version = rec.version;
 			snap.flags = rec.flags;
 			snap.has_texture = (rec.texture != nullptr);
 			snap.has_focus = (m_focused_client == id);

@@ -184,8 +184,9 @@ namespace ImGuiVRHelper::SettingsUI
 				{
 					kCol_ID = 0,
 					kCol_Name = 1,
-					kCol_Mode = 2,
-					kCol_State = 3,
+					kCol_Version = 2,
+					kCol_Mode = 3,
+					kCol_State = 4,
 				};
 
 				constexpr ImGuiTableFlags kTableFlags =
@@ -199,7 +200,7 @@ namespace ImGuiVRHelper::SettingsUI
 				// pushing the rest of the settings panel offscreen.
 				const ImVec2 outerSize(0.0f, ImGui::GetTextLineHeightWithSpacing() * 12.0f);
 
-				if (ImGui::BeginTable("##ClientsTable", 4, kTableFlags, outerSize)) {
+				if (ImGui::BeginTable("##ClientsTable", 5, kTableFlags, outerSize)) {
 					ImGui::TableSetupScrollFreeze(0, 1);  // pin header row
 					ImGui::TableSetupColumn("ID",
 						ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort |
@@ -208,6 +209,9 @@ namespace ImGuiVRHelper::SettingsUI
 					ImGui::TableSetupColumn("Name",
 						ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_PreferSortAscending,
 						0.0f, kCol_Name);
+					ImGui::TableSetupColumn("Version",
+						ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortAscending,
+						100.0f, kCol_Version);
 					ImGui::TableSetupColumn("Mode",
 						ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortAscending,
 						110.0f, kCol_Mode);
@@ -253,6 +257,9 @@ namespace ImGuiVRHelper::SettingsUI
 									case kCol_Name:
 										cmp = a.name.compare(b.name);
 										break;
+									case kCol_Version:
+										cmp = a.version.compare(b.version);
+										break;
 									case kCol_Mode:
 										{
 											int ra = modeRank(a), rb = modeRank(b);
@@ -284,6 +291,12 @@ namespace ImGuiVRHelper::SettingsUI
 						ImGui::Text("%u", c.client_id);
 						ImGui::TableNextColumn();
 						ImGui::TextUnformatted(c.name.c_str());
+						ImGui::TableNextColumn();
+						if (c.version.empty()) {
+							ImGui::TextDisabled("-");
+						} else {
+							ImGui::TextUnformatted(c.version.c_str());
+						}
 						ImGui::TableNextColumn();
 						if (c.flags & API::kClientFlag_HUDMode) {
 							ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "HUD");
