@@ -11,6 +11,7 @@
 #include "Overlay.h"
 #include "WandPointing.h"
 
+#include <algorithm>
 #include <dxgi.h>
 #include <imgui_impl_win32.h>
 
@@ -172,18 +173,111 @@ namespace ImGuiVRHelper::SettingsUI
 			}
 
 			if (ImGui::CollapsingHeader("Registered Clients")) {
-				const auto clients = HelperImpl::GetSingleton().SnapshotClients();
+				auto clients = HelperImpl::GetSingleton().SnapshotClients();
 				ImGui::Text("Active clients: %zu", clients.size());
 				ImGui::Spacing();
-				if (ImGui::BeginTable("##ClientsTable", 4,
-						ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-							ImGuiTableFlags_SizingStretchProp)) {
-					ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 50.0f);
-					ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-					ImGui::TableSetupColumn("Mode", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-					ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+
+				// Stable column identifiers — referenced by sort specs and
+				// kept independent of column display order so reordering
+				// columns in-place doesn't shuffle sort meaning.
+				enum ClientsTableColumn : ImGuiID
+				{
+					kCol_ID = 0,
+					kCol_Name = 1,
+					kCol_Mode = 2,
+					kCol_State = 3,
+				};
+
+				constexpr ImGuiTableFlags kTableFlags =
+					ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+					ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_Sortable |
+					ImGuiTableFlags_SortMulti | ImGuiTableFlags_Resizable |
+					ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable |
+					ImGuiTableFlags_ContextMenuInBody | ImGuiTableFlags_ScrollY;
+
+				// Cap height so a long client list paginates rather than
+				// pushing the rest of the settings panel offscreen.
+				const ImVec2 outerSize(0.0f, ImGui::GetTextLineHeightWithSpacing() * 12.0f);
+
+				if (ImGui::BeginTable("##ClientsTable", 4, kTableFlags, outerSize)) {
+					ImGui::TableSetupScrollFreeze(0, 1);  // pin header row
+					ImGui::TableSetupColumn("ID",
+						ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort |
+							ImGuiTableColumnFlags_PreferSortAscending,
+						50.0f, kCol_ID);
+					ImGui::TableSetupColumn("Name",
+						ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_PreferSortAscending,
+						0.0f, kCol_Name);
+					ImGui::TableSetupColumn("Mode",
+						ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortAscending,
+						110.0f, kCol_Mode);
+					ImGui::TableSetupColumn("State",
+						ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending,
+						130.0f, kCol_State);
 					ImGui::TableHeadersRow();
+
 					namespace API = ImGuiVRHelperPluginAPI;
+
+					// State sort key: focus > allocated > idle (so descending
+					// brings interesting clients to the top).
+					auto stateRank = [](const HelperImpl::ClientSnapshot& c) -> int {
+						if (c.has_focus)
+							return 2;
+						if (c.has_texture)
+							return 1;
+						return 0;
+					};
+					// Mode sort key: Panel < HUD; +focus extends rank so
+					// focus-required clients sort distinctly within their mode.
+					auto modeRank = [](const HelperImpl::ClientSnapshot& c) -> int {
+						int r = (c.flags & API::kClientFlag_HUDMode) ? 2 : 0;
+						if (c.flags & API::kClientFlag_RequiresFocus)
+							r += 1;
+						return r;
+					};
+
+					if (auto* specs = ImGui::TableGetSortSpecs();
+						specs && clients.size() > 1 &&
+						(specs->SpecsDirty || specs->SpecsCount > 0)) {
+						std::stable_sort(clients.begin(), clients.end(),
+							[&](const HelperImpl::ClientSnapshot& a,
+								const HelperImpl::ClientSnapshot& b) {
+								for (int i = 0; i < specs->SpecsCount; ++i) {
+									const ImGuiTableColumnSortSpecs& s = specs->Specs[i];
+									int cmp = 0;
+									switch (s.ColumnUserID) {
+									case kCol_ID:
+										cmp = (a.client_id < b.client_id) ? -1 : (a.client_id > b.client_id) ? 1 :
+									                                                                           0;
+										break;
+									case kCol_Name:
+										cmp = a.name.compare(b.name);
+										break;
+									case kCol_Mode:
+										{
+											int ra = modeRank(a), rb = modeRank(b);
+											cmp = (ra < rb) ? -1 : (ra > rb) ? 1 :
+										                                       0;
+										}
+										break;
+									case kCol_State:
+										{
+											int ra = stateRank(a), rb = stateRank(b);
+											cmp = (ra < rb) ? -1 : (ra > rb) ? 1 :
+										                                       0;
+										}
+										break;
+									default:
+										break;
+									}
+									if (cmp != 0)
+										return s.SortDirection == ImGuiSortDirection_Ascending ? cmp < 0 : cmp > 0;
+								}
+								return false;
+							});
+						specs->SpecsDirty = false;
+					}
+
 					for (const auto& c : clients) {
 						ImGui::TableNextRow();
 						ImGui::TableNextColumn();
