@@ -115,9 +115,21 @@ namespace ImGuiVRHelper::Dashboard
 			}
 		}
 
-		/// Resolve the active client's panel texture under the helper
-		/// lock. Falls back to the self-client when g_activeClient is 0
-		/// or invalid. Returns nullptr if neither has a texture yet.
+		/// Resolve which client's panel texture to mirror onto the
+		/// dashboard surface. Returns the self-client texture in three
+		/// cases:
+		///   1. No active picker selection (g_activeClient == 0).
+		///   2. Active client was unregistered (not found in m_clients).
+		///   3. Active client lacks kClientFlag_RendersOnFocus — they
+		///      don't honor the focus-render contract, so their RTV
+		///      may be stale or empty. Mirroring the helper's own
+		///      settings panel keeps the user able to navigate (the
+		///      picker UI is right there); SettingsUI shows an inline
+		///      banner explaining the manual-trigger requirement.
+		///
+		/// Caller (Tick) takes the texture handle out of the locked
+		/// scope; SteamVR's SetOverlayTexture copies before returning
+		/// so the texture lifetime past this call doesn't matter.
 		ID3D11Texture2D* ResolveActiveTexture(HelperImpl& impl, uint32_t& out_client_id)
 		{
 			std::scoped_lock lk{ DashboardFriend::Mutex(impl) };
@@ -126,7 +138,18 @@ namespace ImGuiVRHelper::Dashboard
 			uint32_t target = g_activeClient;
 			if (target == 0 || !clients.contains(target)) {
 				target = impl.GetSelfClientId();
+			} else {
+				const auto& rec = clients.at(target);
+				if (!(rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus)) {
+					// Non-honoring client picked: keep showing the
+					// helper's settings panel so the user can pick
+					// something else or dismiss. SettingsUI checks
+					// GetActiveClient against the per-snapshot flag
+					// to know whether to show the manual-trigger banner.
+					target = impl.GetSelfClientId();
+				}
 			}
+
 			out_client_id = target;
 			if (target == 0)
 				return nullptr;
@@ -134,12 +157,6 @@ namespace ImGuiVRHelper::Dashboard
 			auto it = clients.find(target);
 			if (it == clients.end())
 				return nullptr;
-
-			// Note: GetClientPanelTexture takes the lock again. We can't
-			// nest std::mutex, so we read directly. Texture pointer is
-			// stable as long as we hold the lock; SteamVR's
-			// SetOverlayTexture copies before returning so we don't have
-			// to keep the texture alive past this call.
 			return it->second.texture.get();
 		}
 

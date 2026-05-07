@@ -200,6 +200,7 @@ namespace ImGuiVRHelper::SettingsUI
 
 				ImGui::Spacing();
 				ImGui::TextDisabled("SteamVR dashboard panel currently shows:");
+				namespace API = ImGuiVRHelperPluginAPI;
 				if (ImGui::BeginCombo("##DashboardPicker", preview.c_str())) {
 					if (ImGui::Selectable("(self) ImGuiVRHelper", activePicker == 0)) {
 						Dashboard::SetActiveClient(0);
@@ -212,11 +213,38 @@ namespace ImGuiVRHelper::SettingsUI
 						std::string label = c.name;
 						if (!c.version.empty())
 							label += " " + c.version;
+						// Annotate clients that haven't acked the
+						// focus-render contract so the user knows the
+						// picker won't auto-show their menu.
+						if (!(c.flags & API::kClientFlag_RendersOnFocus)) {
+							label += "  (manual trigger)";
+						}
 						if (ImGui::Selectable(label.c_str(), c.client_id == activePicker)) {
 							Dashboard::SetActiveClient(c.client_id);
 						}
 					}
 					ImGui::EndCombo();
+				}
+
+				// Banner when a non-honoring client is selected. The
+				// dashboard surface stays on the helper's settings
+				// panel (Dashboard::ResolveActiveTexture falls back to
+				// self-client) so the user can pick something else
+				// without leaving the dashboard.
+				if (activePicker != 0) {
+					for (const auto& c : clients) {
+						if (c.client_id != activePicker)
+							continue;
+						if (!(c.flags & API::kClientFlag_RendersOnFocus)) {
+							ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f),
+								"Trigger %s manually to display its menu.",
+								c.name.c_str());
+							ImGui::TextDisabled(
+								"This client doesn't auto-render on focus; "
+								"use its own hotkey / activation.");
+						}
+						break;
+					}
 				}
 
 				ImGui::Spacing();

@@ -433,12 +433,18 @@ namespace ImGuiVRHelper
 		// SteamVR dashboard's ImGuiVRHelper icon lands the user on this
 		// settings panel, with the picker (Registered Clients section)
 		// available to switch to other clients.
+		//
+		// RendersOnFocus: the helper unconditionally renders its
+		// settings UI into the self-client RTV (DispatchFrame's
+		// SettingsUI::Render block), so it trivially honors the
+		// focus-render contract.
 		m_self_client_id = RegisterClient(
 			"ImGuiVRHelper.Settings",
 			nullptr,
 			+[](const ImGuiVRHelperPluginAPI::Frame*, void*) { /* no-op */ },
 			nullptr,
-			ImGuiVRHelperPluginAPI::kClientFlag_Dashboard);
+			ImGuiVRHelperPluginAPI::kClientFlag_Dashboard |
+				ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus);
 
 		// Synthetic HUD-mode client for the Settings::showHUDDemo smoke
 		// test. Always registered (zero overhead until showHUDDemo
