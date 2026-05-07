@@ -50,6 +50,9 @@ namespace ImGuiVRHelper
 		void FeedVREvent(uint32_t device, uint32_t key_code, bool pressed,
 			float thumbstick_x, float thumbstick_y) override;
 
+		bool SetDashboardThumbnail(uint32_t client_id, const char* image_path) override;
+		bool IsDashboardVisible() override;
+
 		// Helper-internal entry points (not part of the public API).
 
 		/// Build the per-frame Frame snapshot via Input::BuildFrame and
@@ -88,10 +91,12 @@ namespace ImGuiVRHelper
 		{
 			uint32_t client_id;
 			std::string name;
-			std::string version;  ///< client-supplied (RegisterClientV2); empty for v001 callers
+			std::string version;  ///< client-supplied at registration; empty if not provided
 			uint32_t flags;
-			bool has_texture;  ///< texture was allocated (client has called GetPanel)
-			bool has_focus;    ///< this client currently holds focus
+			bool has_texture;        ///< texture was allocated (client has called GetPanel)
+			bool has_focus;          ///< this client currently holds focus
+			bool dashboard_active;   ///< client has kClientFlag_Dashboard and a live dashboard handle
+			bool dashboard_visible;  ///< SteamVR dashboard is currently showing this client's panel
 		};
 		std::vector<ClientSnapshot> SnapshotClients();
 
@@ -136,6 +141,12 @@ namespace ImGuiVRHelper
 	private:
 		HelperImpl() = default;
 
+		// Dashboard subsystem reaches into m_clients / m_mutex / m_focused_client
+		// directly to mirror panel textures onto SteamVR dashboard surfaces
+		// each frame. Friend rather than passing accessors because the access
+		// is intrinsic to the helper's lifecycle, not a public API extension.
+		friend struct DashboardFriend;
+
 		std::mutex m_mutex;
 		uint32_t m_next_client_id = 1;
 		std::unordered_map<uint32_t, struct ClientRecord> m_clients;
@@ -170,7 +181,7 @@ namespace ImGuiVRHelper
 	struct ClientRecord
 	{
 		std::string name;
-		std::string version;  ///< client-supplied via RegisterClientV2; empty for v001 callers
+		std::string version;  ///< client-supplied at registration; empty if not provided
 		ImGuiVRHelperPluginAPI::OnFrameFn on_frame = nullptr;
 		void* user = nullptr;
 		uint32_t flags = 0;
@@ -182,6 +193,18 @@ namespace ImGuiVRHelper
 		winrt::com_ptr<ID3D11Texture2D> texture;
 		winrt::com_ptr<ID3D11RenderTargetView> rtv;
 		winrt::com_ptr<ID3D11ShaderResourceView> srv;
+
+		// SteamVR Dashboard surface. Allocated by Dashboard::EnsureClient
+		// the first frame after registration if kClientFlag_Dashboard is
+		// set and IVROverlay is available. k_ulOverlayHandleInvalid
+		// (i.e. zero) until then or when the runtime can't host
+		// dashboard overlays (e.g. OpenComposite). Both handles share the
+		// client's panel `texture` — SteamVR copies on SetOverlayTexture.
+		uint64_t dashboard_overlay = 0;
+		uint64_t dashboard_thumbnail = 0;
+		std::string dashboard_thumbnail_path;  ///< absolute or game-root-relative; loaded lazily
+		bool dashboard_open = false;           ///< SteamVR dashboard currently showing this overlay
+		bool dashboard_init_failed = false;    ///< set on CreateDashboardOverlay failure to suppress retries
 	};
 
 	struct ComboRecord

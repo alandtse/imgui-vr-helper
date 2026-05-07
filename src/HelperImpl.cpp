@@ -8,6 +8,7 @@
 #include "pch.h"
 
 #include "ComboRecording.h"
+#include "Dashboard.h"
 #include "Globals.h"
 #include "HUDDemo.h"
 #include "HelperImpl.h"
@@ -109,6 +110,7 @@ namespace ImGuiVRHelper
 		std::scoped_lock lk{ m_mutex };
 		if (auto it = m_clients.find(client_id); it != m_clients.end()) {
 			logs::info("UnregisterClient({})  // {}", client_id, it->second.name);
+			Dashboard::ReleaseClientLocked(it->second);
 			m_clients.erase(it);
 		}
 		// Drop combos owned by this client.
@@ -312,6 +314,8 @@ namespace ImGuiVRHelper
 			snap.flags = rec.flags;
 			snap.has_texture = (rec.texture != nullptr);
 			snap.has_focus = (m_focused_client == id);
+			snap.dashboard_active = (rec.dashboard_overlay != 0);
+			snap.dashboard_visible = rec.dashboard_open;
 			out.push_back(std::move(snap));
 		}
 		// Stable order by client_id so the list doesn't reshuffle
@@ -760,5 +764,38 @@ namespace ImGuiVRHelper
 		// Keep Overlay::State::overlayVisible in sync with focus state so
 		// OverlayDrag::CanPerform sees the right value next frame.
 		overlayState.overlayVisible = (focused != 0);
+
+		// SteamVR Dashboard surface for clients that opted in via
+		// kClientFlag_Dashboard. Texture-mirrors and event-pumps each
+		// dashboard client; cheap no-op if no client opted in. Last in
+		// the frame so it picks up the freshest panel pixels.
+		Dashboard::Tick();
+	}
+
+	bool HelperImpl::SetDashboardThumbnail(uint32_t client_id, const char* image_path)
+	{
+		std::scoped_lock lk{ m_mutex };
+		auto it = m_clients.find(client_id);
+		if (it == m_clients.end()) {
+			return false;
+		}
+		auto& rec = it->second;
+		if (!(rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_Dashboard)) {
+			logs::warn("SetDashboardThumbnail({}): client lacks kClientFlag_Dashboard",
+				client_id);
+			return false;
+		}
+		rec.dashboard_thumbnail_path = image_path ? image_path : "";
+		// Loaded lazily on the next dashboard activation so a client can
+		// register, set the thumbnail, then never block on disk I/O on
+		// the registration thread. Re-clear the failed flag too: a new
+		// path is a fresh chance to succeed.
+		rec.dashboard_init_failed = false;
+		return true;
+	}
+
+	bool HelperImpl::IsDashboardVisible()
+	{
+		return Dashboard::IsDashboardVisible();
 	}
 }

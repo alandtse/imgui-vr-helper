@@ -187,6 +187,7 @@ namespace ImGuiVRHelper::SettingsUI
 					kCol_Version = 2,
 					kCol_Mode = 3,
 					kCol_State = 4,
+					kCol_Dashboard = 5,
 				};
 
 				constexpr ImGuiTableFlags kTableFlags =
@@ -200,7 +201,7 @@ namespace ImGuiVRHelper::SettingsUI
 				// pushing the rest of the settings panel offscreen.
 				const ImVec2 outerSize(0.0f, ImGui::GetTextLineHeightWithSpacing() * 12.0f);
 
-				if (ImGui::BeginTable("##ClientsTable", 5, kTableFlags, outerSize)) {
+				if (ImGui::BeginTable("##ClientsTable", 6, kTableFlags, outerSize)) {
 					ImGui::TableSetupScrollFreeze(0, 1);  // pin header row
 					ImGui::TableSetupColumn("ID",
 						ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort |
@@ -218,6 +219,9 @@ namespace ImGuiVRHelper::SettingsUI
 					ImGui::TableSetupColumn("State",
 						ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending,
 						130.0f, kCol_State);
+					ImGui::TableSetupColumn("Dashboard",
+						ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending,
+						100.0f, kCol_Dashboard);
 					ImGui::TableHeadersRow();
 
 					namespace API = ImGuiVRHelperPluginAPI;
@@ -259,6 +263,24 @@ namespace ImGuiVRHelper::SettingsUI
 										break;
 									case kCol_Version:
 										cmp = a.version.compare(b.version);
+										break;
+									case kCol_Dashboard:
+										{
+											// Rank: visible (2) > active-only (1) > none (0).
+											// Descending puts "open in dashboard right now"
+											// at the top, which is what the user usually
+											// wants to find first.
+											auto dashRank = [](const HelperImpl::ClientSnapshot& c) {
+												if (c.dashboard_visible)
+													return 2;
+												if (c.dashboard_active)
+													return 1;
+												return 0;
+											};
+											const int ra = dashRank(a), rb = dashRank(b);
+											cmp = (ra < rb) ? -1 : (ra > rb) ? 1 :
+										                                       0;
+										}
 										break;
 									case kCol_Mode:
 										{
@@ -317,6 +339,18 @@ namespace ImGuiVRHelper::SettingsUI
 						} else {
 							ImGui::TextDisabled("idle");
 						}
+						ImGui::TableNextColumn();
+						if (c.flags & API::kClientFlag_Dashboard) {
+							if (c.dashboard_visible) {
+								ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "OPEN");
+							} else if (c.dashboard_active) {
+								ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "ready");
+							} else {
+								ImGui::TextDisabled("pending");
+							}
+						} else {
+							ImGui::TextDisabled("-");
+						}
 					}
 					ImGui::EndTable();
 				}
@@ -326,6 +360,9 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::TextDisabled("State badge: FOCUS = receives input + drives 3D quad");
 				ImGui::TextDisabled("             alloc = panel RTV created");
 				ImGui::TextDisabled("             idle  = no RTV yet (lazy)");
+				ImGui::TextDisabled("Dashboard:   OPEN  = SteamVR dashboard panel currently shown");
+				ImGui::TextDisabled("             ready = dashboard handle allocated, panel idle");
+				ImGui::TextDisabled("             pending = waiting for IVROverlay (or unsupported)");
 			}
 
 			if (ImGui::CollapsingHeader("Diagnostics")) {
