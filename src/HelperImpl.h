@@ -50,7 +50,6 @@ namespace ImGuiVRHelper
 		void FeedVREvent(uint32_t device, uint32_t key_code, bool pressed,
 			float thumbstick_x, float thumbstick_y) override;
 
-		bool SetDashboardThumbnail(uint32_t client_id, const char* image_path) override;
 		bool IsDashboardVisible() override;
 
 		// Helper-internal entry points (not part of the public API).
@@ -93,10 +92,10 @@ namespace ImGuiVRHelper
 			std::string name;
 			std::string version;  ///< client-supplied at registration; empty if not provided
 			uint32_t flags;
-			bool has_texture;        ///< texture was allocated (client has called GetPanel)
-			bool has_focus;          ///< this client currently holds focus
-			bool dashboard_active;   ///< client has kClientFlag_Dashboard and a live dashboard handle
-			bool dashboard_visible;  ///< SteamVR dashboard is currently showing this client's panel
+			bool has_texture;         ///< texture was allocated (client has called GetPanel)
+			bool has_focus;           ///< this client currently holds focus
+			bool dashboard_eligible;  ///< client has kClientFlag_Dashboard (appears in dashboard picker)
+			bool dashboard_active;    ///< picker currently has this client selected (shown in dashboard rn)
 		};
 		std::vector<ClientSnapshot> SnapshotClients();
 
@@ -194,17 +193,14 @@ namespace ImGuiVRHelper
 		winrt::com_ptr<ID3D11RenderTargetView> rtv;
 		winrt::com_ptr<ID3D11ShaderResourceView> srv;
 
-		// SteamVR Dashboard surface. Allocated by Dashboard::EnsureClient
-		// the first frame after registration if kClientFlag_Dashboard is
-		// set and IVROverlay is available. k_ulOverlayHandleInvalid
-		// (i.e. zero) until then or when the runtime can't host
-		// dashboard overlays (e.g. OpenComposite). Both handles share the
-		// client's panel `texture` — SteamVR copies on SetOverlayTexture.
-		uint64_t dashboard_overlay = 0;
-		uint64_t dashboard_thumbnail = 0;
-		std::string dashboard_thumbnail_path;  ///< absolute or game-root-relative; loaded lazily
-		bool dashboard_open = false;           ///< SteamVR dashboard currently showing this overlay
-		bool dashboard_init_failed = false;    ///< set on CreateDashboardOverlay failure to suppress retries
+		// SteamVR Dashboard eligibility — purely informational on the
+		// per-client side. The helper owns ONE shared dashboard overlay
+		// (handle + thumbnail), and a picker inside the helper's
+		// settings panel chooses which kClientFlag_Dashboard client's
+		// panel texture is mirrored onto it. So we don't track per-
+		// client overlay handles here; whether this client appears in
+		// the picker is a function of (flags & kClientFlag_Dashboard).
+		std::string dashboard_thumbnail_path;  ///< optional icon for the picker entry; not yet rendered (v1 picker is text-only)
 	};
 
 	struct ComboRecord

@@ -86,6 +86,23 @@ namespace ImGuiVRHelper
 			return 0;
 		}
 
+		// HUD-mode and Dashboard are mutually exclusive: HUD content is
+		// always-on overlay rendered through the world; Dashboard is a
+		// "look at this 2D panel and click" paradigm. Mixing them
+		// produces weird outcomes (subtitle text in the SteamVR rail).
+		// Strip the conflicting flag and warn.
+		uint32_t effective_flags = flags;
+		if ((effective_flags & ImGuiVRHelperPluginAPI::kClientFlag_HUDMode) &&
+			(effective_flags & ImGuiVRHelperPluginAPI::kClientFlag_Dashboard)) {
+			logs::warn(
+				"RegisterClient({}): kClientFlag_HUDMode + "
+				"kClientFlag_Dashboard set together; dropping "
+				"kClientFlag_Dashboard. HUD content doesn't belong "
+				"in the SteamVR dashboard rail.",
+				name);
+			effective_flags &= ~ImGuiVRHelperPluginAPI::kClientFlag_Dashboard;
+		}
+
 		std::scoped_lock lk{ m_mutex };
 		const uint32_t id = m_next_client_id++;
 		auto& rec = m_clients[id];
@@ -93,14 +110,14 @@ namespace ImGuiVRHelper
 		rec.version = version ? version : "";
 		rec.on_frame = on_frame;
 		rec.user = user;
-		rec.flags = flags;
+		rec.flags = effective_flags;
 
 		if (rec.version.empty()) {
 			logs::info("RegisterClient({}) -> client_id={} flags=0x{:x}",
-				name, id, flags);
+				name, id, effective_flags);
 		} else {
 			logs::info("RegisterClient({} v{}) -> client_id={} flags=0x{:x}",
-				name, rec.version, id, flags);
+				name, rec.version, id, effective_flags);
 		}
 		return id;
 	}
@@ -110,9 +127,13 @@ namespace ImGuiVRHelper
 		std::scoped_lock lk{ m_mutex };
 		if (auto it = m_clients.find(client_id); it != m_clients.end()) {
 			logs::info("UnregisterClient({})  // {}", client_id, it->second.name);
-			Dashboard::ReleaseClientLocked(it->second);
 			m_clients.erase(it);
 		}
+		// If the dashboard picker had this client selected, drop the
+		// selection so the next Tick falls back to the self-client.
+		// ClearActiveClientIfMatches is the lock-free variant that
+		// doesn't reach back into HelperImpl while we hold m_mutex.
+		Dashboard::ClearActiveClientIfMatches(client_id);
 		// Drop combos owned by this client.
 		for (auto it = m_combos.begin(); it != m_combos.end();) {
 			if (it->second.client_id == client_id) {
@@ -314,8 +335,9 @@ namespace ImGuiVRHelper
 			snap.flags = rec.flags;
 			snap.has_texture = (rec.texture != nullptr);
 			snap.has_focus = (m_focused_client == id);
-			snap.dashboard_active = (rec.dashboard_overlay != 0);
-			snap.dashboard_visible = rec.dashboard_open;
+			snap.dashboard_eligible = (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_Dashboard) != 0;
+			snap.dashboard_active = (Dashboard::GetActiveClient() == id) ||
+			                        (Dashboard::GetActiveClient() == 0 && id == m_self_client_id);
 			out.push_back(std::move(snap));
 		}
 		// Stable order by client_id so the list doesn't reshuffle
@@ -407,12 +429,16 @@ namespace ImGuiVRHelper
 		// because the helper drives its own rendering inline in
 		// DispatchFrame (we don't need to round-trip through the public
 		// callback path).
+		// Self-client is the default dashboard target — clicking the
+		// SteamVR dashboard's ImGuiVRHelper icon lands the user on this
+		// settings panel, with the picker (Registered Clients section)
+		// available to switch to other clients.
 		m_self_client_id = RegisterClient(
 			"ImGuiVRHelper.Settings",
 			nullptr,
 			+[](const ImGuiVRHelperPluginAPI::Frame*, void*) { /* no-op */ },
 			nullptr,
-			ImGuiVRHelperPluginAPI::kClientFlag_None);
+			ImGuiVRHelperPluginAPI::kClientFlag_Dashboard);
 
 		// Synthetic HUD-mode client for the Settings::showHUDDemo smoke
 		// test. Always registered (zero overhead until showHUDDemo
@@ -770,28 +796,6 @@ namespace ImGuiVRHelper
 		// dashboard client; cheap no-op if no client opted in. Last in
 		// the frame so it picks up the freshest panel pixels.
 		Dashboard::Tick();
-	}
-
-	bool HelperImpl::SetDashboardThumbnail(uint32_t client_id, const char* image_path)
-	{
-		std::scoped_lock lk{ m_mutex };
-		auto it = m_clients.find(client_id);
-		if (it == m_clients.end()) {
-			return false;
-		}
-		auto& rec = it->second;
-		if (!(rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_Dashboard)) {
-			logs::warn("SetDashboardThumbnail({}): client lacks kClientFlag_Dashboard",
-				client_id);
-			return false;
-		}
-		rec.dashboard_thumbnail_path = image_path ? image_path : "";
-		// Loaded lazily on the next dashboard activation so a client can
-		// register, set the thumbnail, then never block on disk I/O on
-		// the registration thread. Re-clear the failed flag too: a new
-		// path is a fresh chance to succeed.
-		rec.dashboard_init_failed = false;
-		return true;
 	}
 
 	bool HelperImpl::IsDashboardVisible()

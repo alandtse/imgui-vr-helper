@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-Modding-Exception
 // Copyright (c) 2025 ImGuiVRHelper contributors. See COPYING and EXCEPTIONS.md.
 //
-// SteamVR Dashboard overlay support.
+// SteamVR Dashboard overlay support (single-handle model).
 //
-// Owns the per-client `dashboard_overlay` / `dashboard_thumbnail` handles
-// in ClientRecord. Each frame, mirrors the client's panel texture onto
-// the dashboard plane via IVROverlay::SetOverlayTexture, drains
-// VREvent_* events from each dashboard overlay, and translates dashboard
-// mouse/keyboard events into ImGui input state for the focused client.
+// The helper owns ONE dashboard overlay + thumbnail handle, registered
+// under "ImGuiVRHelper" in SteamVR's dashboard rail. A picker inside
+// the helper's settings panel chooses which kClientFlag_Dashboard
+// client's panel texture is currently mirrored onto the dashboard
+// surface. Default is the helper's own self-client.
 //
-// The in-scene overlay path (InSceneOverlay.cpp) is independent — a
-// client registered with both kClientFlag_Dashboard and as an in-scene
-// panel renders on both surfaces from the same texture.
+// Rationale: per-client dashboard handles produce a cluttered SteamVR
+// rail when many clients are registered. One icon + a picker is
+// cleaner UX, and the single-handle model means one CreateDashboardOverlay
+// call regardless of client count.
 
 #pragma once
 
@@ -19,41 +20,52 @@
 
 namespace ImGuiVRHelper
 {
-	struct ClientRecord;
-
 	namespace Dashboard
 	{
-		/// Idempotent per-frame entry point. Walks every registered
-		/// client; for those with kClientFlag_Dashboard, ensures a
-		/// dashboard overlay handle exists, mirrors the panel texture
-		/// onto it, and drains VREvent_* into ImGui mouse/keyboard
-		/// state for the focused client.
+		/// Idempotent per-frame entry point. Mirrors the active client's
+		/// panel texture onto the shared dashboard overlay and pumps
+		/// VREvent_* into ImGui input state.
 		///
-		/// No-op if the OpenVR runtime hasn't initialised IVROverlay,
-		/// or if no client has kClientFlag_Dashboard set.
+		/// No-op if IVROverlay isn't available (OpenComposite-style
+		/// runtimes log once on first call and silently skip after).
 		///
-		/// Called from HelperImpl::DispatchFrame, after the per-client
-		/// on_frame callbacks have run, so any newly-registered client
-		/// is picked up the same frame it appears.
+		/// Called from HelperImpl::DispatchFrame after per-client
+		/// on_frame callbacks.
 		void Tick();
 
-		/// Allocate dashboard handles for `rec` if it has
-		/// kClientFlag_Dashboard, IVROverlay is available, and we
-		/// haven't already tried and failed.
-		///
-		/// `client_id` is used to derive a stable overlay key
-		/// ("imgui-vr-helper.client.<id>") so SteamVR's dashboard
-		/// position memory persists across sessions.
-		///
-		/// Caller must hold HelperImpl::m_mutex.
-		bool EnsureClientLocked(uint32_t client_id, ClientRecord& rec);
-
-		/// Tear down dashboard handles for a client about to be
-		/// unregistered. Caller must hold HelperImpl::m_mutex.
-		void ReleaseClientLocked(ClientRecord& rec);
+		/// Tear down the shared dashboard handle. Called once at helper
+		/// shutdown (currently just logged — process exit reaps the
+		/// handle).
+		void Shutdown();
 
 		/// True iff the SteamVR dashboard is currently open. Cheap —
-		/// reads a cached state updated each Tick.
+		/// reads cached state updated each Tick.
 		bool IsDashboardVisible();
+
+		/// Switch the active dashboard client. Panel texture mirroring
+		/// flips on the next Tick. `client_id` must be a registered
+		/// client with kClientFlag_Dashboard set, or 0 to fall back to
+		/// the helper's self-client. Silent no-op for invalid IDs.
+		///
+		/// Also calls RequestFocus on the new active client so its
+		/// ImGui state receives input from the dashboard cursor.
+		void SetActiveClient(uint32_t client_id);
+
+		/// Returns the currently-active dashboard client, or 0 if no
+		/// dashboard is allocated (runtime unavailable or shutdown).
+		uint32_t GetActiveClient();
+
+		/// Lock-free clear of the active client. Safe to call from
+		/// HelperImpl methods that already hold m_mutex (the public
+		/// SetActiveClient takes the lock to validate; this skips it).
+		/// Used by UnregisterClient to drop a stale picker selection
+		/// without nested-locking std::mutex.
+		void ClearActiveClientIfMatches(uint32_t client_id);
+
+		/// Update the dashboard's thumbnail icon from a PNG/JPG path.
+		/// Loaded synchronously on the next Tick; absolute or
+		/// game-root-relative path. Pass nullptr to clear (reverts to
+		/// SteamVR's placeholder).
+		void SetThumbnail(const char* image_path);
 	}
 }

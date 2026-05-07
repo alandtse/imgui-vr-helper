@@ -5,7 +5,6 @@
 
 #include "Dashboard.h"
 
-#include "Globals.h"
 #include "HelperImpl.h"
 #include "Overlay.h"
 #include "internal/VRUtils.h"
@@ -14,10 +13,6 @@
 
 namespace ImGuiVRHelper
 {
-	// Friend type with access to HelperImpl's private members. Separates the
-	// "Dashboard needs raw map + mutex" coupling from the rest of the
-	// HelperImpl API so the rest of the helper doesn't have to grow public
-	// accessors purely to satisfy the dashboard subsystem.
 	struct DashboardFriend
 	{
 		static std::mutex& Mutex(HelperImpl& impl) { return impl.m_mutex; }
@@ -25,7 +20,6 @@ namespace ImGuiVRHelper
 		{
 			return impl.m_clients;
 		}
-		static uint32_t& FocusedClient(HelperImpl& impl) { return impl.m_focused_client; }
 	};
 }
 
@@ -33,132 +27,135 @@ namespace ImGuiVRHelper::Dashboard
 {
 	namespace
 	{
-		// Cached "is the SteamVR dashboard up right now" flag. Updated
-		// once per Tick — IVROverlay::IsDashboardVisible is cheap but
-		// we don't need sub-frame freshness anywhere.
-		bool g_dashboardVisible = false;
-
-		// Logged once on detection so a user troubleshooting why their
-		// dashboard entry isn't showing has something to grep in
-		// CommunityShaders.log without having to enable trace logging.
+		// One overlay + thumbnail for the whole helper. Created lazily on
+		// first Tick when IVROverlay is available.
+		vr::VROverlayHandle_t g_overlay = 0;
+		vr::VROverlayHandle_t g_thumbnail = 0;
+		bool g_initFailed = false;
 		bool g_loggedRuntimeUnavailable = false;
 
-		/// Returns the IVROverlay interface or nullptr if the runtime
-		/// hasn't initialised it. Call every frame — OpenComposite-based
-		/// runtimes can return nullptr indefinitely without ever throwing,
-		/// so we silently degrade by skipping the dashboard path.
+		// Active dashboard client. 0 means "use the helper's self-client"
+		// (resolved at Tick time so the self-client doesn't have to exist
+		// at module-init).
+		uint32_t g_activeClient = 0;
+
+		// Cached state.
+		bool g_dashboardVisible = false;
+
+		// Thumbnail update queue. Loaded on the next Tick on the render
+		// thread to keep file I/O off whichever thread called
+		// SetThumbnail. Empty string means "use SteamVR placeholder".
+		std::string g_pendingThumbnailPath;
+		bool g_thumbnailDirty = false;
+
+		// Overlay key — fixed per helper install. SteamVR persists user
+		// dashboard layout (position, size, gain) keyed on this string,
+		// so renaming it loses the user's tweaks.
+		constexpr const char* kOverlayKey = "imgui-vr-helper.dashboard";
+		constexpr const char* kOverlayName = "ImGuiVRHelper";
+
 		vr::IVROverlay* GetOverlayInterface()
 		{
 			Util::OpenVRContext ctx;
 			return ctx.IsValid() ? ctx.overlay : nullptr;
 		}
 
-		/// Build a stable overlay key for SteamVR's position-memory
-		/// system. SteamVR persists per-key dashboard layout (position,
-		/// size, gain), so reusing the same key across sessions means
-		/// the user's dashboard tweaks stick across launches.
-		std::string MakeOverlayKey(const ClientRecord& rec)
+		/// Allocate the shared dashboard overlay if possible. Idempotent;
+		/// latches `g_initFailed` on hard errors so we don't retry every
+		/// Tick on runtimes that don't support dashboard overlays.
+		bool EnsureOverlay(vr::IVROverlay* iface)
 		{
-			// std::hash<string> isn't required to be stable across STL
-			// releases but is in practice on MSVC. If that ever changes,
-			// swap in FNV-1a; the cost is one-time loss of SteamVR-
-			// remembered dashboard layout for existing users.
-			const auto h = std::hash<std::string>{}(rec.name);
-			return std::format("imgui-vr-helper.client.{:016x}", h);
-		}
+			if (g_overlay != 0)
+				return true;
+			if (g_initFailed)
+				return false;
 
-		/// Friendly name shown next to the thumbnail in SteamVR's
-		/// dashboard rail. Falls back to client name if no version is set.
-		std::string MakeOverlayName(const ClientRecord& rec)
-		{
-			if (rec.version.empty()) {
-				return rec.name;
-			}
-			return std::format("{} {}", rec.name, rec.version);
-		}
-
-		/// Apply the thumbnail asset to a dashboard overlay's thumbnail
-		/// surface. Path is resolved relative to the game root
-		/// (Data/SKSE/Plugins/...) when not absolute. Lazy — called the
-		/// first time the dashboard surface is shown to avoid disk I/O
-		/// during registration.
-		void LoadThumbnailIfNeeded(vr::IVROverlay* iface, ClientRecord& rec)
-		{
-			if (rec.dashboard_thumbnail == 0 || rec.dashboard_thumbnail_path.empty())
-				return;
-
-			// SetOverlayFromFile reads the file synchronously and uploads
-			// to SteamVR. Errors here aren't fatal — SteamVR shows its
-			// generic placeholder icon instead.
-			const auto err = iface->SetOverlayFromFile(
-				rec.dashboard_thumbnail,
-				rec.dashboard_thumbnail_path.c_str());
+			auto err = iface->CreateDashboardOverlay(
+				kOverlayKey, kOverlayName, &g_overlay, &g_thumbnail);
 			if (err != vr::VROverlayError_None) {
-				logs::warn("Dashboard: SetOverlayFromFile('{}') for client '{}' failed: {}",
-					rec.dashboard_thumbnail_path, rec.name,
+				g_initFailed = true;
+				logs::warn("Dashboard: CreateDashboardOverlay failed: {}",
 					iface->GetOverlayErrorNameFromEnum(err));
-			} else {
-				logs::info("Dashboard: thumbnail loaded for client '{}' from '{}'",
-					rec.name, rec.dashboard_thumbnail_path);
+				return false;
 			}
-			// One-shot: clear the path so we don't re-upload on every
-			// activation. SetDashboardThumbnail re-fills the path if the
-			// caller wants to swap icons.
-			rec.dashboard_thumbnail_path.clear();
-		}
 
-		/// Mirror a client's panel texture onto its dashboard surface.
-		/// SteamVR copies on SetOverlayTexture, so the source texture
-		/// can be re-used for the in-scene path the same frame.
-		void MirrorTexture(vr::IVROverlay* iface, ClientRecord& rec)
-		{
-			if (rec.dashboard_overlay == 0 || !rec.texture)
-				return;
+			iface->SetOverlayWidthInMeters(g_overlay, 2.5f);
+			iface->SetOverlayInputMethod(g_overlay, vr::VROverlayInputMethod_Mouse);
 
-			vr::Texture_t tex{};
-			tex.handle = rec.texture.get();
-			tex.eType = vr::TextureType_DirectX;
-			tex.eColorSpace = vr::ColorSpace_Auto;
-			iface->SetOverlayTexture(rec.dashboard_overlay, &tex);
-
-			// Mouse-input scale: tell SteamVR our panel coordinates run
-			// 0..width × 0..height so VREvent_MouseMove arrives in
-			// pixels we can hand to ImGui directly without rescaling.
 			vr::HmdVector2_t mouseScale{
 				static_cast<float>(Overlay::Config::kOverlayWidth),
 				static_cast<float>(Overlay::Config::kOverlayHeight)
 			};
-			iface->SetOverlayMouseScale(rec.dashboard_overlay, &mouseScale);
+			iface->SetOverlayMouseScale(g_overlay, &mouseScale);
+
+			logs::info("Dashboard: created shared overlay key='{}'", kOverlayKey);
+			return true;
 		}
 
-		/// Drain VREvent_* from a single dashboard overlay. Returns
-		/// (open_changed, now_open) so the caller can apply focus
-		/// changes without holding the helper lock during RequestFocus.
-		///
-		/// Mouse / scroll events translate to ImGui input state inline —
-		/// safe because ImGui's IO doesn't take the helper's mutex.
-		struct PumpResult
+		/// Apply any pending thumbnail upload. Cheap when no change pending.
+		void ApplyPendingThumbnail(vr::IVROverlay* iface)
 		{
-			bool open_changed = false;
-			bool now_open = false;
-		};
-		PumpResult PumpEvents(vr::IVROverlay* iface, ClientRecord& rec)
-		{
-			PumpResult result{};
-			const bool was_open = rec.dashboard_open;
+			if (!g_thumbnailDirty || g_thumbnail == 0)
+				return;
+			g_thumbnailDirty = false;
 
+			if (g_pendingThumbnailPath.empty()) {
+				iface->ClearOverlayTexture(g_thumbnail);
+				logs::info("Dashboard: thumbnail cleared (placeholder)");
+				return;
+			}
+
+			const auto err = iface->SetOverlayFromFile(
+				g_thumbnail, g_pendingThumbnailPath.c_str());
+			if (err == vr::VROverlayError_None) {
+				logs::info("Dashboard: thumbnail loaded from '{}'", g_pendingThumbnailPath);
+			} else {
+				logs::warn("Dashboard: SetOverlayFromFile('{}') failed: {}",
+					g_pendingThumbnailPath, iface->GetOverlayErrorNameFromEnum(err));
+			}
+		}
+
+		/// Resolve the active client's panel texture under the helper
+		/// lock. Falls back to the self-client when g_activeClient is 0
+		/// or invalid. Returns nullptr if neither has a texture yet.
+		ID3D11Texture2D* ResolveActiveTexture(HelperImpl& impl, uint32_t& out_client_id)
+		{
+			std::scoped_lock lk{ DashboardFriend::Mutex(impl) };
+			auto& clients = DashboardFriend::Clients(impl);
+
+			uint32_t target = g_activeClient;
+			if (target == 0 || !clients.contains(target)) {
+				target = impl.GetSelfClientId();
+			}
+			out_client_id = target;
+			if (target == 0)
+				return nullptr;
+
+			auto it = clients.find(target);
+			if (it == clients.end())
+				return nullptr;
+
+			// Note: GetClientPanelTexture takes the lock again. We can't
+			// nest std::mutex, so we read directly. Texture pointer is
+			// stable as long as we hold the lock; SteamVR's
+			// SetOverlayTexture copies before returning so we don't have
+			// to keep the texture alive past this call.
+			return it->second.texture.get();
+		}
+
+		/// Drain VREvent_* from the shared dashboard overlay. Mouse /
+		/// scroll feed straight into ImGui IO; show/hide flips
+		/// g_dashboardVisible.
+		void PumpEvents(vr::IVROverlay* iface)
+		{
 			vr::VREvent_t evt{};
-			while (iface->PollNextOverlayEvent(rec.dashboard_overlay, &evt, sizeof(evt))) {
+			while (iface->PollNextOverlayEvent(g_overlay, &evt, sizeof(evt))) {
 				switch (evt.eventType) {
 				case vr::VREvent_OverlayShown:
-					rec.dashboard_open = true;
-					LoadThumbnailIfNeeded(iface, rec);
-					logs::info("Dashboard: overlay shown for client '{}'", rec.name);
+					logs::info("Dashboard: overlay shown");
 					break;
-
 				case vr::VREvent_OverlayHidden:
-					rec.dashboard_open = false;
-					logs::info("Dashboard: overlay hidden for client '{}'", rec.name);
+					logs::info("Dashboard: overlay hidden");
 					break;
 
 				case vr::VREvent_MouseMove:
@@ -173,8 +170,6 @@ namespace ImGuiVRHelper::Dashboard
 					{
 						auto& io = ImGui::GetIO();
 						const bool down = evt.eventType == vr::VREvent_MouseButtonDown;
-						// SteamVR uses VRMouseButton_Left/Right/Middle ==
-						// 1/2/4 (bit-flag). ImGui wants 0/1/2.
 						int btn = 0;
 						switch (evt.data.mouse.button) {
 						case vr::VRMouseButton_Left:
@@ -203,141 +198,118 @@ namespace ImGuiVRHelper::Dashboard
 					break;
 
 				default:
-					// Many event types we don't care about
-					// (VREvent_FocusEnter/Leave, VREvent_LockMousePos,
-					// keyboard input from SteamVR's virtual keyboard, etc.).
-					// Silent discard — phase 2 hooks more if we need them.
 					break;
 				}
 			}
-
-			if (rec.dashboard_open != was_open) {
-				result.open_changed = true;
-				result.now_open = rec.dashboard_open;
-			}
-			return result;
 		}
-	}
-
-	bool EnsureClientLocked(uint32_t client_id, ClientRecord& rec)
-	{
-		if (rec.dashboard_overlay != 0)
-			return true;
-		if (rec.dashboard_init_failed)
-			return false;
-		if (!(rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_Dashboard))
-			return false;
-
-		auto* iface = GetOverlayInterface();
-		if (!iface) {
-			if (!g_loggedRuntimeUnavailable) {
-				g_loggedRuntimeUnavailable = true;
-				logs::info(
-					"Dashboard: IVROverlay interface unavailable; "
-					"kClientFlag_Dashboard clients will fall back to "
-					"in-scene-only rendering. (OpenComposite-based "
-					"runtimes typically don't implement dashboard "
-					"overlays.)");
-			}
-			return false;
-		}
-
-		const auto key = MakeOverlayKey(rec);
-		const auto name = MakeOverlayName(rec);
-
-		vr::VROverlayHandle_t overlay = 0;
-		vr::VROverlayHandle_t thumbnail = 0;
-		auto err = iface->CreateDashboardOverlay(
-			key.c_str(), name.c_str(), &overlay, &thumbnail);
-		if (err != vr::VROverlayError_None) {
-			rec.dashboard_init_failed = true;
-			logs::warn("Dashboard: CreateDashboardOverlay('{}') for client '{}' failed: {}",
-				key, rec.name, iface->GetOverlayErrorNameFromEnum(err));
-			return false;
-		}
-
-		// Default geometry: 2.5m wide; the panel aspect controls height.
-		// SteamVR persists user tweaks via the overlay key, so this only
-		// matters on first run.
-		iface->SetOverlayWidthInMeters(overlay, 2.5f);
-		iface->SetOverlayInputMethod(overlay, vr::VROverlayInputMethod_Mouse);
-
-		rec.dashboard_overlay = overlay;
-		rec.dashboard_thumbnail = thumbnail;
-		rec.dashboard_open = false;
-
-		logs::info("Dashboard: created overlay key='{}' for client '{}' (id={})",
-			key, rec.name, client_id);
-		return true;
-	}
-
-	void ReleaseClientLocked(ClientRecord& rec)
-	{
-		if (rec.dashboard_overlay == 0)
-			return;
-		auto* iface = GetOverlayInterface();
-		if (iface) {
-			iface->DestroyOverlay(rec.dashboard_overlay);
-			// Thumbnail handle is destroyed implicitly when the parent
-			// dashboard overlay goes away — explicit DestroyOverlay on
-			// the thumbnail produces VROverlayError_InvalidHandle.
-		}
-		rec.dashboard_overlay = 0;
-		rec.dashboard_thumbnail = 0;
-		rec.dashboard_open = false;
 	}
 
 	void Tick()
 	{
 		auto* iface = GetOverlayInterface();
 		if (!iface) {
+			if (!g_loggedRuntimeUnavailable) {
+				g_loggedRuntimeUnavailable = true;
+				logs::info(
+					"Dashboard: IVROverlay interface unavailable; "
+					"SteamVR dashboard integration disabled. "
+					"(OpenComposite-based runtimes typically don't "
+					"implement dashboard overlays.)");
+			}
 			g_dashboardVisible = false;
 			return;
 		}
 
+		if (!EnsureOverlay(iface))
+			return;
+
+		ApplyPendingThumbnail(iface);
 		g_dashboardVisible = iface->IsDashboardVisible();
 
 		auto& impl = HelperImpl::GetSingleton();
 
-		// Drive each dashboard client under the helper lock for atomicity
-		// against UnregisterClient. RequestFocus itself takes the same
-		// lock (m_mutex is std::mutex, not recursive), so we record any
-		// focus flip during iteration and apply it after the lock drops.
-		uint32_t focus_target = 0;
-
-		{
-			std::scoped_lock lk{ DashboardFriend::Mutex(impl) };
-			auto& clients = DashboardFriend::Clients(impl);
-
-			for (auto& [id, rec] : clients) {
-				if (!(rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_Dashboard))
-					continue;
-
-				if (rec.dashboard_overlay == 0 && !EnsureClientLocked(id, rec)) {
-					continue;
-				}
-
-				MirrorTexture(iface, rec);
-
-				const auto pump = PumpEvents(iface, rec);
-				if (pump.open_changed && pump.now_open) {
-					// Newly-shown dashboard surface takes focus: same
-					// single-focus model as the in-scene panel. If
-					// multiple dashboard clients open the same frame
-					// (rare — the user can only be hovering one),
-					// last-wins in iteration order.
-					focus_target = id;
-				}
-			}
-		}  // helper lock released here
-
-		if (focus_target != 0) {
-			impl.RequestFocus(focus_target);
+		uint32_t resolved_client = 0;
+		ID3D11Texture2D* tex = ResolveActiveTexture(impl, resolved_client);
+		if (tex) {
+			vr::Texture_t t{};
+			t.handle = tex;
+			t.eType = vr::TextureType_DirectX;
+			t.eColorSpace = vr::ColorSpace_Auto;
+			iface->SetOverlayTexture(g_overlay, &t);
 		}
+
+		PumpEvents(iface);
+	}
+
+	void Shutdown()
+	{
+		auto* iface = GetOverlayInterface();
+		if (iface && g_overlay != 0) {
+			iface->DestroyOverlay(g_overlay);
+		}
+		g_overlay = 0;
+		g_thumbnail = 0;
+		g_initFailed = false;
 	}
 
 	bool IsDashboardVisible()
 	{
 		return g_dashboardVisible;
+	}
+
+	void SetActiveClient(uint32_t client_id)
+	{
+		auto& impl = HelperImpl::GetSingleton();
+		// Validate under the lock — the picker is racing client
+		// register/unregister.
+		{
+			std::scoped_lock lk{ DashboardFriend::Mutex(impl) };
+			auto& clients = DashboardFriend::Clients(impl);
+			if (client_id != 0 && !clients.contains(client_id)) {
+				return;
+			}
+			if (client_id != 0) {
+				const auto& rec = clients.at(client_id);
+				if (!(rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_Dashboard)) {
+					logs::warn(
+						"Dashboard::SetActiveClient({}): client lacks "
+						"kClientFlag_Dashboard; ignored",
+						client_id);
+					return;
+				}
+			}
+			g_activeClient = client_id;
+		}
+
+		const uint32_t focus_target = (client_id != 0) ? client_id : impl.GetSelfClientId();
+		if (focus_target != 0) {
+			impl.RequestFocus(focus_target);
+		}
+		logs::info("Dashboard: active client = {} ({})",
+			focus_target,
+			client_id == 0 ? "self" : "external");
+	}
+
+	uint32_t GetActiveClient()
+	{
+		return g_activeClient;
+	}
+
+	void ClearActiveClientIfMatches(uint32_t client_id)
+	{
+		// Caller (HelperImpl::UnregisterClient) already holds m_mutex.
+		// We don't take it here — std::mutex isn't recursive — and we
+		// don't reach back into HelperImpl::RequestFocus either; the
+		// next Tick will resolve to the self-client and the in-scene
+		// reconciler picks up focus changes.
+		if (g_activeClient == client_id) {
+			g_activeClient = 0;
+		}
+	}
+
+	void SetThumbnail(const char* image_path)
+	{
+		g_pendingThumbnailPath = image_path ? image_path : "";
+		g_thumbnailDirty = true;
 	}
 }

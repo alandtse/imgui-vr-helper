@@ -6,6 +6,7 @@
 #include "SettingsUI.h"
 
 #include "ComboRecording.h"
+#include "Dashboard.h"
 #include "Globals.h"
 #include "HelperImpl.h"
 #include "Overlay.h"
@@ -175,6 +176,49 @@ namespace ImGuiVRHelper::SettingsUI
 			if (ImGui::CollapsingHeader("Registered Clients")) {
 				auto clients = HelperImpl::GetSingleton().SnapshotClients();
 				ImGui::Text("Active clients: %zu", clients.size());
+
+				// SteamVR Dashboard picker. The helper owns one shared
+				// dashboard surface; this combo picks which eligible
+				// client's panel texture is mirrored onto it. Selecting
+				// "(self) ImGuiVRHelper" routes back to the helper's
+				// own settings UI — useful when the user wants to
+				// reconfigure the helper from the SteamVR dashboard
+				// without leaving it.
+				const uint32_t activePicker = Dashboard::GetActiveClient();
+				const auto selfId = HelperImpl::GetSingleton().GetSelfClientId();
+				std::string preview = "(self) ImGuiVRHelper";
+				if (activePicker != 0) {
+					for (const auto& c : clients) {
+						if (c.client_id == activePicker) {
+							preview = c.name;
+							if (!c.version.empty())
+								preview += " " + c.version;
+							break;
+						}
+					}
+				}
+
+				ImGui::Spacing();
+				ImGui::TextDisabled("SteamVR dashboard panel currently shows:");
+				if (ImGui::BeginCombo("##DashboardPicker", preview.c_str())) {
+					if (ImGui::Selectable("(self) ImGuiVRHelper", activePicker == 0)) {
+						Dashboard::SetActiveClient(0);
+					}
+					for (const auto& c : clients) {
+						if (!c.dashboard_eligible)
+							continue;
+						if (c.client_id == selfId)
+							continue;  // already shown as "(self)" entry
+						std::string label = c.name;
+						if (!c.version.empty())
+							label += " " + c.version;
+						if (ImGui::Selectable(label.c_str(), c.client_id == activePicker)) {
+							Dashboard::SetActiveClient(c.client_id);
+						}
+					}
+					ImGui::EndCombo();
+				}
+
 				ImGui::Spacing();
 
 				// Stable column identifiers — referenced by sort specs and
@@ -266,14 +310,14 @@ namespace ImGuiVRHelper::SettingsUI
 										break;
 									case kCol_Dashboard:
 										{
-											// Rank: visible (2) > active-only (1) > none (0).
-											// Descending puts "open in dashboard right now"
-											// at the top, which is what the user usually
-											// wants to find first.
+											// Rank: active (2) > eligible (1) > none (0).
+											// Descending puts "shown in dashboard right now" at
+											// the top, then "available in the picker," then
+											// non-dashboard clients.
 											auto dashRank = [](const HelperImpl::ClientSnapshot& c) {
-												if (c.dashboard_visible)
-													return 2;
 												if (c.dashboard_active)
+													return 2;
+												if (c.dashboard_eligible)
 													return 1;
 												return 0;
 											};
@@ -340,14 +384,10 @@ namespace ImGuiVRHelper::SettingsUI
 							ImGui::TextDisabled("idle");
 						}
 						ImGui::TableNextColumn();
-						if (c.flags & API::kClientFlag_Dashboard) {
-							if (c.dashboard_visible) {
-								ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "OPEN");
-							} else if (c.dashboard_active) {
-								ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "ready");
-							} else {
-								ImGui::TextDisabled("pending");
-							}
+						if (c.dashboard_active) {
+							ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "ACTIVE");
+						} else if (c.dashboard_eligible) {
+							ImGui::TextDisabled("eligible");
 						} else {
 							ImGui::TextDisabled("-");
 						}
@@ -360,9 +400,9 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::TextDisabled("State badge: FOCUS = receives input + drives 3D quad");
 				ImGui::TextDisabled("             alloc = panel RTV created");
 				ImGui::TextDisabled("             idle  = no RTV yet (lazy)");
-				ImGui::TextDisabled("Dashboard:   OPEN  = SteamVR dashboard panel currently shown");
-				ImGui::TextDisabled("             ready = dashboard handle allocated, panel idle");
-				ImGui::TextDisabled("             pending = waiting for IVROverlay (or unsupported)");
+				ImGui::TextDisabled("Dashboard:   ACTIVE   = currently shown on SteamVR dashboard plane");
+				ImGui::TextDisabled("             eligible = listed in the dashboard picker below");
+				ImGui::TextDisabled("             -        = not opted into kClientFlag_Dashboard");
 			}
 
 			if (ImGui::CollapsingHeader("Diagnostics")) {
