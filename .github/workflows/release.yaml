@@ -1,0 +1,90 @@
+# Release — INTENTIONALLY DISABLED until the mod has a Nexus modid.
+#
+# Right now this workflow only runs on manual dispatch and stops at "assemble the
+# mod archive + upload it as a run artifact." It does NOT publish a GitHub release
+# and does NOT touch Nexus. That keeps a one-click way to produce a packaged build
+# for local testing without committing to any public release surface.
+#
+# TO ENABLE REAL RELEASES (once a Nexus modid exists):
+#   1. Add the tag trigger back under `on:` (see the commented `push: tags` block).
+#   2. Flip the `publish` job's `if:` from `false` to the version gate (commented).
+#   3. Add a nexus-upload.yaml (mirror devbench's) wired to the modid, and a
+#      `nexus:` job mirroring devbench's release.yaml tail.
+# Until then the version lives in xmake.lua and there is deliberately no
+# semantic-release machinery.
+name: Release
+
+on:
+  workflow_dispatch:
+  # Re-enable when ready to publish on tag push:
+  # push:
+  #   tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/_build.yaml
+
+  package:
+    name: Package archive (artifact only)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download binaries
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+          path: bin
+
+      - name: Resolve version
+        id: ver
+        run: |
+          base="$(grep -oP 'local version = "\K[0-9.]+' xmake.lua)"
+          version="v${base}-dev.${GITHUB_RUN_NUMBER}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Resolved version=$version"
+
+      - name: Assemble mod archive
+        run: |
+          set -euo pipefail
+          stage="imgui-vr-helper-${{ steps.ver.outputs.version }}"
+          mkdir -p "$stage/SKSE/Plugins" "$stage/Developer"
+          cp bin/imgui-vr-helper.dll bin/imgui-vr-helper.pdb "$stage/SKSE/Plugins/"
+          # Docs + license for the in-mod folder.
+          cp README.md COPYING COPYING.LESSER EXCEPTIONS.md "$stage/"
+          # LGPL-3.0 vendored API pack for client-mod developers (the same files
+          # SCS and other consumers copy into their tree).
+          cp api/*.h api/*.cpp api/COPYING.LESSER "$stage/Developer/"
+          7z a -t7z -mx=9 "${stage}.7z" "$stage"
+          echo "Built ${stage}.7z:"
+          7z l "${stage}.7z"
+
+      - name: Upload archive artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: imgui-vr-helper-archive
+          path: imgui-vr-helper-*.7z
+          if-no-files-found: error
+
+  # DISABLED. Flip `if: false` to the version gate below once a Nexus modid exists
+  # and a real GitHub release is desired:
+  #   if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+  publish:
+    name: Publish GitHub release
+    needs: package
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Placeholder
+        run: echo "Publishing is disabled until a Nexus modid is assigned."
