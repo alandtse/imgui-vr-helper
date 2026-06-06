@@ -5,20 +5,23 @@
 # and does NOT touch Nexus. That keeps a one-click way to produce a packaged build
 # for local testing without committing to any public release surface.
 #
-# TO ENABLE REAL RELEASES (once a Nexus modid exists):
-#   1. Add the tag trigger back under `on:` (see the commented `push: tags` block).
-#   2. Flip the `publish` job's `if:` from `false` to the version gate (commented).
-#   3. Add a nexus-upload.yaml (mirror devbench's) wired to the modid, and a
-#      `nexus:` job mirroring devbench's release.yaml tail.
+# TO ENABLE REAL RELEASES (once a Nexus modid exists): replace this whole file with
+# the sibling devbench repo's release.yaml — it runs the full semantic-release
+# pipeline (Conventional-Commit version bump → tag → GitHub Release → .7z asset →
+# Nexus upload) on every push to main. That requires:
+#   1. The `push: branches: [main]` trigger (currently omitted so nothing auto-fires).
+#   2. A nexus-upload.yaml (mirror devbench's) wired to the modid.
+#   3. Repo secrets UNEX_APIKEY / UNEX_NEXUSMODS_SESSION_COOKIE and, to upload for
+#      real rather than dry-run, repository variable NEXUS_AUTO_UPLOAD=true.
 # Until then the version lives in xmake.lua and there is deliberately no
-# semantic-release machinery.
+# semantic-release machinery wired up.
 name: Release
 
 on:
   workflow_dispatch:
-  # Re-enable when ready to publish on tag push:
+  # Re-enable when ready (mirror devbench's semantic-release pipeline):
   # push:
-  #   tags: ["v*"]
+  #   branches: [main]
 
 concurrency:
   group: release-${{ github.ref }}
@@ -40,7 +43,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Download binaries
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: ${{ needs.build.outputs.artifact-name }}
           path: bin
