@@ -105,15 +105,15 @@ namespace ImGuiVRHelper::Hooks
 			}
 		}
 
-		// DirectInput scan code for F2. Combined with a held Shift modifier
+		// DirectInput scan code for F4. Combined with a held Shift modifier
 		// (checked via GetAsyncKeyState at press time) so the toggle is
-		// Shift+F2 — chosen to avoid the F2 single-keypress conflict with
-		// other mods that bind F2 (and to keep accidental presses during
+		// Shift+F4 — chosen to avoid the F4 single-keypress conflict with
+		// other mods that bind F4 (and to keep accidental presses during
 		// normal play from popping the helper open). Keyboard is the only
 		// reliable toggle path at the main menu, where VR controller
 		// buttons drive menu nav and may be consumed before reaching us.
 		// Future: make this user-configurable via the TOML config.
-		constexpr std::uint32_t kKeyboardToggleDIK = 0x3C;  // DIK_F2
+		constexpr std::uint32_t kKeyboardToggleDIK = 0x3E;  // DIK_F4
 
 		struct PollInputDevices_t
 		{
@@ -129,12 +129,12 @@ namespace ImGuiVRHelper::Hooks
 					for (auto* e = *a_events; e; e = e->next) {
 						const auto device = e->GetDevice();
 
-						// Keyboard toggle: Shift+F2. Fires the same
+						// Keyboard toggle: Shift+F4. Fires the same
 						// SettingsUI::Toggle path a controller combo
 						// would, so it works at the main menu where
 						// controller buttons may be intercepted.
 						// GetAsyncKeyState polls the OS-level shift
-						// state at the moment F2 is pressed, which is
+						// state at the moment F4 is pressed, which is
 						// simpler than tracking shift edges through
 						// the event stream and matches what
 						// SKSE/Skyrim itself does for hotkey modifiers.

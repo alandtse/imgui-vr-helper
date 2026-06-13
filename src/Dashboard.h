@@ -42,6 +42,13 @@ namespace ImGuiVRHelper
 		/// reads cached state updated each Tick.
 		bool IsDashboardVisible();
 
+		/// True iff the panel the dashboard is currently mirroring resolved
+		/// to the helper's own self-client (default selection, or a fallback
+		/// for an unregistered / non-honoring active client). HelperImpl
+		/// uses this to force-render the settings UI so the rail entry shows
+		/// a live menu. Updated each Tick.
+		bool IsShowingSelf();
+
 		/// Switch the active dashboard client. Panel texture mirroring
 		/// flips on the next Tick. `client_id` must be a registered
 		/// client with kClientFlag_Dashboard set, or 0 to fall back to

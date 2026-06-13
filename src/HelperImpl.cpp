@@ -463,19 +463,19 @@ namespace ImGuiVRHelper
 		// auto-default we've tried has bumped into a SCS or main-menu
 		// conflict (kBY-Both = main-menu back/cancel; kGrip-Both
 		// shadowed drag-to-reposition; Secondary kBY hijacked SCS's
-		// VRMenuOpenKeys). Default toggle is keyboard-only (Shift+F2)
+		// VRMenuOpenKeys). Default toggle is keyboard-only (Shift+F4)
 		// so users on a stock install can't accidentally collide with
 		// their other mods. Users who want a controller binding open
-		// the settings via Shift+F2 once and then click 'Rebind toggle
+		// the settings via Shift+F4 once and then click 'Rebind toggle
 		// key' to record any combo they want via ComboRecording.
-		logs::info("Self-client registered: id={} (toggle: Shift+F2; bind controller combo via settings)",
+		logs::info("Self-client registered: id={} (toggle: Shift+F4; bind controller combo via settings)",
 			m_self_client_id);
 	}
 
 	void HelperImpl::OnKeyboardToggle()
 	{
 		SettingsUI::Toggle();
-		logs::info("Keyboard toggle (Shift+F2): settings UI now {}",
+		logs::info("Keyboard toggle (Shift+F4): settings UI now {}",
 			SettingsUI::IsVisible() ? "VISIBLE" : "hidden");
 		// Focus + SaveSettings handled by SyncSelfFocus reconciler
 		// in DispatchFrame — every close path goes through the same
@@ -623,7 +623,7 @@ namespace ImGuiVRHelper
 
 		// Self-toggle combo (only registered if the user binds one via
 		// the "Rebind toggle key" UI; default keyboard toggle is
-		// Shift+F2 in OnKeyboardToggle). The combo machinery latches
+		// Shift+F4 in OnKeyboardToggle). The combo machinery latches
 		// rising edges, so this fires once per held cycle.
 		if (m_self_toggle_combo != 0 && ComboFired(m_self_toggle_combo)) {
 			SettingsUI::Toggle();
@@ -634,6 +634,17 @@ namespace ImGuiVRHelper
 			// keyboard, ImGui's window-X-button, programmatic Toggle)
 			// goes through the same single source of truth.
 		}
+
+		// Mirror dashboard visibility into the settings UI: when the SteamVR
+		// dashboard is showing the helper's own panel, force-render the
+		// settings/picker even without the hotkey toggle so opening the
+		// rail entry lands on a live menu. Reads last frame's dashboard
+		// state (Dashboard::Tick updates it at end of frame) — one-frame
+		// lag is imperceptible. Must run before the reconciler below, whose
+		// SettingsUI::IsVisible() check now also reflects this forced state
+		// (so the self-client takes focus while the dashboard shows it).
+		SettingsUI::SetForceVisible(
+			Dashboard::IsDashboardVisible() && Dashboard::IsShowingSelf());
 
 		// Self-focus reconciler. Single source of truth for "is the
 		// helper's settings UI active right now" → "should the

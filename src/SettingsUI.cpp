@@ -25,6 +25,10 @@ namespace ImGuiVRHelper::SettingsUI
 	{
 		ImGuiContext* g_ctx = nullptr;
 		bool g_visible = false;
+		// Set by HelperImpl when the SteamVR dashboard is showing the
+		// helper's panel: render the window even if the user never
+		// toggled it open via the hotkey.
+		bool g_forceVisible = false;
 
 		// Win32 input plumbing. We hook the swapchain window's WndProc
 		// so desktop mouse + keyboard reach the helper's ImGui context.
@@ -163,7 +167,7 @@ namespace ImGuiVRHelper::SettingsUI
 					&s.autoResetDistance, 0.0f, 5000.0f, "%.0f units");
 
 				ImGui::Separator();
-				ImGui::TextUnformatted("Toggle hotkey: Shift+F2 (keyboard).");
+				ImGui::TextUnformatted("Toggle hotkey: Shift+F4 (keyboard).");
 				ImGui::TextDisabled("Click below to bind a controller combo too.");
 				if (ImGui::Button("Rebind toggle key")) {
 					auto& impl = HelperImpl::GetSingleton();
@@ -558,15 +562,20 @@ namespace ImGuiVRHelper::SettingsUI
 		g_visible = !g_visible;
 	}
 
-	bool IsVisible() { return g_visible; }
+	bool IsVisible() { return g_visible || g_forceVisible; }
+
+	void SetForceVisible(bool forced) { g_forceVisible = forced; }
+
+	ImGuiContext* GetContext() { return g_ctx; }
 
 	bool Render(float dt)
 	{
 		if (!g_ctx)
 			return false;
-		// Render whenever either the settings window or the combo recording
-		// modal is up. The modal can fire from any client at any time.
-		if (!g_visible && !ComboRecording::IsActive())
+		// Render whenever the settings window is up (toggled or
+		// dashboard-forced) or the combo recording modal is active.
+		// The modal can fire from any client at any time.
+		if (!g_visible && !g_forceVisible && !ComboRecording::IsActive())
 			return false;
 
 		ImGui::SetCurrentContext(g_ctx);
@@ -756,7 +765,7 @@ namespace ImGuiVRHelper::SettingsUI
 			ImGui_ImplWin32_NewFrame();
 		}
 		ImGui::NewFrame();
-		if (g_visible) {
+		if (g_visible || g_forceVisible) {
 			RenderWindow();
 		}
 		ComboRecording::RenderModal();

@@ -12,6 +12,8 @@
 
 #pragma once
 
+struct ImGuiContext;
+
 namespace ImGuiVRHelper::SettingsUI
 {
 	/// Allocate the ImGui context, init ImGui_ImplDX11. Idempotent.
@@ -33,6 +35,20 @@ namespace ImGuiVRHelper::SettingsUI
 	/// HelperImpl on first frame.
 	void Toggle();
 
-	/// Returns true iff the settings window is currently visible.
+	/// Returns true iff the settings window is currently visible —
+	/// either toggled open via the hotkey/combo, or forced visible
+	/// because the SteamVR dashboard is showing the helper's panel
+	/// (see SetForceVisible).
 	bool IsVisible();
+
+	/// Force the settings window to render even when the user hasn't
+	/// toggled it open. HelperImpl sets this each frame from the
+	/// dashboard state so opening the SteamVR rail entry lands the user
+	/// straight on the settings/picker without needing the hotkey.
+	void SetForceVisible(bool forced);
+
+	/// The helper's own ImGui context. Used by the dashboard input pump
+	/// to route SteamVR dashboard mouse events into the right context.
+	/// nullptr before Init().
+	ImGuiContext* GetContext();
 }
