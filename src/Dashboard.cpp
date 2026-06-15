@@ -60,6 +60,25 @@ namespace ImGuiVRHelper::Dashboard
 		// broader denial.
 		bool g_probedRegularOverlay = false;
 
+		// Latched if the SteamVR overlay subsystem faults (access violation
+		// inside vrclient — seen on degraded / null-driver runtimes where
+		// IVROverlay calls walk into garbage). Once set, the dashboard path
+		// is skipped for the rest of the session so it can't crash the game.
+		// The in-scene overlay + HUD never touch IVROverlay, so they keep
+		// working regardless. SEH-caught faults are the backstop; the
+		// null-driver gate below is the deterministic first line of defense.
+		bool g_dashboardFaulted = false;
+
+		// Null / headless SteamVR detection. The null driver leaves the
+		// overlay subsystem half-initialized, so IVROverlay calls access-
+		// violate inside vrclient (and it can't host dashboard overlays
+		// anyway). Detected once via the HMD's tracking-system name, then
+		// the whole dashboard path is skipped — no overlay calls, no crash,
+		// independent of how the crash logger handles exceptions.
+		bool g_nullDriverChecked = false;
+		bool g_isNullDriver = false;
+		bool g_loggedNullDriver = false;
+
 		// Active dashboard client. 0 means "use the helper's self-client"
 		// (resolved at Tick time so the self-client doesn't have to exist
 		// at module-init).
@@ -103,6 +122,28 @@ namespace ImGuiVRHelper::Dashboard
 		vr::IVROverlay* GetSubmitInterface()
 		{
 			return RE::BSOpenVR::GetCleanIVROverlay();
+		}
+
+		// True on a null / headless SteamVR driver, where the overlay
+		// subsystem is unsafe to touch. Cached after the first successful
+		// query of the HMD's tracking-system name (the crash logger reads
+		// "null" here on these setups). Returns false until the system is
+		// queryable so we never cache a premature answer.
+		bool IsNullDriver()
+		{
+			if (g_nullDriverChecked)
+				return g_isNullDriver;
+			Util::OpenVRContext ctx;
+			if (!ctx.IsValid())
+				return false;
+			char buf[vr::k_unMaxPropertyStringSize] = {};
+			vr::ETrackedPropertyError perr = vr::TrackedProp_Success;
+			ctx.system->GetStringTrackedDeviceProperty(
+				vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_TrackingSystemName_String,
+				buf, sizeof(buf), &perr);
+			g_nullDriverChecked = true;
+			g_isNullDriver = (perr == vr::TrackedProp_Success && _stricmp(buf, "null") == 0);
+			return g_isNullDriver;
 		}
 
 		/// Allocate the shared dashboard overlay if possible. Idempotent
@@ -332,8 +373,25 @@ namespace ImGuiVRHelper::Dashboard
 		}
 	}
 
-	void Tick()
+	// Real per-frame work. Touches the SteamVR overlay subsystem (vrclient),
+	// which can access-violate on degraded / null-driver runtimes — so this
+	// is only ever invoked through the SEH guard in Tick().
+	void TickImpl()
 	{
+		// Deterministic first line of defense: never touch the overlay
+		// subsystem on a null / headless driver (it access-violates inside
+		// vrclient and can't host dashboard overlays anyway).
+		if (IsNullDriver()) {
+			if (!g_loggedNullDriver) {
+				g_loggedNullDriver = true;
+				logs::info(
+					"Dashboard: null-driver / headless SteamVR detected; skipping the "
+					"dashboard overlay path. In-scene overlay and HUD are unaffected.");
+			}
+			g_dashboardVisible = false;
+			return;
+		}
+
 		auto* iface = GetOverlayInterface();
 		if (!iface) {
 			if (!g_loggedRuntimeUnavailable) {
@@ -352,7 +410,10 @@ namespace ImGuiVRHelper::Dashboard
 			return;
 
 		ApplyPendingThumbnail(iface);
-		g_dashboardVisible = iface->IsDashboardVisible();
+		// Query visibility on the clean (overlay-owning) interface for
+		// consistency with create/submit/poll.
+		if (vr::IVROverlay* vis = GetSubmitInterface())
+			g_dashboardVisible = vis->IsDashboardVisible();
 
 		auto& impl = HelperImpl::GetSingleton();
 
@@ -400,6 +461,41 @@ namespace ImGuiVRHelper::Dashboard
 			PumpEvents(iface, g_resolvedIsSelf);
 	}
 
+	// SEH filter: catch only access violations from the overlay subsystem;
+	// let every other structured exception propagate untouched.
+	int OverlaySehFilter(unsigned int code)
+	{
+		return code == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER :
+		                                            EXCEPTION_CONTINUE_SEARCH;
+	}
+
+	// SEH boundary. Deliberately holds NO C++ objects with destructors so
+	// __try is legal here (the real work + its objects live in TickImpl).
+	// Returns false if a vrclient access violation was caught.
+	bool RunTickGuarded()
+	{
+		__try {
+			TickImpl();
+			return true;
+		} __except (OverlaySehFilter(GetExceptionCode())) {
+			return false;
+		}
+	}
+
+	void Tick()
+	{
+		if (g_dashboardFaulted)
+			return;
+		if (!RunTickGuarded()) {
+			g_dashboardFaulted = true;
+			logs::warn(
+				"Dashboard: SteamVR overlay subsystem access-violated (inside vrclient; "
+				"typical of a degraded / null-driver runtime). Disabling the dashboard "
+				"overlay path for the rest of this session. In-scene overlay and HUD are "
+				"unaffected.");
+		}
+	}
+
 	void Shutdown()
 	{
 		// Destroy on the clean interface that created/owns the overlay.
@@ -411,6 +507,10 @@ namespace ImGuiVRHelper::Dashboard
 		g_loggedSubmitError = false;
 		g_loggedSubmitOk = false;
 		g_probedRegularOverlay = false;
+		g_dashboardFaulted = false;
+		g_nullDriverChecked = false;
+		g_isNullDriver = false;
+		g_loggedNullDriver = false;
 	}
 
 	bool IsDashboardVisible()
