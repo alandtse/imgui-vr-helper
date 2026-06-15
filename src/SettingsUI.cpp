@@ -462,9 +462,9 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::Separator();
 				ImGui::TextDisabled("HUD-mode geometry (all kClientFlag_HUDMode clients)");
 				ImGui::SliderFloat("HUD depth (m)", &s.hudDepth, 0.5f, 3.0f, "%.2f");
-				ImGui::SliderFloat("HUD FOV (deg)", &s.hudFOV, 30.0f, 100.0f, "%.0f");
-				ImGui::TextDisabled("    Closer + narrower = 'glass layer / monitor' feel.");
-				ImGui::TextDisabled("    Farther + wider = 'billboard in space' feel.");
+				ImGui::SliderFloat("HUD coverage", &s.hudCoverage, 0.5f, 1.0f, "%.2f");
+				ImGui::TextDisabled("    Coverage = fraction of the view the HUD fills.");
+				ImGui::TextDisabled("    1.0 = edge-to-edge (may clip at lens mask); 0.92 = margin.");
 				ImGui::TextDisabled("    If panel edges are clipped by the lens, lower FOV.");
 			}
 

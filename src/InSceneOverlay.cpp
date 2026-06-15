@@ -389,6 +389,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 		{
 			Matrix vpHeadSpace;   // for HMD-relative attach mode
 			Matrix vpWorldSpace;  // for controller-attached and fixed-world
+			// Per-eye projection tangents (signed: left/bottom negative,
+			// right/top positive). Used to size a head-locked HUD quad to
+			// exactly fill this eye's (asymmetric) frustum at a given depth.
+			float tanLeft = 0, tanRight = 0, tanBottom = 0, tanTop = 0;
 			bool valid = false;
 		};
 
@@ -427,6 +431,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 			result.vpHeadSpace = eyeToHead.Invert() * proj;
 			Matrix eyeToWorld = eyeToHead * hmdWorld;
 			result.vpWorldSpace = eyeToWorld.Invert() * proj;
+			result.tanLeft = left;
+			result.tanRight = right;
+			result.tanBottom = bottom;
+			result.tanTop = top;
 			result.valid = true;
 			return result;
 		}
@@ -684,22 +692,33 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// eye buffer represents a different physical direction than
 		// pixel (x, y) in the right eye buffer.
 		//
-		// Geometry from settings — depth + FOV control "thin glass
-		// layer" vs "billboard" feel. Width is computed from FOV at
-		// the chosen depth so the panel always covers exactly that
-		// angular slice of the user's view; height follows the RTV's
-		// 16:9 aspect.
+		// Geometry: size the quad to fill THIS eye's actual view frustum at
+		// hudDepth, so the HUD reads like a screen covering the view rather
+		// than a small fixed-FOV window floating in front. The extents come
+		// straight from the per-eye projection tangents (signed; the frustum
+		// is asymmetric on every HMD), and the quad is OFF-CENTERED to the
+		// frustum centre — a symmetric quad at x=y=0 would sit off to one
+		// side of each eye's off-axis view, which is exactly the "floating
+		// window" feel. hudCoverage trims a comfort margin off the edges.
 		//
 		// Iteration order = registration order so HUD layers stack
 		// predictably (last registered draws on top, depth-tested
 		// against earlier ones via the same-Z plane).
 		const float hudDepth = std::max(0.3f, s.hudDepth);  // sanity floor
-		const float hudFOVRad = std::clamp(s.hudFOV, 20.0f, 120.0f) *
-		                        (3.14159265358979323846f / 180.0f);
-		const float hudWidth = 2.0f * hudDepth * std::tan(hudFOVRad * 0.5f);
-		const float hudHeight = hudWidth * Overlay::Config::kOverlayAspect;
+		const float coverage = std::clamp(s.hudCoverage, 0.5f, 1.0f);
+		// Frustum slice at the HUD plane (meters). left/bottom are negative
+		// tangents, right/top positive, so xMax-xMin / yMax-yMin are the
+		// full extents and (xMin+xMax)/2 is the (nonzero) frustum centre.
+		const float xMin = matrices.tanLeft * hudDepth;
+		const float xMax = matrices.tanRight * hudDepth;
+		const float yMin = matrices.tanBottom * hudDepth;
+		const float yMax = matrices.tanTop * hudDepth;
+		const float hudWidth = (xMax - xMin) * coverage;
+		const float hudHeight = (yMax - yMin) * coverage;
+		const float hudCenterX = 0.5f * (xMin + xMax);
+		const float hudCenterY = 0.5f * (yMin + yMax);
 		const Matrix hudScale = Matrix::CreateScale(hudWidth, hudHeight, 1.0f);
-		const Matrix hudOffset = Matrix::CreateTranslation(0.0f, 0.0f, -hudDepth);
+		const Matrix hudOffset = Matrix::CreateTranslation(hudCenterX, hudCenterY, -hudDepth);
 		const Matrix hudModel = hudScale * hudOffset;
 		const Matrix hudWvp = (hudModel * matrices.vpHeadSpace).Transpose();
 		for (const auto& hud : hudClients) {

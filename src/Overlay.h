@@ -130,12 +130,14 @@ namespace ImGuiVRHelper::Overlay
 		/// lenses; pushing closer than that strains the eyes.
 		float hudDepth = 1.0f;
 
-		/// Horizontal FOV (degrees) the HUD plane should cover. The
-		/// helper computes width = 2 * hudDepth * tan(hudFOV/2) and
-		/// height = width * aspect. Default 60° fits comfortably
-		/// inside the lens-visible "mask" region on every common HMD;
-		/// pushing toward 90°+ may clip at the lens edges.
-		float hudFOV = 60.0f;
+		/// Fraction of each eye's view frustum the HUD plane fills, at
+		/// hudDepth. The helper derives the quad's extents (and off-center
+		/// position, since HMD frustums are asymmetric) directly from the
+		/// per-eye projection tangents, so the HUD covers the actual view
+		/// like a screen rather than a small fixed-FOV window. 1.0 = edge
+		/// to edge (may clip at the lens mask on some HMDs); 0.92 leaves a
+		/// small comfort margin. Clamped to [0.5, 1.0].
+		float hudCoverage = 0.92f;
 	};
 
 	// ---- Runtime state --------------------------------------------------

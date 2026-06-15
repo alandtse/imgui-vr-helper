@@ -60,7 +60,7 @@ namespace ImGuiVRHelper::Overlay
 			s.logLevel = tomlGet<std::string>(t, "logLevel", s.logLevel);
 			s.showHUDDemo = tomlGet<bool>(t, "showHUDDemo", s.showHUDDemo);
 			s.hudDepth = tomlGet<double>(t, "hudDepth", s.hudDepth);
-			s.hudFOV = tomlGet<double>(t, "hudFOV", s.hudFOV);
+			s.hudCoverage = tomlGet<double>(t, "hudCoverage", s.hudCoverage);
 		}
 
 		// Build TOML by hand so we can include section headers and
@@ -109,13 +109,13 @@ namespace ImGuiVRHelper::Overlay
 				<< "showHUDDemo = " << (s.showHUDDemo ? "true" : "false") << "\n\n"
 
 				<< "# HUD plane geometry. All kClientFlag_HUDMode clients render onto a\n"
-				<< "# flat quad at this depth, sized to cover hudFOV degrees horizontally.\n"
-				<< "# 1.0m / 60° fits inside the lens-visible 'mask' on every common HMD;\n"
-				<< "# closer/wider feels more like a thin glass layer, farther/narrower\n"
-				<< "# feels like a billboard. Don't go below ~0.5m — most VR lenses can't\n"
-				<< "# focus closer than that.\n"
+				<< "# flat quad at this depth. hudCoverage is the fraction of each eye's\n"
+				<< "# view the quad fills (extents derived from the per-eye frustum), so\n"
+				<< "# the HUD covers the view like a screen. 1.0 = edge to edge (may clip\n"
+				<< "# at the lens mask); 0.92 leaves a comfort margin. Don't set hudDepth\n"
+				<< "# below ~0.5m — most VR lenses can't focus closer than that.\n"
 				<< "hudDepth = " << s.hudDepth << "  # meters\n"
-				<< "hudFOV = " << s.hudFOV << "  # degrees\n";
+				<< "hudCoverage = " << s.hudCoverage << "  # 0.5-1.0 fraction of the view\n";
 			return out.str();
 		}
 
