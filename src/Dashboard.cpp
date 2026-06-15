@@ -51,6 +51,15 @@ namespace ImGuiVRHelper::Dashboard
 		bool g_loggedSubmitError = false;
 		bool g_loggedSubmitOk = false;
 
+		// One-time probe: when CreateDashboardOverlay fails, try a REGULAR
+		// CreateOverlay once to disambiguate the failure. If the regular
+		// overlay succeeds but the dashboard one doesn't, the gate is
+		// dashboard-specific (SteamVR reserves dashboard overlays for
+		// VRApplication_Overlay apps; Skyrim is VRApplication_Scene) and an
+		// in-process dashboard tile isn't achievable. If both fail, it's a
+		// broader denial.
+		bool g_probedRegularOverlay = false;
+
 		// Active dashboard client. 0 means "use the helper's self-client"
 		// (resolved at Tick time so the self-client doesn't have to exist
 		// at module-init).
@@ -101,10 +110,25 @@ namespace ImGuiVRHelper::Dashboard
 		/// (cheap), rate-limiting the failure log so an unsupported runtime
 		/// doesn't spam. Deliberately does NOT permanently latch a failure —
 		/// the first Tick can fire before SteamVR's overlay system is ready.
-		bool EnsureOverlay(vr::IVROverlay* iface)
+		bool EnsureOverlay()
 		{
 			if (g_overlay != 0)
 				return true;
+
+			// Create on the CLEAN (own-app) interface, not the game's proxied
+			// one. The proxied IVROverlay returned VROverlayError_InvalidHandle
+			// for CreateDashboardOverlay — the overlay must be created and
+			// submitted on the same unproxied interface.
+			vr::IVROverlay* iface = GetSubmitInterface();
+			if (!iface) {
+				if (g_createFailLogCountdown <= 0) {
+					g_createFailLogCountdown = kCreateRetryLogInterval;
+					logs::warn("Dashboard: clean IVROverlay unavailable; retrying");
+				} else {
+					--g_createFailLogCountdown;
+				}
+				return false;
+			}
 
 			auto err = iface->CreateDashboardOverlay(
 				kOverlayKey, kOverlayName, &g_overlay, &g_thumbnail);
@@ -112,8 +136,21 @@ namespace ImGuiVRHelper::Dashboard
 				g_overlay = 0;  // CreateDashboardOverlay may have partially written
 				if (g_createFailLogCountdown <= 0) {
 					g_createFailLogCountdown = kCreateRetryLogInterval;
-					logs::warn("Dashboard: CreateDashboardOverlay failed: {} (retrying)",
+					logs::warn("Dashboard: CreateDashboardOverlay (clean) failed: {} (retrying)",
 						iface->GetOverlayErrorNameFromEnum(err));
+
+					// One-shot: probe a regular (non-dashboard) overlay so the
+					// next failure log tells us whether the gate is
+					// dashboard-specific (app-type) or a broader denial.
+					if (!g_probedRegularOverlay) {
+						g_probedRegularOverlay = true;
+						vr::VROverlayHandle_t probe = 0;
+						auto perr = iface->CreateOverlay("imgui-vr-helper.probe", "ImGuiVRHelper probe", &probe);
+						logs::warn("Dashboard: probe CreateOverlay(regular, clean) -> {}",
+							iface->GetOverlayErrorNameFromEnum(perr));
+						if (perr == vr::VROverlayError_None && probe != 0)
+							iface->DestroyOverlay(probe);
+					}
 				} else {
 					--g_createFailLogCountdown;
 				}
@@ -129,7 +166,7 @@ namespace ImGuiVRHelper::Dashboard
 			};
 			iface->SetOverlayMouseScale(g_overlay, &mouseScale);
 
-			logs::info("Dashboard: registered SteamVR dashboard overlay key='{}' (handle={})",
+			logs::info("Dashboard: registered SteamVR dashboard overlay key='{}' (handle={}) on clean interface",
 				kOverlayKey, g_overlay);
 			return true;
 		}
@@ -311,7 +348,7 @@ namespace ImGuiVRHelper::Dashboard
 			return;
 		}
 
-		if (!EnsureOverlay(iface))
+		if (!EnsureOverlay())
 			return;
 
 		ApplyPendingThumbnail(iface);
@@ -354,19 +391,26 @@ namespace ImGuiVRHelper::Dashboard
 			}
 		}
 
-		PumpEvents(iface, g_resolvedIsSelf);
+		// Poll overlay events on the clean interface that owns the overlay
+		// (the same one it was created and texture-submitted on). Falls back
+		// to the proxied iface if the clean one is momentarily unavailable.
+		if (vr::IVROverlay* eventIface = GetSubmitInterface())
+			PumpEvents(eventIface, g_resolvedIsSelf);
+		else
+			PumpEvents(iface, g_resolvedIsSelf);
 	}
 
 	void Shutdown()
 	{
-		auto* iface = GetOverlayInterface();
-		if (iface && g_overlay != 0) {
+		// Destroy on the clean interface that created/owns the overlay.
+		if (vr::IVROverlay* iface = GetSubmitInterface(); iface && g_overlay != 0) {
 			iface->DestroyOverlay(g_overlay);
 		}
 		g_overlay = 0;
 		g_thumbnail = 0;
 		g_loggedSubmitError = false;
 		g_loggedSubmitOk = false;
+		g_probedRegularOverlay = false;
 	}
 
 	bool IsDashboardVisible()
