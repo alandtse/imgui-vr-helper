@@ -26,6 +26,9 @@
 #include <d3d11_1.h>
 #include <d3dcompiler.h>
 
+#include <atomic>
+#include <exception>
+
 #pragma comment(lib, "d3dcompiler.lib")
 
 namespace ImGuiVRHelper::InSceneOverlay
@@ -339,6 +342,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 			return g_res.menuSRV.get();
 		}
 
+		// ---- Render-path fault latch ------------------------------------
+
+		std::atomic<bool> g_renderDisabled{ false };
+
 		// ---- Submit hook ------------------------------------------------
 
 		struct SubmitDetour
@@ -353,8 +360,18 @@ float4 main(PS_INPUT input) : SV_TARGET
 				const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds,
 				vr::EVRSubmitFlags flags)
 			{
-				if (texture && texture->handle && texture->eType == vr::TextureType_DirectX) {
-					RenderForEye(eye, static_cast<ID3D11Texture2D*>(texture->handle), bounds);
+				if (!g_renderDisabled.load(std::memory_order_relaxed) &&
+					texture && texture->handle && texture->eType == vr::TextureType_DirectX) {
+					// Guard against vrclient throwing std::system_error
+					// ("device or resource busy") under runtime contention. On
+					// first fault we latch the render path off for the session
+					// rather than letting the exception crash the game.
+					try {
+						RenderForEye(eye, static_cast<ID3D11Texture2D*>(texture->handle), bounds);
+					} catch (const std::exception& e) {
+						DisableRenderPath("exception in RenderForEye");
+						logs::error("InSceneOverlay: render path disabled after exception: {}", e.what());
+					}
 				}
 				return original(self, eye, texture, bounds, flags);
 			}
@@ -547,6 +564,22 @@ float4 main(PS_INPUT input) : SV_TARGET
 		g_hookInstalled = true;
 		logs::info("InSceneOverlay: IVRCompositor::Submit detour installed (original={})",
 			reinterpret_cast<void*>(SubmitDetour::original));
+	}
+
+	bool IsRenderPathDisabled()
+	{
+		return g_renderDisabled.load(std::memory_order_relaxed);
+	}
+
+	void DisableRenderPath(const char* reason)
+	{
+		// Latch once; the first caller wins and logs the reason.
+		bool expected = false;
+		if (g_renderDisabled.compare_exchange_strong(expected, true,
+				std::memory_order_relaxed)) {
+			logs::error("InSceneOverlay: render path disabled for this session ({})",
+				reason ? reason : "unspecified");
+		}
 	}
 
 	namespace

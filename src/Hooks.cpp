@@ -6,14 +6,17 @@
 //       REL::RelocationID(75595, 77226).address() + REL::Relocate(0x50, 0x2BC));
 //
 // Captures the renderer's device/context/swapchain into Globals after
-// the original InitD3D returns, then installs the per-frame Present
-// detour, the input poll thunk, and the IVRCompositor::Submit detour
-// owned by InSceneOverlay (which composites the focused client's panel
-// into each eye render target). Universal across SteamVR + OpenComposite
-// — both runtimes route eye textures through Submit, and we render
-// directly into those eye buffers rather than asking SteamVR's IVROverlay
-// layer system to composite for us. This matches the canonical SCS path
-// on upstream/dev:src/Features/VR/InSceneOverlay.cpp.
+// the original InitD3D returns, then installs the per-frame Present detour
+// and the input poll thunk. The IVRCompositor::Submit detour owned by
+// InSceneOverlay (which composites the focused client's panel into each eye
+// render target) is installed LATER, from the first Present frames via
+// DecideRenderPath(), so we can first detect whether Community Shaders is
+// hosting the in-scene overlay and stand down if so (see the "Community
+// Shaders coexistence" block below). Universal across SteamVR + OpenComposite
+// — both runtimes route eye textures through Submit, and we render directly
+// into those eye buffers rather than asking SteamVR's IVROverlay layer system
+// to composite for us. This matches the canonical SCS path on
+// upstream/dev:src/Features/VR/InSceneOverlay.cpp.
 
 #include "pch.h"
 
@@ -25,6 +28,7 @@
 #include "Input.h"
 #include "SettingsUI.h"
 
+#include <RE/B/BSOpenVR.h>
 #include <RE/B/BSOpenVRControllerDevice.h>
 #include <RE/B/ButtonEvent.h>
 #include <RE/I/InputEvent.h>
@@ -32,7 +36,13 @@
 #include <RE/T/ThumbstickEvent.h>
 
 #include <chrono>
+#include <cstdint>
 #include <dxgi.h>
+#include <exception>
+#include <utility>
+#include <vector>
+
+#pragma comment(lib, "version.lib")
 
 namespace ImGuiVRHelper::Hooks
 {
@@ -67,6 +77,13 @@ namespace ImGuiVRHelper::Hooks
 		std::chrono::steady_clock::time_point g_lastPresent;
 		bool g_lastPresentValid = false;
 
+		// Deferred render-path decision. See DecideRenderPath below: we wait
+		// until our (outer) Present has chained into any other Present hook so a
+		// lazily-installed peer overlay (Community Shaders) has already taken
+		// IVRCompositor::Submit, then either install our overlay or stand down.
+		void DecideRenderPath();
+		bool g_renderDecisionMade = false;
+
 		HRESULT WINAPI hk_Present(IDXGISwapChain* This, UINT SyncInterval, UINT Flags)
 		{
 			const auto now = std::chrono::steady_clock::now();
@@ -78,9 +95,173 @@ namespace ImGuiVRHelper::Hooks
 			g_lastPresent = now;
 			g_lastPresentValid = true;
 
-			HelperImpl::GetSingleton().DispatchFrame(dt);
+			// Until the render-path decision is made, do NOT touch the VR
+			// runtime. Chain to the original Present first (this runs any peer
+			// overlay's Present hook, e.g. Community Shaders, which installs its
+			// Submit hook lazily), then decide.
+			if (!g_renderDecisionMade) {
+				const HRESULT hr = g_originalPresent(This, SyncInterval, Flags);
+				DecideRenderPath();
+				return hr;
+			}
+
+			if (!InSceneOverlay::IsRenderPathDisabled()) {
+				// Latch the render path off (rather than crash) if a per-frame
+				// VR call throws std::system_error ("device or resource busy").
+				try {
+					HelperImpl::GetSingleton().DispatchFrame(dt);
+				} catch (const std::exception& e) {
+					InSceneOverlay::DisableRenderPath("exception in DispatchFrame");
+					logs::error("Hooks: render path disabled after DispatchFrame exception: {}",
+						e.what());
+				}
+			}
 
 			return g_originalPresent(This, SyncInterval, Flags);
+		}
+
+		// ---- Community Shaders coexistence ------------------------------
+		//
+		// imgui-vr-helper's in-scene overlay is a fork of Community Shaders'
+		// (open-shaders) VR overlay. Both hook IDXGISwapChain::Present AND
+		// IVRCompositor::Submit and both drive the VR compositor every frame.
+		// Two overlay hosts double-drive vrclient's CClientPropertyManager and
+		// it throws std::system_error("device or resource busy") — see
+		// crash-2026-06-20-01-15-08. So when CS owns the in-scene overlay we
+		// stand down and let it host.
+		//
+		// Detection is by behavior, not by mere module presence: the future
+		// coexist-aware open-shaders drops its own VR overlay and delegates to
+		// imgui-vr-helper, so it will NOT hook Submit — only the incompatible
+		// (current) version does. "CS owns the Submit hook" is therefore exactly
+		// the signal that this is the conflicting version; plain presence is not.
+		//
+		// Ordering note: SKSE loads plugin DLLs alphabetically, so
+		// CommunityShaders.dll loads before imgui-vr-helper.dll. That makes our
+		// InitD3D/Present hooks install LAST and therefore run FIRST (outermost).
+		// CS installs its Submit hook lazily from inside its own Present, so we
+		// can only observe it AFTER we chain into the original Present. That is
+		// why the decision runs post-chain in hk_Present, not in InitD3D.
+
+		constexpr wchar_t kCSModuleName[] = L"CommunityShaders.dll";
+
+		int g_compositorReadyFrames = 0;
+
+		// [base, end) of a loaded module, or {0, 0} if not loaded. Reads
+		// SizeOfImage straight from the PE header to avoid a psapi dependency.
+		std::pair<std::uintptr_t, std::uintptr_t> ModuleRange(const wchar_t* name)
+		{
+			HMODULE h = GetModuleHandleW(name);
+			if (!h)
+				return { 0, 0 };
+			auto base = reinterpret_cast<std::uintptr_t>(h);
+			const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(h);
+			const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(
+				reinterpret_cast<const std::uint8_t*>(h) + dos->e_lfanew);
+			return { base, base + nt->OptionalHeader.SizeOfImage };
+		}
+
+		// True if IVRCompositor::Submit (vtable slot 5) currently points into
+		// CommunityShaders.dll — i.e. CS owns the in-scene overlay.
+		bool CSOwnsSubmitHook()
+		{
+			const auto [base, end] = ModuleRange(kCSModuleName);
+			if (!base)
+				return false;
+			auto* compositor = RE::BSOpenVR::GetIVRCompositor();
+			if (!compositor)
+				return false;
+			auto** vtable = *reinterpret_cast<void***>(compositor);
+			const auto slot5 = reinterpret_cast<std::uintptr_t>(vtable[5]);
+			return slot5 >= base && slot5 < end;
+		}
+
+		void LogCSVersion()
+		{
+			static bool logged = false;
+			if (logged)
+				return;
+			logged = true;
+
+			HMODULE h = GetModuleHandleW(kCSModuleName);
+			wchar_t path[MAX_PATH]{};
+			if (!h || !GetModuleFileNameW(h, path, MAX_PATH)) {
+				logs::info("Community Shaders detected (path unavailable)");
+				return;
+			}
+			DWORD ignored = 0;
+			const DWORD sz = GetFileVersionInfoSizeW(path, &ignored);
+			if (sz) {
+				std::vector<std::uint8_t> buf(sz);
+				VS_FIXEDFILEINFO* ffi = nullptr;
+				UINT len = 0;
+				if (GetFileVersionInfoW(path, 0, sz, buf.data()) &&
+					VerQueryValueW(buf.data(), L"\\", reinterpret_cast<void**>(&ffi), &len) &&
+					ffi) {
+					logs::info("Community Shaders detected: v{}.{}.{}.{}",
+						HIWORD(ffi->dwFileVersionMS), LOWORD(ffi->dwFileVersionMS),
+						HIWORD(ffi->dwFileVersionLS), LOWORD(ffi->dwFileVersionLS));
+					return;
+				}
+			}
+			logs::info("Community Shaders detected (version unavailable)");
+		}
+
+		// Bring up our overlay render path: install the Submit detour, init the
+		// settings UI and register the self-client.
+		void InstallRenderPath()
+		{
+			InSceneOverlay::Install();
+			SettingsUI::Init();
+			HelperImpl::GetSingleton().EnsureSelfClient();
+		}
+
+		void DecideRenderPath()
+		{
+			if (g_renderDecisionMade)
+				return;
+
+			// Need the compositor before we can inspect the Submit slot or
+			// install our own hook. Wait without consuming the grace window.
+			if (!RE::BSOpenVR::GetIVRCompositor())
+				return;
+
+			const bool csPresent = ModuleRange(kCSModuleName).first != 0;
+			if (!csPresent) {
+				InstallRenderPath();
+				g_renderDecisionMade = true;
+				return;
+			}
+
+			LogCSVersion();
+
+			// The conflicting (current) CS hooks Submit itself: stand down so we
+			// don't double-drive the VR runtime.
+			if (CSOwnsSubmitHook()) {
+				logs::error(
+					"Community Shaders owns IVRCompositor::Submit; standing down "
+					"imgui-vr-helper's in-scene overlay to avoid a duplicate VR "
+					"overlay host (vrclient 'device or resource busy' crash). Update "
+					"to a Community Shaders build that delegates its VR overlay to "
+					"imgui-vr-helper to re-enable.");
+				InSceneOverlay::DisableRenderPath("Community Shaders owns the in-scene overlay");
+				g_renderDecisionMade = true;
+				return;
+			}
+
+			// CS present but hasn't hooked Submit. Either it's the coexist-aware
+			// version that delegates to us (so it never will), or it's the
+			// conflicting version that installs lazily and hasn't run its first
+			// Present yet. Give it a short grace window to declare itself before
+			// we claim Submit ourselves.
+			if (++g_compositorReadyFrames < 30)
+				return;
+
+			logs::info(
+				"Community Shaders present but not hosting the in-scene overlay; "
+				"installing imgui-vr-helper's overlay.");
+			InstallRenderPath();
+			g_renderDecisionMade = true;
 		}
 
 		// ---- BSInputDeviceManager::PollInputDevices thunk ---------------
@@ -120,6 +301,15 @@ namespace ImGuiVRHelper::Hooks
 			static void thunk(RE::BSTEventSource<RE::InputEvent*>* a_dispatcher,
 				RE::InputEvent* const* a_events)
 			{
+				// If the overlay render path is disabled (e.g. Community Shaders
+				// hosts the in-scene overlay, or a VR fault latched us off),
+				// don't feed or swallow input — just chain through so nothing
+				// else is disturbed.
+				if (InSceneOverlay::IsRenderPathDisabled()) {
+					func(a_dispatcher, a_events);
+					return;
+				}
+
 				// Always feed the menu its input first, even when we're
 				// about to swallow the events from the game side. This is
 				// what lets ImGui see the trigger pull as a click while
@@ -239,19 +429,12 @@ namespace ImGuiVRHelper::Hooks
 				logs::info("IDXGISwapChain::Present detour installed (original={})",
 					reinterpret_cast<void*>(g_originalPresent));
 
-				// Install the IVRCompositor::Submit detour so the helper
-				// composites the focused client's panel into each eye
-				// render target. Universal across SteamVR + OpenComposite.
-				// This is the canonical SCS path (origin/open_composite
-				// src/Features/VR/InSceneOverlay.cpp).
-				InSceneOverlay::Install();
-
-				// Initialize the helper's own ImGui context for its
-				// settings panel; register the synthetic self-client so
-				// the existing per-client texture pipeline allocates an
-				// RTV for it.
-				SettingsUI::Init();
-				HelperImpl::GetSingleton().EnsureSelfClient();
+				// NOTE: the IVRCompositor::Submit detour, settings UI and
+				// self-client are NOT installed here. They are deferred to the
+				// first Present frames via DecideRenderPath() so we can first
+				// observe whether Community Shaders (which installs its own
+				// Submit hook lazily) is hosting the in-scene overlay, and stand
+				// down if so. See the "Community Shaders coexistence" block.
 			}
 
 			static inline REL::Relocation<decltype(thunk)> func;

@@ -28,4 +28,12 @@ namespace ImGuiVRHelper::InSceneOverlay
 	/// arrays); pass nullptr to render to the full target.
 	void RenderForEye(vr::EVREye eye, ID3D11Texture2D* targetTexture,
 		const vr::VRTextureBounds_t* bounds);
+
+	/// Render-path fault latch. Disabled when another VR overlay host (e.g.
+	/// Community Shaders) already owns the in-scene overlay, or when a vrclient
+	/// call throws "device or resource busy" under contention. Once disabled,
+	/// the Submit hook and per-frame VR access stop for the rest of the session
+	/// so we never double-drive the VR runtime.
+	bool IsRenderPathDisabled();
+	void DisableRenderPath(const char* reason);
 }

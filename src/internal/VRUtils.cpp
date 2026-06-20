@@ -134,6 +134,14 @@ namespace ImGuiVRHelper::Util
 		if (!compositor)
 			return false;
 
+		// Only ever read the last submitted pose snapshot. GetLastPoses is safe to
+		// call from any thread; WaitGetPoses is the compositor's per-frame sync
+		// handshake and must be called by exactly one owner (the game's render
+		// loop) once per frame. Calling it from our hooks injects a second runtime
+		// handshake into vrclient's IPC, which races the game's input thread and
+		// throws std::system_error("device or resource busy"). If GetLastPoses has
+		// no frame yet (e.g. early startup), the caller tolerates a missing pose.
+
 		// For single-device requests, use a full pose array internally — keeps
 		// OpenComposite happy.
 		if (unTrackedDevicePoseArrayCount == 1) {
@@ -143,19 +151,10 @@ namespace ImGuiVRHelper::Util
 				pTrackedDevicePoseArray[0] = allPoses[0];
 				return true;
 			}
-			error = compositor->WaitGetPoses(allPoses, vr::k_unMaxTrackedDeviceCount, nullptr, 0);
-			if (error == vr::VRCompositorError_None) {
-				pTrackedDevicePoseArray[0] = allPoses[0];
-				return true;
-			}
 			return false;
 		}
 
 		auto error = compositor->GetLastPoses(pTrackedDevicePoseArray, unTrackedDevicePoseArrayCount, nullptr, 0);
-		if (error == vr::VRCompositorError_None)
-			return true;
-
-		error = compositor->WaitGetPoses(pTrackedDevicePoseArray, unTrackedDevicePoseArrayCount, nullptr, 0);
 		return error == vr::VRCompositorError_None;
 	}
 
