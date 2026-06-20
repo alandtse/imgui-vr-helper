@@ -69,6 +69,20 @@ namespace ImGuiVRHelper::Dashboard
 		// null-driver gate below is the deterministic first line of defense.
 		bool g_dashboardFaulted = false;
 
+		// The dashboard path makes IVROverlay (vrclient) calls every frame from
+		// the RENDER thread (Tick is driven by HelperImpl::DispatchFrame, i.e.
+		// IDXGISwapChain::Present). That races skyrimvrtools' input-thread
+		// IVRSystem access on vrclient's CClientPropertyManager mutex, which
+		// throws std::system_error("device or resource busy") and CTDs on load
+		// (crash-2026-06-20-03-26-46). The SEH guard below only catches access
+		// violations on THIS thread, so it cannot prevent the EBUSY thrown on
+		// the input thread. Until the dashboard's vrclient access is marshalled
+		// onto the input thread (like the in-scene property cache), the path is
+		// disabled. The in-scene overlay + HUD never touch IVROverlay and are the
+		// supported rendering paths. Runtime (not constexpr) so the rest of Tick
+		// stays reachable to the compiler and is trivial to re-enable later.
+		bool g_dashboardPathEnabled = false;
+
 		// Null / headless SteamVR detection. The null driver leaves the
 		// overlay subsystem half-initialized, so IVROverlay calls access-
 		// violate inside vrclient (and it can't host dashboard overlays
@@ -484,6 +498,17 @@ namespace ImGuiVRHelper::Dashboard
 
 	void Tick()
 	{
+		if (!g_dashboardPathEnabled) {
+			static bool logged = false;
+			if (!logged) {
+				logged = true;
+				logs::info(
+					"Dashboard: SteamVR dashboard overlay path disabled (its IVROverlay "
+					"calls race vrclient on the render thread and CTD). In-scene overlay "
+					"and HUD are unaffected.");
+			}
+			return;
+		}
 		if (g_dashboardFaulted)
 			return;
 		if (!RunTickGuarded()) {
