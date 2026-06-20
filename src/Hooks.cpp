@@ -27,7 +27,7 @@
 #include "InSceneOverlay.h"
 #include "Input.h"
 #include "SettingsUI.h"
-#include "internal/VRUtils.h"
+#include "internal/Detour.h"
 
 #include <RE/B/BSOpenVR.h>
 #include <RE/B/BSOpenVRControllerDevice.h>
@@ -49,23 +49,6 @@ namespace ImGuiVRHelper::Hooks
 {
 	namespace
 	{
-		// ---- Manual COM vtable detour -----------------------------------
-		//
-		// Equivalent to Detours::X64::DetourClassVTable used by SCS, written
-		// inline so we don't need to vendor MS Detours just for this.
-
-		template <class FnPtr>
-		FnPtr DetourClassVTable(void* obj, std::size_t slot, FnPtr replacement)
-		{
-			auto** vtable = *reinterpret_cast<void***>(obj);
-			DWORD oldProtect = 0;
-			VirtualProtect(&vtable[slot], sizeof(void*), PAGE_READWRITE, &oldProtect);
-			FnPtr original = reinterpret_cast<FnPtr>(vtable[slot]);
-			vtable[slot] = reinterpret_cast<void*>(replacement);
-			VirtualProtect(&vtable[slot], sizeof(void*), oldProtect, &oldProtect);
-			return original;
-		}
-
 		// ---- IDXGISwapChain::Present detour -----------------------------
 		//
 		// Slot 8 in the IDXGISwapChain vtable. Drives the helper's per-frame
@@ -426,7 +409,7 @@ namespace ImGuiVRHelper::Hooks
 
 				// Now that we have the swapchain, install the Present
 				// detour so the helper has a per-frame tick.
-				g_originalPresent = DetourClassVTable<PresentFn>(swapchain, 8, &hk_Present);
+				g_originalPresent = Util::DetourClassVTable<PresentFn>(swapchain, 8, &hk_Present);
 				logs::info("IDXGISwapChain::Present detour installed (original={})",
 					reinterpret_cast<void*>(g_originalPresent));
 

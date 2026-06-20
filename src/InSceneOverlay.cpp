@@ -17,6 +17,8 @@
 #include "HelperImpl.h"
 #include "Overlay.h"
 #include "OverlayTinter.h"
+#include "internal/Detour.h"
+#include "internal/HUDGeometry.h"
 #include "internal/VRUtils.h"
 
 #include <RE/B/BSOpenVR.h>
@@ -379,25 +381,6 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		SubmitDetour::FnType SubmitDetour::original = nullptr;
 
-		// IVRCompositor::Submit is vtable slot 5. Order in openvr.h is:
-		//   0 SetTrackingSpace        3 GetLastPoses
-		//   1 GetTrackingSpace        4 GetLastPoseForTrackedDeviceIndex
-		//   2 WaitGetPoses            5 Submit  <-- this one
-		// Matches upstream/dev:src/Features/VR/InSceneOverlay.cpp:607
-		// (`detour_vfunc<5, IVRCompositor_Submit>`).
-		// Using the same manual-detour helper as Hooks.cpp.
-		template <class FnPtr>
-		FnPtr DetourClassVTable(void* obj, std::size_t slot, FnPtr replacement)
-		{
-			auto** vtable = *reinterpret_cast<void***>(obj);
-			DWORD oldProtect = 0;
-			VirtualProtect(&vtable[slot], sizeof(void*), PAGE_READWRITE, &oldProtect);
-			FnPtr original = reinterpret_cast<FnPtr>(vtable[slot]);
-			vtable[slot] = reinterpret_cast<void*>(replacement);
-			VirtualProtect(&vtable[slot], sizeof(void*), oldProtect, &oldProtect);
-			return original;
-		}
-
 		bool g_hookInstalled = false;
 
 		// ---- Helper: per-eye view-projection matrices -------------------
@@ -567,7 +550,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 			return;
 		}
 
-		SubmitDetour::original = DetourClassVTable<SubmitDetour::FnType>(
+		// IVRCompositor::Submit is vtable slot 5 (after SetTrackingSpace,
+		// GetTrackingSpace, WaitGetPoses, GetLastPoses,
+		// GetLastPoseForTrackedDeviceIndex).
+		SubmitDetour::original = Util::DetourClassVTable<SubmitDetour::FnType>(
 			compositor, 5, &SubmitDetour::thunk);
 		g_hookInstalled = true;
 		logs::info("InSceneOverlay: IVRCompositor::Submit detour installed (original={})",
@@ -733,49 +719,20 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// eye buffer represents a different physical direction than
 		// pixel (x, y) in the right eye buffer.
 		//
-		// Geometry: size the quad to fill THIS eye's actual view frustum at
-		// hudDepth, so the HUD reads like a screen covering the view rather
-		// than a small fixed-FOV window floating in front. The extents come
-		// straight from the per-eye projection tangents (signed; the frustum
-		// is asymmetric on every HMD), and the quad is OFF-CENTERED to the
-		// frustum centre — a symmetric quad at x=y=0 would sit off to one
-		// side of each eye's off-axis view, which is exactly the "floating
-		// window" feel. hudCoverage trims a comfort margin off the edges.
-		//
-		// Iteration order = registration order so HUD layers stack
-		// predictably (last registered draws on top, depth-tested
-		// against earlier ones via the same-Z plane).
+		// Geometry + convergence live in ComputeHUDQuad (HUDGeometry.h): one
+		// eye-independent, head-centred panel both eyes share, so it fuses at
+		// hudDepth. Iteration = registration order, so later HUD layers draw on
+		// top. hudCoverage trims a comfort margin off the edges.
 		const float hudDepth = std::max(0.3f, s.hudDepth);  // sanity floor
 		const float coverage = std::clamp(s.hudCoverage, 0.5f, 1.0f);
 
-		// Stereo convergence requires an EYE-INDEPENDENT panel: the SAME
-		// head-space quad rendered through each eye's vpHeadSpace (which carries
-		// that eye's IPD offset) is what makes the two images fuse at hudDepth.
-		// The previous "fill the frustum" path sized AND off-centered the quad
-		// per eye from that eye's asymmetric tangents (hudCenterX =
-		// 0.5*(tanLeft+tanRight)*depth). Because the two eyes' frustums are
-		// mirror-asymmetric, that off-center shift was equal and opposite to the
-		// IPD parallax and cancelled it — the quad landed on the same screen
-		// pixels in both eyes, i.e. at infinity, with no convergence.
-		//
-		// Fix: build one symmetric, head-CENTERED panel (X = 0) sized to the
-		// larger of the two eyes' half-FOVs at hudDepth, so it still fills the
-		// view, and let per-eye projection supply the disparity. It converges at
-		// hudDepth; raise hudDepth to push the plane further out.
-		float lL, rL, bL, tL, lR, rR, bR, tR;
-		Util::CachedProjectionRaw(vr::Eye_Left, lL, rL, bL, tL);
-		Util::CachedProjectionRaw(vr::Eye_Right, lR, rR, bR, tR);
-		// Half-extent tangents = max magnitude across both eyes (covers both).
-		const float tanHalfX = std::max({ -lL, rL, -lR, rR });
-		const float tanBot = std::max(-bL, -bR);
-		const float tanTopE = std::max(tL, tR);
-		const float hudWidth = (2.0f * tanHalfX * hudDepth) * coverage;
-		const float hudHeight = ((tanTopE + tanBot) * hudDepth) * coverage;
-		// Vertical frustum centre (usually ~0); horizontal centre is 0 by
-		// construction so both eyes share the panel and converge.
-		const float hudCenterY = 0.5f * (tanTopE - tanBot) * hudDepth;
-		const Matrix hudScale = Matrix::CreateScale(hudWidth, hudHeight, 1.0f);
-		const Matrix hudOffset = Matrix::CreateTranslation(0.0f, hudCenterY, -hudDepth);
+		float projL[4], projR[4];
+		Util::CachedProjectionRaw(vr::Eye_Left, projL[0], projL[1], projL[2], projL[3]);
+		Util::CachedProjectionRaw(vr::Eye_Right, projR[0], projR[1], projR[2], projR[3]);
+		const HUDQuad hudQuad = ComputeHUDQuad(projL, projR, hudDepth, coverage);
+
+		const Matrix hudScale = Matrix::CreateScale(hudQuad.width, hudQuad.height, 1.0f);
+		const Matrix hudOffset = Matrix::CreateTranslation(0.0f, hudQuad.centerY, -hudDepth);
 		const Matrix hudModel = hudScale * hudOffset;
 		const Matrix hudWvp = (hudModel * matrices.vpHeadSpace).Transpose();
 		for (const auto& hud : hudClients) {
