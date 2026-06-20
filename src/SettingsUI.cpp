@@ -486,6 +486,14 @@ namespace ImGuiVRHelper::SettingsUI
 			RenderClientsSection();
 			RenderDiagnosticsSection(state);
 
+			ImGui::Separator();
+			if (ImGui::Button("Reset all settings to defaults")) {
+				s = Overlay::Settings{};
+				Overlay::ApplyLogLevel();  // logLevel is applied once, not per-frame
+				Overlay::SaveSettings();
+				logs::info("Settings reset to defaults");
+			}
+
 			ImGui::End();
 		}
 	}  // namespace
