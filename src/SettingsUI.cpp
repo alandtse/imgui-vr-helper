@@ -86,38 +86,8 @@ namespace ImGuiVRHelper::SettingsUI
 			}
 		}
 
-		void RenderWindow()
+		void RenderPositioningSection(Overlay::Settings& s)
 		{
-			auto& state = Overlay::State::GetSingleton();
-			auto& s = state.settings;
-
-			ImGui::SetNextWindowSize(ImVec2(700, 600), ImGuiCond_FirstUseEver);
-			if (!ImGui::Begin("ImGuiVRHelper Settings", &g_visible)) {
-				ImGui::End();
-				return;
-			}
-
-			// Clamp the window inside the 1920x1080 panel each frame.
-			// ImGui doesn't keep windows fully on-screen by default — the
-			// user could drag this off the edge and lose half of it
-			// behind the overlay's RTV bounds. We snap the position back
-			// only when it's actually drifted out of bounds, so normal
-			// drag inside the panel feels natural.
-			{
-				const ImVec2 winPos = ImGui::GetWindowPos();
-				const ImVec2 winSize = ImGui::GetWindowSize();
-				const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
-				const ImVec2 clamped(
-					std::clamp(winPos.x, 0.0f, std::max(0.0f, displaySize.x - winSize.x)),
-					std::clamp(winPos.y, 0.0f, std::max(0.0f, displaySize.y - winSize.y)));
-				if (clamped.x != winPos.x || clamped.y != winPos.y) {
-					ImGui::SetWindowPos(clamped);
-				}
-			}
-
-			ImGui::TextUnformatted("Drag this window with controller grip to reposition the overlay.");
-			ImGui::Separator();
-
 			if (ImGui::CollapsingHeader("Positioning", ImGuiTreeNodeFlags_DefaultOpen)) {
 				const char* attachLabels[] = { "HMD only", "Controller only", "Both", "None" };
 				int attachIndex = static_cast<int>(s.attachMode);
@@ -158,7 +128,10 @@ namespace ImGuiVRHelper::SettingsUI
 					                         ImGuiVRHelperPluginAPI::InputDeviceType::Secondary;
 				}
 			}
+		}
 
+		void RenderInteractionSection(Overlay::Settings& s)
+		{
 			if (ImGui::CollapsingHeader("Interaction")) {
 				ImGui::Checkbox("Wand pointer (laser cursor)", &s.enableWandPointing);
 				ImGui::Checkbox("Grip-to-drag repositioning", &s.enableDragToReposition);
@@ -176,7 +149,10 @@ namespace ImGuiVRHelper::SettingsUI
 							HelperImpl::GetSingleton().RebindSelfToggle(keys, n); }, nullptr, 5.0f);
 				}
 			}
+		}
 
+		void RenderClientsSection()
+		{
 			if (ImGui::CollapsingHeader("Registered Clients")) {
 				auto clients = HelperImpl::GetSingleton().SnapshotClients();
 				ImGui::Text("Active clients: %zu", clients.size());
@@ -436,7 +412,11 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::TextDisabled("             eligible = listed in the dashboard picker below");
 				ImGui::TextDisabled("             -        = not opted into kClientFlag_Dashboard");
 			}
+		}
 
+		void RenderDiagnosticsSection(Overlay::State& state)
+		{
+			auto& s = state.settings;
 			if (ImGui::CollapsingHeader("Diagnostics")) {
 				ImGui::Text("Overlay visible: %s", state.overlayVisible ? "yes" : "no");
 				ImGui::Text("Left-handed: %s", state.lastKnownLeftHandedMode ? "yes" : "no");
@@ -467,6 +447,44 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::TextDisabled("    1.0 = edge-to-edge (may clip at lens mask); 0.92 = margin.");
 				ImGui::TextDisabled("    If panel edges are clipped by the lens, lower FOV.");
 			}
+		}
+
+		void RenderWindow()
+		{
+			auto& state = Overlay::State::GetSingleton();
+			auto& s = state.settings;
+
+			ImGui::SetNextWindowSize(ImVec2(700, 600), ImGuiCond_FirstUseEver);
+			if (!ImGui::Begin("ImGuiVRHelper Settings", &g_visible)) {
+				ImGui::End();
+				return;
+			}
+
+			// Clamp the window inside the 1920x1080 panel each frame.
+			// ImGui doesn't keep windows fully on-screen by default — the
+			// user could drag this off the edge and lose half of it
+			// behind the overlay's RTV bounds. We snap the position back
+			// only when it's actually drifted out of bounds, so normal
+			// drag inside the panel feels natural.
+			{
+				const ImVec2 winPos = ImGui::GetWindowPos();
+				const ImVec2 winSize = ImGui::GetWindowSize();
+				const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+				const ImVec2 clamped(
+					std::clamp(winPos.x, 0.0f, std::max(0.0f, displaySize.x - winSize.x)),
+					std::clamp(winPos.y, 0.0f, std::max(0.0f, displaySize.y - winSize.y)));
+				if (clamped.x != winPos.x || clamped.y != winPos.y) {
+					ImGui::SetWindowPos(clamped);
+				}
+			}
+
+			ImGui::TextUnformatted("Drag this window with controller grip to reposition the overlay.");
+			ImGui::Separator();
+
+			RenderPositioningSection(s);
+			RenderInteractionSection(s);
+			RenderClientsSection();
+			RenderDiagnosticsSection(state);
 
 			ImGui::End();
 		}
