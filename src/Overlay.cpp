@@ -33,34 +33,43 @@ namespace ImGuiVRHelper::Overlay
 			return fallback;
 		}
 
+		// Read an enum stored as an int64, rejecting out-of-range values from a
+		// hand-edited config (an invalid cast would be undefined behavior).
+		// Valid values are [0, maxValid]; anything else keeps the fallback.
+		template <class E>
+		E tomlEnum(const toml::table& t, std::string_view key, E fallback, int64_t maxValid)
+		{
+			const int64_t raw = tomlGet<int64_t>(t, key, static_cast<int64_t>(fallback));
+			if (raw < 0 || raw > maxValid)
+				return fallback;
+			return static_cast<E>(raw);
+		}
+
 		void FromToml(const toml::table& t, Settings& s)
 		{
 			// Top-level scalars (the file is intentionally flat for v1 —
 			// section grouping is a polish item if/when settings grow).
 			s.menuScale = tomlGet<float>(t, "menuScale", s.menuScale);
-			s.positioningMethod = static_cast<PositioningMethod>(
-				tomlGet<int64_t>(t, "positioningMethod",
-					static_cast<int64_t>(s.positioningMethod)));
-			s.attachMode = static_cast<AttachMode>(
-				tomlGet<int64_t>(t, "attachMode",
-					static_cast<int64_t>(s.attachMode)));
-			s.attachController = static_cast<ImGuiVRHelperPluginAPI::InputDeviceType>(
-				tomlGet<int64_t>(t, "attachController",
-					static_cast<int64_t>(s.attachController)));
-			s.hmdOffsetX = tomlGet<double>(t, "hmdOffsetX", s.hmdOffsetX);
-			s.hmdOffsetY = tomlGet<double>(t, "hmdOffsetY", s.hmdOffsetY);
-			s.hmdOffsetZ = tomlGet<double>(t, "hmdOffsetZ", s.hmdOffsetZ);
-			s.controllerOffsetX = tomlGet<double>(t, "controllerOffsetX", s.controllerOffsetX);
-			s.controllerOffsetY = tomlGet<double>(t, "controllerOffsetY", s.controllerOffsetY);
-			s.controllerOffsetZ = tomlGet<double>(t, "controllerOffsetZ", s.controllerOffsetZ);
+			// Enums: 0 = HMD-relative / 1 = Fixed (positioningMethod); 0..3 =
+			// HMD/Controller/Both/None (attachMode); 0 = Primary / 1 = Secondary
+			// (attachController).
+			s.positioningMethod = tomlEnum(t, "positioningMethod", s.positioningMethod, 1);
+			s.attachMode = tomlEnum(t, "attachMode", s.attachMode, 3);
+			s.attachController = tomlEnum(t, "attachController", s.attachController, 1);
+			s.hmdOffsetX = tomlGet<float>(t, "hmdOffsetX", s.hmdOffsetX);
+			s.hmdOffsetY = tomlGet<float>(t, "hmdOffsetY", s.hmdOffsetY);
+			s.hmdOffsetZ = tomlGet<float>(t, "hmdOffsetZ", s.hmdOffsetZ);
+			s.controllerOffsetX = tomlGet<float>(t, "controllerOffsetX", s.controllerOffsetX);
+			s.controllerOffsetY = tomlGet<float>(t, "controllerOffsetY", s.controllerOffsetY);
+			s.controllerOffsetZ = tomlGet<float>(t, "controllerOffsetZ", s.controllerOffsetZ);
 			s.enableWandPointing = tomlGet<bool>(t, "enableWandPointing", s.enableWandPointing);
 			s.enableDragToReposition = tomlGet<bool>(t, "enableDragToReposition", s.enableDragToReposition);
-			s.autoResetDistance = tomlGet<double>(t, "autoResetDistance", s.autoResetDistance);
-			s.mouseDeadzone = tomlGet<double>(t, "mouseDeadzone", s.mouseDeadzone);
+			s.autoResetDistance = tomlGet<float>(t, "autoResetDistance", s.autoResetDistance);
+			s.mouseDeadzone = tomlGet<float>(t, "mouseDeadzone", s.mouseDeadzone);
 			s.logLevel = tomlGet<std::string>(t, "logLevel", s.logLevel);
 			s.showHUDDemo = tomlGet<bool>(t, "showHUDDemo", s.showHUDDemo);
-			s.hudDepth = tomlGet<double>(t, "hudDepth", s.hudDepth);
-			s.hudCoverage = tomlGet<double>(t, "hudCoverage", s.hudCoverage);
+			s.hudDepth = tomlGet<float>(t, "hudDepth", s.hudDepth);
+			s.hudCoverage = tomlGet<float>(t, "hudCoverage", s.hudCoverage);
 		}
 
 		// Build TOML by hand so we can include section headers and

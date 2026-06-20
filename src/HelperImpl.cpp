@@ -265,6 +265,26 @@ namespace ImGuiVRHelper
 		if (!keys || n == 0) {
 			return 0;
 		}
+		// Reject malformed combos rather than storing one that can never fire:
+		// an absurd key count, or a key on an input device the matcher can't
+		// read (only the VR controllers are supported — see MatchCombo).
+		constexpr std::size_t kMaxComboKeys = 8;
+		if (n > kMaxComboKeys) {
+			logs::warn("RegisterCombo(client={}): {} keys exceeds max {}; rejected",
+				client_id, n, kMaxComboKeys);
+			return 0;
+		}
+		namespace API = ImGuiVRHelperPluginAPI;
+		for (std::size_t i = 0; i < n; ++i) {
+			const auto dev = keys[i].GetDevice();
+			if (dev != API::InputDeviceType::Primary &&
+				dev != API::InputDeviceType::Secondary &&
+				dev != API::InputDeviceType::Both) {
+				logs::warn("RegisterCombo(client={}): unsupported input device {}; rejected",
+					client_id, static_cast<int>(dev));
+				return 0;
+			}
+		}
 		std::scoped_lock lk{ m_mutex };
 		const auto id = m_next_combo_id++;
 		auto& rec = m_combos[id];
