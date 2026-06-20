@@ -289,6 +289,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 		ID3D11RenderTargetView* GetEyeRTV(vr::EVREye eye, ID3D11Texture2D* tex)
 		{
 			const int eyeIdx = static_cast<int>(eye);
+			if (eyeIdx < 0 || eyeIdx >= 2)  // only Eye_Left / Eye_Right are valid
+				return nullptr;
 			auto& cached = g_res.cachedEyeRTVs[eyeIdx];
 			if (cached.texture == tex && cached.rtv)
 				return cached.rtv.get();
@@ -389,10 +391,6 @@ float4 main(PS_INPUT input) : SV_TARGET
 		{
 			Matrix vpHeadSpace;   // for HMD-relative attach mode
 			Matrix vpWorldSpace;  // for controller-attached and fixed-world
-			// Per-eye projection tangents (signed: left/bottom negative,
-			// right/top positive). Used to size a head-locked HUD quad to
-			// exactly fill this eye's (asymmetric) frustum at a given depth.
-			float tanLeft = 0, tanRight = 0, tanBottom = 0, tanTop = 0;
 			bool valid = false;
 		};
 
@@ -439,10 +437,6 @@ float4 main(PS_INPUT input) : SV_TARGET
 			result.vpHeadSpace = eyeToHead.Invert() * proj;
 			Matrix eyeToWorld = eyeToHead * hmdWorld;
 			result.vpWorldSpace = eyeToWorld.Invert() * proj;
-			result.tanLeft = left;
-			result.tanRight = right;
-			result.tanBottom = bottom;
-			result.tanTop = top;
 			result.valid = true;
 			return result;
 		}
@@ -792,8 +786,13 @@ float4 main(PS_INPUT input) : SV_TARGET
 					overlayNormal.Normalize();
 					Matrix hmdWorld = Util::HmdMatrix34ToMatrix(
 						poses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking);
-					Matrix eyeToHead = Util::HmdMatrix34ToMatrix(
-						RE::BSOpenVR::GetSingleton()->vrSystem->GetEyeToHeadTransform(eye));
+					// Cached eye-to-head (populated on the input thread). Querying
+					// IVRSystem here would race vrclient from the render thread and
+					// dereference a possibly-null vrSystem. Guaranteed ready because
+					// matrices.valid required it.
+					vr::HmdMatrix34_t eyeToHeadRaw{};
+					Util::CachedEyeToHead(eye, eyeToHeadRaw);
+					Matrix eyeToHead = Util::HmdMatrix34ToMatrix(eyeToHeadRaw);
 					Matrix eyeWorld = eyeToHead * hmdWorld;
 					Vector3 toEye = eyeWorld.Translation() - overlayTransform.Translation();
 					toEye.Normalize();
