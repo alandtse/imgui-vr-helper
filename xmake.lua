@@ -27,6 +27,7 @@ add_requires("imgui", { configs = { dx11 = true, win32 = true } })
 add_requires("nlohmann_json") -- still needed for ImportLegacySettings (SCS-shaped blob)
 add_requires("toml++") -- helper's own settings file
 add_requires("directxtk") -- SimpleMath, used for matrix helpers in VRUtils
+add_requires("catch2") -- unit tests (ImGuiVRHelperTests target only)
 
 target("ImGuiVRHelper")
 add_deps("commonlibsse-ng")
@@ -127,3 +128,17 @@ after_build(function(target)
         print("Deployed to " .. dest)
     end
 end)
+
+-- Headless unit tests for the dependency-free logic (no CommonLibVR / SKSE /
+-- Skyrim runtime). Defined last so it doesn't inherit the plugin target's
+-- after_build deploy hook. Not built by a plain `xmake` — build & run with:
+--   xmake build ImGuiVRHelperTests && xmake run ImGuiVRHelperTests
+target("ImGuiVRHelperTests")
+set_kind("binary")
+set_default(false)
+set_group("tests")
+add_packages("catch2", "directxtk")
+-- <openvr.h> comes from CommonLibVR's vendored copy (the same header the plugin
+-- compiles against), not the xrepo openvr package (which nests it as openvr/).
+add_includedirs("src", "api", "lib/commonlibsse-ng/extern/openvr/headers")
+add_files("tests/**.cpp")

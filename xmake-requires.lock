@@ -3,6 +3,14 @@
         version = "1.0"
     },
     ["windows|x64"] = {
+        ["catch2#31fecfc4"] = {
+            repo = {
+                branch = "master",
+                commit = "e81b38d77a76847788811a838c0e7fbdb199221d",
+                url = "https://gitlab.com/tboox/xmake-repo.git"
+            },
+            version = "v3.8.1"
+        },
         ["cmake#31fecfc4"] = {
             repo = {
                 branch = "master",
