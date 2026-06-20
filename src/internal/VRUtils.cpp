@@ -10,8 +10,121 @@
 
 #include <RE/B/BSOpenVR.h>
 
+#include <atomic>
+#include <cmath>
+
 namespace ImGuiVRHelper::Util
 {
+	namespace
+	{
+		// VR property cache.
+		//
+		// IVRSystem property reads (eye-to-head, projection, IPD, controller
+		// role) lock vrclient's CClientPropertyManager — and the GAME itself
+		// touches that lock from BOTH the input thread (PollInputDevices) and
+		// the render thread (MistMenu / BSOpenVR::Unk_0B). So there is no "safe
+		// thread" to add these calls on; what keeps us safe is FREQUENCY. We
+		// query them rarely — static props exactly once, controller indices at a
+		// low rate — matching open-shaders (which never CTDs). GetLastPoses
+		// (IVRCompositor, a different lock) is the only per-frame VR call.
+		struct VRStaticCache
+		{
+			std::atomic<bool> ready{ false };
+			vr::HmdMatrix34_t eyeToHead[2]{};
+			float proj[2][4]{};                // [eye] = {left, right, bottom, top}
+			std::atomic<float> ipd{ 0.064f };  // average human IPD until populated
+		};
+		VRStaticCache g_static;
+
+		// Left / right controller device indices, refreshed at a low rate so
+		// controller (dis)connect and hand-swap are picked up without per-frame
+		// vrclient traffic.
+		std::atomic<std::uint32_t> g_leftIndex{ vr::k_unTrackedDeviceIndexInvalid };
+		std::atomic<std::uint32_t> g_rightIndex{ vr::k_unTrackedDeviceIndexInvalid };
+		std::atomic<int> g_indexRefreshCountdown{ 0 };
+		constexpr int kIndexRefreshInterval = 90;  // ~ every 90 lookups
+
+		// IPD from the HMD: direct property, then eye-to-head separation, then
+		// the average human IPD (64mm).
+		float ComputeIPD(vr::IVRSystem* system)
+		{
+			vr::ETrackedPropertyError error = vr::TrackedProp_UnknownProperty;
+			float ipd = system->GetFloatTrackedDeviceProperty(
+				vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_UserIpdMeters_Float, &error);
+			if (error == vr::TrackedProp_Success && ipd > 0.0f && ipd < 0.1f)
+				return ipd;
+
+			vr::HmdMatrix34_t leftEye = system->GetEyeToHeadTransform(vr::Eye_Left);
+			vr::HmdMatrix34_t rightEye = system->GetEyeToHeadTransform(vr::Eye_Right);
+			float eyeSeparation = std::abs(leftEye.m[0][3] - rightEye.m[0][3]);
+			if (eyeSeparation > 0.0f && eyeSeparation < 0.1f)
+				return eyeSeparation;
+
+			return 0.064f;
+		}
+
+		// Populate the one-time static cache (a single short burst of IVRSystem
+		// reads, like open-shaders' InstallSubmitHook). Returns true once ready.
+		bool EnsureStaticCache()
+		{
+			if (g_static.ready.load(std::memory_order_acquire))
+				return true;
+			auto* openvr = RE::BSOpenVR::GetSingleton();
+			if (!openvr || !openvr->vrSystem)
+				return false;
+			auto* system = openvr->vrSystem;
+			for (int e = 0; e < 2; ++e) {
+				const auto eye = static_cast<vr::EVREye>(e);
+				g_static.eyeToHead[e] = system->GetEyeToHeadTransform(eye);
+				system->GetProjectionRaw(eye, &g_static.proj[e][0], &g_static.proj[e][1],
+					&g_static.proj[e][2], &g_static.proj[e][3]);
+			}
+			g_static.ipd.store(ComputeIPD(system), std::memory_order_relaxed);
+			g_static.ready.store(true, std::memory_order_release);
+			return true;
+		}
+
+		// Refresh the cached left/right indices at most once per
+		// kIndexRefreshInterval calls (2 vrclient lookups, low frequency).
+		void MaybeRefreshControllerIndices()
+		{
+			if (g_indexRefreshCountdown.fetch_sub(1, std::memory_order_relaxed) > 0)
+				return;
+			g_indexRefreshCountdown.store(kIndexRefreshInterval, std::memory_order_relaxed);
+
+			auto* openvr = RE::BSOpenVR::GetSingleton();
+			if (!openvr || !openvr->vrSystem)
+				return;
+			auto* system = openvr->vrSystem;
+			g_leftIndex.store(system->GetTrackedDeviceIndexForControllerRole(
+								  vr::TrackedControllerRole_LeftHand),
+				std::memory_order_relaxed);
+			g_rightIndex.store(system->GetTrackedDeviceIndexForControllerRole(
+								   vr::TrackedControllerRole_RightHand),
+				std::memory_order_relaxed);
+		}
+	}
+
+	bool CachedEyeToHead(vr::EVREye eye, vr::HmdMatrix34_t& out)
+	{
+		if (!EnsureStaticCache())
+			return false;
+		out = g_static.eyeToHead[static_cast<int>(eye)];
+		return true;
+	}
+
+	bool CachedProjectionRaw(vr::EVREye eye, float& left, float& right, float& bottom, float& top)
+	{
+		if (!EnsureStaticCache())
+			return false;
+		const int e = static_cast<int>(eye);
+		left = g_static.proj[e][0];
+		right = g_static.proj[e][1];
+		bottom = g_static.proj[e][2];
+		top = g_static.proj[e][3];
+		return true;
+	}
+
 	OpenVRContext::OpenVRContext()
 	{
 		openvr = RE::BSOpenVR::GetSingleton();
@@ -76,25 +189,13 @@ namespace ImGuiVRHelper::Util
 
 	vr::TrackedDeviceIndex_t GetControllerIndexForDevice(InputDeviceType device, bool isLeftHanded)
 	{
-		OpenVRContext ctx;
-		if (!ctx.IsValid())
-			return vr::k_unTrackedDeviceIndexInvalid;
+		// Returns the low-rate-cached left/right index (refreshed at most once
+		// per kIndexRefreshInterval calls) — at most 2 vrclient lookups every
+		// ~90 calls rather than a 64-device scan every frame.
+		MaybeRefreshControllerIndices();
 
-		vr::ETrackedControllerRole targetRole;
-		if (device == InputDeviceType::Primary) {
-			targetRole = isLeftHanded ? vr::ETrackedControllerRole::TrackedControllerRole_LeftHand : vr::ETrackedControllerRole::TrackedControllerRole_RightHand;
-		} else {
-			targetRole = isLeftHanded ? vr::ETrackedControllerRole::TrackedControllerRole_RightHand : vr::ETrackedControllerRole::TrackedControllerRole_LeftHand;
-		}
-
-		for (vr::TrackedDeviceIndex_t i = 0; i < vr::k_unMaxTrackedDeviceCount; ++i) {
-			if (ctx.system->GetTrackedDeviceClass(i) == vr::TrackedDeviceClass_Controller) {
-				if (ctx.system->GetControllerRoleForTrackedDeviceIndex(i) == targetRole) {
-					return i;
-				}
-			}
-		}
-		return vr::k_unTrackedDeviceIndexInvalid;
+		const bool wantLeft = (device == InputDeviceType::Primary) ? isLeftHanded : !isLeftHanded;
+		return wantLeft ? g_leftIndex.load(std::memory_order_relaxed) : g_rightIndex.load(std::memory_order_relaxed);
 	}
 
 	bool GetControllerWorldMatrix(vr::TrackedDeviceIndex_t index, float out[3][4])
@@ -160,26 +261,9 @@ namespace ImGuiVRHelper::Util
 
 	float GetIPDFromHMD()
 	{
-		auto* openvr = RE::BSOpenVR::GetSingleton();
-		if (!openvr || !openvr->vrSystem)
-			return 0.064f;  // average human IPD fallback
-
-		// Method 1: query property directly.
-		vr::ETrackedPropertyError error = vr::TrackedProp_UnknownProperty;
-		float ipd = openvr->vrSystem->GetFloatTrackedDeviceProperty(
-			vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_UserIpdMeters_Float, &error);
-		if (error == vr::TrackedProp_Success && ipd > 0.0f && ipd < 0.1f) {
-			return ipd;
-		}
-
-		// Method 2: derive from eye-to-head transforms.
-		vr::HmdMatrix34_t leftEye = openvr->vrSystem->GetEyeToHeadTransform(vr::Eye_Left);
-		vr::HmdMatrix34_t rightEye = openvr->vrSystem->GetEyeToHeadTransform(vr::Eye_Right);
-		float eyeSeparation = std::abs(leftEye.m[0][3] - rightEye.m[0][3]);
-		if (eyeSeparation > 0.0f && eyeSeparation < 0.1f) {
-			return eyeSeparation;
-		}
-
-		return 0.064f;
+		// One-time cached; defaults to the average human IPD (64mm) until the
+		// static cache is populated.
+		EnsureStaticCache();
+		return g_static.ipd.load(std::memory_order_relaxed);
 	}
 }

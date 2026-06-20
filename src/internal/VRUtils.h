@@ -53,8 +53,27 @@ namespace ImGuiVRHelper::Util
 		float offsetX, float offsetY, float offsetZ,
 		float width, float height);
 
+	// ---- VR property cache ----------------------------------------------
+	//
+	// IVRSystem *property* queries (eye-to-head, projection, IPD, controller
+	// role) lock vrclient's CClientPropertyManager — and the game itself hits
+	// that lock from BOTH the input thread (PollInputDevices) and the render
+	// thread (MistMenu / BSOpenVR::Unk_0B). There is no safe thread to add them
+	// on; safety comes from FREQUENCY. These getters query the runtime rarely
+	// (static props once, controller indices at a low rate) and serve cached
+	// values, matching open-shaders. GetLastPoses (IVRCompositor, a different
+	// lock) remains the only per-frame VR call.
+
+	/// One-time-cached eye-to-head transform. Returns false until the static
+	/// cache is populated (needs IVRSystem available). Render-thread safe.
+	bool CachedEyeToHead(vr::EVREye eye, vr::HmdMatrix34_t& out);
+
+	/// One-time-cached raw projection tangents. Returns false until populated.
+	bool CachedProjectionRaw(vr::EVREye eye, float& left, float& right, float& bottom, float& top);
+
 	/// Map InputDeviceType {Primary,Secondary} to an OpenVR tracked device
-	/// index, accounting for the player's handedness.
+	/// index, accounting for the player's handedness. Serves a low-rate-cached
+	/// left/right index (a couple of vrclient lookups every ~90 calls).
 	vr::TrackedDeviceIndex_t GetControllerIndexForDevice(InputDeviceType device, bool isLeftHanded);
 
 	/// Get the world matrix for a tracked controller. Returns false if the

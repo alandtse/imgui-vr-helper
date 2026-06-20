@@ -27,6 +27,7 @@
 #include "InSceneOverlay.h"
 #include "Input.h"
 #include "SettingsUI.h"
+#include "internal/VRUtils.h"
 
 #include <RE/B/BSOpenVR.h>
 #include <RE/B/BSOpenVRControllerDevice.h>
