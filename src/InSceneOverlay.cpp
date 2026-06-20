@@ -432,14 +432,22 @@ float4 main(PS_INPUT input) : SV_TARGET
 			if (!hmdPose.bPoseIsValid)
 				return result;
 
-			Matrix eyeToHead = Util::HmdMatrix34ToMatrix(openvr->vrSystem->GetEyeToHeadTransform(eye));
+			// Eye-to-head and projection are read from the property cache
+			// (populated on the input thread) rather than queried here — calling
+			// IVRSystem property methods from the render thread races
+			// skyrimvrtools on vrclient's CClientPropertyManager and crashes.
+			vr::HmdMatrix34_t eyeToHeadRaw;
+			if (!Util::CachedEyeToHead(eye, eyeToHeadRaw))
+				return result;  // cache not populated yet (very early startup)
+			Matrix eyeToHead = Util::HmdMatrix34ToMatrix(eyeToHeadRaw);
 			Matrix hmdWorld = Util::HmdMatrix34ToMatrix(hmdPose.mDeviceToAbsoluteTracking);
 
 			// GetProjectionRaw returns left/right/bottom/top tangents (note
 			// Valve's known parameter-name mismatch — the 3rd param is
 			// actually bottom, the 4th is top).
 			float left, right, bottom, top;
-			openvr->vrSystem->GetProjectionRaw(eye, &left, &right, &bottom, &top);
+			if (!Util::CachedProjectionRaw(eye, left, right, bottom, top))
+				return result;
 			constexpr float nearZ = 0.1f;
 			constexpr float farZ = 1000.0f;
 			Matrix proj = DirectX::XMMatrixPerspectiveOffCenterRH(
@@ -739,19 +747,35 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// against earlier ones via the same-Z plane).
 		const float hudDepth = std::max(0.3f, s.hudDepth);  // sanity floor
 		const float coverage = std::clamp(s.hudCoverage, 0.5f, 1.0f);
-		// Frustum slice at the HUD plane (meters). left/bottom are negative
-		// tangents, right/top positive, so xMax-xMin / yMax-yMin are the
-		// full extents and (xMin+xMax)/2 is the (nonzero) frustum centre.
-		const float xMin = matrices.tanLeft * hudDepth;
-		const float xMax = matrices.tanRight * hudDepth;
-		const float yMin = matrices.tanBottom * hudDepth;
-		const float yMax = matrices.tanTop * hudDepth;
-		const float hudWidth = (xMax - xMin) * coverage;
-		const float hudHeight = (yMax - yMin) * coverage;
-		const float hudCenterX = 0.5f * (xMin + xMax);
-		const float hudCenterY = 0.5f * (yMin + yMax);
+
+		// Stereo convergence requires an EYE-INDEPENDENT panel: the SAME
+		// head-space quad rendered through each eye's vpHeadSpace (which carries
+		// that eye's IPD offset) is what makes the two images fuse at hudDepth.
+		// The previous "fill the frustum" path sized AND off-centered the quad
+		// per eye from that eye's asymmetric tangents (hudCenterX =
+		// 0.5*(tanLeft+tanRight)*depth). Because the two eyes' frustums are
+		// mirror-asymmetric, that off-center shift was equal and opposite to the
+		// IPD parallax and cancelled it — the quad landed on the same screen
+		// pixels in both eyes, i.e. at infinity, with no convergence.
+		//
+		// Fix: build one symmetric, head-CENTERED panel (X = 0) sized to the
+		// larger of the two eyes' half-FOVs at hudDepth, so it still fills the
+		// view, and let per-eye projection supply the disparity. It converges at
+		// hudDepth; raise hudDepth to push the plane further out.
+		float lL, rL, bL, tL, lR, rR, bR, tR;
+		Util::CachedProjectionRaw(vr::Eye_Left, lL, rL, bL, tL);
+		Util::CachedProjectionRaw(vr::Eye_Right, lR, rR, bR, tR);
+		// Half-extent tangents = max magnitude across both eyes (covers both).
+		const float tanHalfX = std::max({ -lL, rL, -lR, rR });
+		const float tanBot = std::max(-bL, -bR);
+		const float tanTopE = std::max(tL, tR);
+		const float hudWidth = (2.0f * tanHalfX * hudDepth) * coverage;
+		const float hudHeight = ((tanTopE + tanBot) * hudDepth) * coverage;
+		// Vertical frustum centre (usually ~0); horizontal centre is 0 by
+		// construction so both eyes share the panel and converge.
+		const float hudCenterY = 0.5f * (tanTopE - tanBot) * hudDepth;
 		const Matrix hudScale = Matrix::CreateScale(hudWidth, hudHeight, 1.0f);
-		const Matrix hudOffset = Matrix::CreateTranslation(hudCenterX, hudCenterY, -hudDepth);
+		const Matrix hudOffset = Matrix::CreateTranslation(0.0f, hudCenterY, -hudDepth);
 		const Matrix hudModel = hudScale * hudOffset;
 		const Matrix hudWvp = (hudModel * matrices.vpHeadSpace).Transpose();
 		for (const auto& hud : hudClients) {
