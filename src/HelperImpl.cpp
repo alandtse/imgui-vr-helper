@@ -593,126 +593,93 @@ namespace ImGuiVRHelper
 		Input::FeedVREvent(device, key_code, pressed, thumbstick_x, thumbstick_y);
 	}
 
-	void HelperImpl::DispatchFrame(float dt)
+	// Wand-pointer intersection for the tick. Result lives on
+	// Overlay::State::wandState; consumed by GetPointer and Frame flag bit 2.
+	void HelperImpl::UpdateWandPointer()
 	{
-		// Update the wand-pointer intersection once per tick. The result
-		// lives on Overlay::State::wandState and is consumed by GetPointer
-		// (per-client) and by Frame.flags bit 2 (client_pointer_in_panel).
 		auto& overlayState = Overlay::State::GetSingleton();
 		const auto& s = overlayState.settings;
-		if (s.enableWandPointing) {
-			namespace API = ImGuiVRHelperPluginAPI;
-			// Pointer hand: opposite of attached when controller-attached;
-			// otherwise the primary hand.
-			API::InputDeviceType pointer;
-			if (s.attachMode == Overlay::AttachMode::ControllerOnly ||
-				s.attachMode == Overlay::AttachMode::Both) {
-				pointer = (s.attachController == API::InputDeviceType::Primary) ?
-				              API::InputDeviceType::Secondary :
-				              API::InputDeviceType::Primary;
-			} else {
-				pointer = API::InputDeviceType::Primary;
-			}
-			const auto idx = Util::GetControllerIndexForDevice(
-				pointer, overlayState.lastKnownLeftHandedMode);
-			if (idx != vr::k_unTrackedDeviceIndexInvalid) {
-				ImVec2 uv;
-				WandPointing::ComputeIntersection(idx, uv);
-			} else {
-				overlayState.wandState.isIntersecting = false;
-			}
+		if (!s.enableWandPointing) {
+			overlayState.wandState.isIntersecting = false;
+			return;
+		}
+
+		namespace API = ImGuiVRHelperPluginAPI;
+		// Pointer hand: opposite of the attached hand when controller-attached,
+		// otherwise the primary hand.
+		API::InputDeviceType pointer;
+		if (s.attachMode == Overlay::AttachMode::ControllerOnly ||
+			s.attachMode == Overlay::AttachMode::Both) {
+			pointer = (s.attachController == API::InputDeviceType::Primary) ?
+			              API::InputDeviceType::Secondary :
+			              API::InputDeviceType::Primary;
+		} else {
+			pointer = API::InputDeviceType::Primary;
+		}
+		const auto idx = Util::GetControllerIndexForDevice(
+			pointer, overlayState.lastKnownLeftHandedMode);
+		if (idx != vr::k_unTrackedDeviceIndexInvalid) {
+			ImVec2 uv;
+			WandPointing::ComputeIntersection(idx, uv);
 		} else {
 			overlayState.wandState.isIntersecting = false;
 		}
+	}
 
-		ImGuiVRHelperPluginAPI::Frame baseFrame;
-		Input::BuildFrame(baseFrame, dt);
-
-		// Drag state machine: lazy-init the fixed-world transform on first
-		// visible frame, run grip-to-drag if active, auto-reset when the
-		// player travels far enough.
-		OverlayDrag::UpdateFixedWorldPositioning();
-		OverlayDrag::Update();
-
-		// Combo recording: detect press/release edges, accumulate the
-		// recorded combo, deliver via callback when done. The
-		// SyncSelfFocus reconciler below treats ComboRecording::IsActive()
-		// as part of the "self-active" predicate, so the modal pulls
-		// focus automatically without an explicit RequestFocus here.
-		ComboRecording::Tick(dt);
-
-		// Self-toggle combo (only registered if the user binds one via
-		// the "Rebind toggle key" UI; default keyboard toggle is
-		// Shift+F4 in OnKeyboardToggle). The combo machinery latches
-		// rising edges, so this fires once per held cycle.
+	// Reconcile self-UI focus and latch combo rising edges. Order matters:
+	// runs after ComboRecording::Tick (so IsActive() reflects this frame) and
+	// the dashboard-visibility mirror runs before the focus reconciler (whose
+	// SettingsUI::IsVisible() check must see the forced-visible state).
+	void HelperImpl::ReconcileSelfFocusAndCombos()
+	{
+		// Self-toggle combo (bound via "Rebind toggle"; default is Shift+F4 in
+		// OnKeyboardToggle). Latches rising edges → fires once per held cycle.
 		if (m_self_toggle_combo != 0 && ComboFired(m_self_toggle_combo)) {
 			SettingsUI::Toggle();
 			logs::info("Controller toggle combo: settings UI now {}",
 				SettingsUI::IsVisible() ? "VISIBLE" : "hidden");
-			// Focus state will be reconciled by the SyncSelfFocus block
-			// below — any path that flips SettingsUI visibility (combo,
-			// keyboard, ImGui's window-X-button, programmatic Toggle)
-			// goes through the same single source of truth.
 		}
 
-		// Mirror dashboard visibility into the settings UI: when the SteamVR
-		// dashboard is showing the helper's own panel, force-render the
-		// settings/picker even without the hotkey toggle so opening the
-		// rail entry lands on a live menu. Reads last frame's dashboard
-		// state (Dashboard::Tick updates it at end of frame) — one-frame
-		// lag is imperceptible. Must run before the reconciler below, whose
-		// SettingsUI::IsVisible() check now also reflects this forced state
-		// (so the self-client takes focus while the dashboard shows it).
+		// When the SteamVR dashboard shows the helper's own panel, force-render
+		// the settings/picker so the rail entry lands on a live menu.
 		SettingsUI::SetForceVisible(
 			Dashboard::IsDashboardVisible() && Dashboard::IsShowingSelf());
 
-		// Self-focus reconciler. Single source of truth for "is the
-		// helper's settings UI active right now" → "should the
-		// self-client hold focus." Runs AFTER any path that might have
-		// flipped SettingsUI visibility this frame (keyboard hotkey in
-		// PollInputDevices, combo above, or ImGui's own X-button click
-		// during last frame's Render). Without this, clicking the
-		// window's X stops further input but leaves m_focused_client
-		// pointing at the self-client — InSceneOverlay would keep
-		// reading the stale panel texture and painting it to both
-		// eyes every frame, even though the user thinks it's closed.
+		// Single source of truth for "self UI active → self-client holds focus".
+		// Runs after every path that can flip SettingsUI visibility this frame
+		// (hotkey, combo, ImGui X-button); otherwise a stale focus would keep
+		// InSceneOverlay painting the closed panel to both eyes.
 		if (m_self_client_id != 0) {
-			const bool selfActive =
-				SettingsUI::IsVisible() || ComboRecording::IsActive();
+			const bool selfActive = SettingsUI::IsVisible() || ComboRecording::IsActive();
 			if (selfActive) {
 				if (m_focused_client != m_self_client_id) {
 					RequestFocus(m_self_client_id);
 				}
 			} else if (m_focused_client == m_self_client_id) {
 				ReleaseFocus(m_self_client_id);
-				// Persist on every close — cheap (small TOML), keeps
-				// edits safe against a crash before the user closes
-				// gracefully. Single SaveSettings call site so we
-				// can't miss a close path. (Toggle()'s old inline
-				// SaveSettings is now redundant; left a no-op there
-				// in case a future caller hits Toggle directly.)
+				// Persist on every close — single SaveSettings site so no close
+				// path can miss it, and edits survive a crash before a graceful exit.
 				Overlay::SaveSettings();
 				logs::info("Self-UI close detected; focus released, settings persisted");
 			}
 		}
 
-		// Combo matcher: walk all registered combos, latch rising edges.
-		// Held-but-already-matched combos do NOT re-fire — clients see one
-		// "fired" event per held cycle.
-		{
-			std::scoped_lock lk{ m_mutex };
-			for (auto& [id, combo] : m_combos) {
-				const bool matched = MatchCombo(combo.keys);
-				if (matched && !combo.was_matched) {
-					combo.latched = true;
-				}
-				combo.was_matched = matched;
+		// Latch rising edges; held-and-already-matched combos do not re-fire.
+		std::scoped_lock lk{ m_mutex };
+		for (auto& [id, combo] : m_combos) {
+			const bool matched = MatchCombo(combo.keys);
+			if (matched && !combo.was_matched) {
+				combo.latched = true;
 			}
+			combo.was_matched = matched;
 		}
+	}
 
-		// Snapshot the client list under the lock so we don't hold the
-		// mutex across a callback into client code (avoids deadlocks if a
-		// client calls back into RegisterClient/UnregisterClient).
+	// Snapshot clients under the lock, render the self UI, then run each
+	// client's on_frame outside the lock (a client may call back into
+	// Register/UnregisterClient). Returns the focused id captured this frame.
+	uint32_t HelperImpl::DispatchToClients(const ImGuiVRHelperPluginAPI::Frame& baseFrame, float dt)
+	{
 		struct Snapshot
 		{
 			uint32_t id;
@@ -731,11 +698,10 @@ namespace ImGuiVRHelper
 			}
 		}
 
-		const bool wandHit = overlayState.wandState.isIntersecting;
+		const bool wandHit = Overlay::State::GetSingleton().wandState.isIntersecting;
 
-		// Render the helper's own settings UI into its self-client panel
-		// before the client OnFrame loop, so InSceneOverlay's per-eye
-		// composite picks up the latest pixels.
+		// Render the helper's own settings UI into its self-client panel before
+		// the client loop so the eye composite picks up the latest pixels.
 		if (m_self_client_id != 0 && SettingsUI::IsVisible()) {
 			ImGuiVRHelperPluginAPI::PanelHandle handle{};
 			if (GetPanel(m_self_client_id, &handle) && handle.rtv) {
@@ -775,11 +741,18 @@ namespace ImGuiVRHelper
 			}
 		}
 
-		// Compute-shader tinting: copy focused client's panel through the
-		// OverlayTinter (with drag-highlight color when dragging) into a
-		// helper-owned post-process texture. InSceneOverlay samples that
-		// texture during eye composite when dragging. Skip when nothing's
-		// focused — saves a dispatch.
+		return focused;
+	}
+
+	// End-of-frame post-processing: drag-highlight tint, HUD-demo smoke test,
+	// overlay-visible sync, dashboard mirror. Texture submission to the headset
+	// happens later, lazily, from the IVRCompositor::Submit detour.
+	void HelperImpl::PostProcessFrame(uint32_t focused)
+	{
+		auto& overlayState = Overlay::State::GetSingleton();
+
+		// Tint the focused panel (drag-highlight colour while dragging) into the
+		// post-process texture InSceneOverlay samples. Skip when nothing's focused.
 		if (focused != 0) {
 			if (auto* tex = GetClientPanelTexture(focused)) {
 				const bool dragging = overlayState.dragState.dragging &&
@@ -794,17 +767,9 @@ namespace ImGuiVRHelper
 			}
 		}
 
-		// HUD-mode smoke test. When showHUDDemo is on, render Lorem-Ipsum
-		// + shapes via HUDDemo's separate ImGui context into the demo
-		// client's RTV. InSceneOverlay's HUD pass picks it up via
-		// SnapshotHUDClients and composites it onto both eyes.
-		//
-		// Edge handling: track previous showHUDDemo state. On true→false
-		// transition, clear the RTV transparent ONCE so the previous
-		// frame's pixels don't keep getting composited (the texture
-		// retains its contents until something writes new pixels — without
-		// this, toggling the demo off leaves the headset still tinted).
-		// While off-and-was-off-last-frame, do nothing (zero cost).
+		// HUD-mode smoke test. On the demo's on→off edge, clear the RTV once so
+		// the last frame's pixels stop being composited; while off-and-was-off,
+		// do nothing.
 		static bool s_prevDemoOn = false;
 		const bool demoOn = overlayState.settings.showHUDDemo;
 		if (m_hud_demo_client_id != 0 && (demoOn || s_prevDemoOn)) {
@@ -819,20 +784,31 @@ namespace ImGuiVRHelper
 		}
 		s_prevDemoOn = demoOn;
 
-		// Note: actual texture submission to the headset happens lazily
-		// from the IVRCompositor::Submit detour (InSceneOverlay), which
-		// fires once per eye per frame and reads the focused client's
-		// panel + (when dragging) the OverlayTinter output texture.
-
-		// Keep Overlay::State::overlayVisible in sync with focus state so
-		// OverlayDrag::CanPerform sees the right value next frame.
+		// Keep overlayVisible in sync so OverlayDrag::CanPerform sees it next frame.
 		overlayState.overlayVisible = (focused != 0);
 
-		// SteamVR Dashboard surface for clients that opted in via
-		// kClientFlag_Dashboard. Texture-mirrors and event-pumps each
-		// dashboard client; cheap no-op if no client opted in. Last in
-		// the frame so it picks up the freshest panel pixels.
+		// Last, so it mirrors the freshest panel pixels onto any dashboard surface.
 		Dashboard::Tick();
+	}
+
+	void HelperImpl::DispatchFrame(float dt)
+	{
+		UpdateWandPointer();
+
+		ImGuiVRHelperPluginAPI::Frame baseFrame;
+		Input::BuildFrame(baseFrame, dt);
+
+		// Drag state machine + combo recording before the focus reconciler,
+		// which treats ComboRecording::IsActive() as part of "self active".
+		OverlayDrag::UpdateFixedWorldPositioning();
+		OverlayDrag::Update();
+		ComboRecording::Tick(dt);
+
+		ReconcileSelfFocusAndCombos();
+
+		const uint32_t focused = DispatchToClients(baseFrame, dt);
+
+		PostProcessFrame(focused);
 	}
 
 	bool HelperImpl::IsDashboardVisible()

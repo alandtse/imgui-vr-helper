@@ -175,6 +175,15 @@ namespace ImGuiVRHelper
 		/// the kClientFlag_HUDMode composite path end-to-end before
 		/// any real client connects.
 		uint32_t m_hud_demo_client_id = 0;
+
+		// DispatchFrame phases, run in order each frame. Split out only for
+		// readability; each touches helper state directly.
+		void UpdateWandPointer();
+		void ReconcileSelfFocusAndCombos();
+		/// Snapshot clients under the lock, render the self UI, then run each
+		/// client's on_frame. Returns the focused client id used this frame.
+		uint32_t DispatchToClients(const ImGuiVRHelperPluginAPI::Frame& baseFrame, float dt);
+		void PostProcessFrame(uint32_t focused);
 	};
 
 	struct ClientRecord
