@@ -600,6 +600,105 @@ float4 main(PS_INPUT input) : SV_TARGET
 		}
 	}
 
+	// HUD pass: every HUD-mode client drawn as one eye-independent, head-locked
+	// panel (see ComputeHUDQuad) so both eyes fuse it at hudDepth. The caller has
+	// already bound the eye RTV + viewport.
+	void RenderHUDPass(ID3D11DeviceContext* ctx, const EyeMatrices& matrices,
+		const Overlay::Settings& s,
+		const std::vector<HelperImpl::HUDClientSnapshot>& hudClients)
+	{
+		const float hudDepth = std::max(0.3f, s.hudDepth);  // sanity floor
+		const float coverage = std::clamp(s.hudCoverage, 0.5f, 1.0f);
+
+		float projL[4], projR[4];
+		Util::CachedProjectionRaw(vr::Eye_Left, projL[0], projL[1], projL[2], projL[3]);
+		Util::CachedProjectionRaw(vr::Eye_Right, projR[0], projR[1], projR[2], projR[3]);
+		const HUDQuad hudQuad = ComputeHUDQuad(projL, projR, hudDepth, coverage);
+
+		const Matrix hudModel =
+			Matrix::CreateScale(hudQuad.width, hudQuad.height, 1.0f) *
+			Matrix::CreateTranslation(0.0f, hudQuad.centerY, -hudDepth);
+		const Matrix hudWvp = (hudModel * matrices.vpHeadSpace).Transpose();
+
+		// Iteration = registration order, so later HUD layers draw on top.
+		for (const auto& hud : hudClients) {
+			if (!hud.texture)
+				continue;
+			auto* hudSRV = GetOrCreateHUDSRV(hud.client_id, hud.texture);
+			if (!hudSRV)
+				continue;
+			ConstantBufferData cb;
+			cb.wvp = hudWvp;
+			DrawQuad(ctx, cb, hudSRV);
+		}
+	}
+
+	// Panel pass: the focused panel-mode client as a 3D quad, attached to the
+	// HMD and/or the controller per the user's attachMode.
+	void RenderPanelPass(ID3D11DeviceContext* ctx, vr::EVREye eye,
+		const EyeMatrices& matrices, const Overlay::Settings& s,
+		const Overlay::State& overlayState, ID3D11ShaderResourceView* panelSRV)
+	{
+		// HMD-attached.
+		if (s.attachMode == Overlay::AttachMode::HMDOnly ||
+			s.attachMode == Overlay::AttachMode::Both) {
+			Matrix model;
+			Matrix vpMat;
+			if (s.positioningMethod == Overlay::PositioningMethod::FixedWorld) {
+				model = Overlay::Config::CreateScaleMatrix(s.menuScale) * overlayState.fixedWorld.m;
+				vpMat = matrices.vpWorldSpace;
+			} else {
+				Matrix offset = Matrix::CreateTranslation(s.hmdOffsetX, s.hmdOffsetY, s.hmdOffsetZ);
+				model = Overlay::Config::CreateScaleMatrix(s.menuScale) * offset;
+				vpMat = matrices.vpHeadSpace;
+			}
+			ConstantBufferData cb;
+			cb.wvp = (model * vpMat).Transpose();
+			DrawQuad(ctx, cb, panelSRV);
+		}
+
+		// Controller-attached (with backface culling).
+		if (s.attachMode != Overlay::AttachMode::ControllerOnly &&
+			s.attachMode != Overlay::AttachMode::Both)
+			return;
+
+		const auto attachIdx = Util::GetControllerIndexForDevice(
+			s.attachController, overlayState.lastKnownLeftHandedMode);
+		if (attachIdx == vr::k_unTrackedDeviceIndexInvalid)
+			return;
+
+		vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount];
+		if (!Util::GetDeviceToAbsoluteTrackingPoseCompatible(
+				vr::TrackingUniverseStanding, 0, poses, vr::k_unMaxTrackedDeviceCount) ||
+			!poses[attachIdx].bPoseIsValid)
+			return;
+
+		Matrix controllerWorld = Util::HmdMatrix34ToMatrix(poses[attachIdx].mDeviceToAbsoluteTracking);
+		Matrix offset = Matrix::CreateTranslation(
+			s.controllerOffsetX, s.controllerOffsetY, s.controllerOffsetZ);
+		Matrix model = Overlay::Config::CreateScaleMatrix(s.menuScale) * offset * controllerWorld;
+
+		// Backface culling: hide the overlay when viewed from behind.
+		Matrix overlayTransform = offset * controllerWorld;
+		Vector3 overlayNormal(overlayTransform._31, overlayTransform._32, overlayTransform._33);
+		overlayNormal.Normalize();
+		Matrix hmdWorld = Util::HmdMatrix34ToMatrix(
+			poses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking);
+		// Cached eye-to-head (input thread); querying IVRSystem here would race
+		// vrclient from the render thread and could deref a null vrSystem.
+		vr::HmdMatrix34_t eyeToHeadRaw{};
+		Util::CachedEyeToHead(eye, eyeToHeadRaw);
+		Matrix eyeToHead = Util::HmdMatrix34ToMatrix(eyeToHeadRaw);
+		Matrix eyeWorld = eyeToHead * hmdWorld;
+		Vector3 toEye = eyeWorld.Translation() - overlayTransform.Translation();
+		toEye.Normalize();
+		if (overlayNormal.Dot(toEye) > 0.0f) {
+			ConstantBufferData cb;
+			cb.wvp = (model * matrices.vpWorldSpace).Transpose();
+			DrawQuad(ctx, cb, panelSRV);
+		}
+	}
+
 	void RenderForEye(vr::EVREye eye, ID3D11Texture2D* targetTexture,
 		const vr::VRTextureBounds_t* bounds)
 	{
@@ -701,109 +800,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 		vp.MaxDepth = 1.0f;
 		ctx->RSSetViewports(1, &vp);
 
-		// Pass 1: HUD-mode clients. Render each as a billboarded 3D
-		// quad anchored to the HMD at a fixed depth, sized large
-		// enough to cover most of the user's FOV. Per-eye stereo
-		// projection (matrices.vpHeadSpace) gives both eyes the
-		// disparity they need to fuse the image at HUD plane depth —
-		// matches what Skyrim's own HUD rendering does, and what the
-		// user's brain expects from "flat panel floating in front of
-		// me." A naive full-viewport composite (same pixels in both
-		// eye buffers) doesn't fuse, since pixel (x, y) in the left
-		// eye buffer represents a different physical direction than
-		// pixel (x, y) in the right eye buffer.
-		//
-		// Geometry + convergence live in ComputeHUDQuad (HUDGeometry.h): one
-		// eye-independent, head-centred panel both eyes share, so it fuses at
-		// hudDepth. Iteration = registration order, so later HUD layers draw on
-		// top. hudCoverage trims a comfort margin off the edges.
-		const float hudDepth = std::max(0.3f, s.hudDepth);  // sanity floor
-		const float coverage = std::clamp(s.hudCoverage, 0.5f, 1.0f);
+		RenderHUDPass(ctx, matrices, s, hudClients);
 
-		float projL[4], projR[4];
-		Util::CachedProjectionRaw(vr::Eye_Left, projL[0], projL[1], projL[2], projL[3]);
-		Util::CachedProjectionRaw(vr::Eye_Right, projR[0], projR[1], projR[2], projR[3]);
-		const HUDQuad hudQuad = ComputeHUDQuad(projL, projR, hudDepth, coverage);
-
-		const Matrix hudScale = Matrix::CreateScale(hudQuad.width, hudQuad.height, 1.0f);
-		const Matrix hudOffset = Matrix::CreateTranslation(0.0f, hudQuad.centerY, -hudDepth);
-		const Matrix hudModel = hudScale * hudOffset;
-		const Matrix hudWvp = (hudModel * matrices.vpHeadSpace).Transpose();
-		for (const auto& hud : hudClients) {
-			if (!hud.texture)
-				continue;
-			auto* hudSRV = GetOrCreateHUDSRV(hud.client_id, hud.texture);
-			if (!hudSRV)
-				continue;
-			ConstantBufferData cb;
-			cb.wvp = hudWvp;
-			DrawQuad(ctx, cb, hudSRV);
-		}
-
-		// Pass 2: panel-mode focused client (existing 3D quad logic).
-		if (!wantPanelPass) {
-			backup.Restore(ctx);
-			return;
-		}
-
-		// HMD-attached pass.
-		if (s.attachMode == Overlay::AttachMode::HMDOnly ||
-			s.attachMode == Overlay::AttachMode::Both) {
-			Matrix model;
-			Matrix vpMat;
-			if (s.positioningMethod == Overlay::PositioningMethod::FixedWorld) {
-				model = Overlay::Config::CreateScaleMatrix(s.menuScale) * overlayState.fixedWorld.m;
-				vpMat = matrices.vpWorldSpace;
-			} else {
-				Matrix offset = Matrix::CreateTranslation(s.hmdOffsetX, s.hmdOffsetY, s.hmdOffsetZ);
-				model = Overlay::Config::CreateScaleMatrix(s.menuScale) * offset;
-				vpMat = matrices.vpHeadSpace;
-			}
-			ConstantBufferData cb;
-			cb.wvp = (model * vpMat).Transpose();
-			DrawQuad(ctx, cb, panelSRV);
-		}
-
-		// Controller-attached pass (with backface culling).
-		if (s.attachMode == Overlay::AttachMode::ControllerOnly ||
-			s.attachMode == Overlay::AttachMode::Both) {
-			const auto attachIdx = Util::GetControllerIndexForDevice(
-				s.attachController, overlayState.lastKnownLeftHandedMode);
-			if (attachIdx != vr::k_unTrackedDeviceIndexInvalid) {
-				vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount];
-				if (Util::GetDeviceToAbsoluteTrackingPoseCompatible(
-						vr::TrackingUniverseStanding, 0, poses, vr::k_unMaxTrackedDeviceCount) &&
-					poses[attachIdx].bPoseIsValid) {
-					Matrix controllerWorld = Util::HmdMatrix34ToMatrix(
-						poses[attachIdx].mDeviceToAbsoluteTracking);
-					Matrix offset = Matrix::CreateTranslation(
-						s.controllerOffsetX, s.controllerOffsetY, s.controllerOffsetZ);
-					Matrix model = Overlay::Config::CreateScaleMatrix(s.menuScale) * offset * controllerWorld;
-
-					// Backface culling: hide overlay from behind.
-					Matrix overlayTransform = offset * controllerWorld;
-					Vector3 overlayNormal(overlayTransform._31, overlayTransform._32, overlayTransform._33);
-					overlayNormal.Normalize();
-					Matrix hmdWorld = Util::HmdMatrix34ToMatrix(
-						poses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking);
-					// Cached eye-to-head (populated on the input thread). Querying
-					// IVRSystem here would race vrclient from the render thread and
-					// dereference a possibly-null vrSystem. Guaranteed ready because
-					// matrices.valid required it.
-					vr::HmdMatrix34_t eyeToHeadRaw{};
-					Util::CachedEyeToHead(eye, eyeToHeadRaw);
-					Matrix eyeToHead = Util::HmdMatrix34ToMatrix(eyeToHeadRaw);
-					Matrix eyeWorld = eyeToHead * hmdWorld;
-					Vector3 toEye = eyeWorld.Translation() - overlayTransform.Translation();
-					toEye.Normalize();
-					if (overlayNormal.Dot(toEye) > 0.0f) {
-						ConstantBufferData cb;
-						cb.wvp = (model * matrices.vpWorldSpace).Transpose();
-						DrawQuad(ctx, cb, panelSRV);
-					}
-				}
-			}
-		}
+		if (wantPanelPass)
+			RenderPanelPass(ctx, eye, matrices, s, overlayState, panelSRV);
 
 		backup.Restore(ctx);
 	}
