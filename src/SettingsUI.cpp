@@ -158,6 +158,56 @@ namespace ImGuiVRHelper::SettingsUI
 				auto clients = HelperImpl::GetSingleton().SnapshotClients();
 				ImGui::Text("Active clients: %zu", clients.size());
 
+				// In-scene overlay switcher (the "launcher"): pick which client's
+				// panel is shown in-world. Drives the focus model directly
+				// (RequestFocus), so the user opens this menu with one controller
+				// gesture and switches between mods here — no per-mod controller
+				// combo needed. Distinct from the SteamVR dashboard picker below,
+				// which only selects what the separate dashboard surface mirrors.
+				{
+					namespace API = ImGuiVRHelperPluginAPI;
+					auto& impl = HelperImpl::GetSingleton();
+					const uint32_t focusedId = impl.GetFocusedClientId();
+					const uint32_t selfClientId = impl.GetSelfClientId();
+
+					std::string switchPreview = "(this) ImGuiVRHelper";
+					if (focusedId != 0 && focusedId != selfClientId) {
+						for (const auto& c : clients) {
+							if (c.client_id == focusedId) {
+								switchPreview = c.name;
+								if (!c.version.empty())
+									switchPreview += " " + c.version;
+								break;
+							}
+						}
+					}
+
+					ImGui::TextUnformatted("Show in VR:");
+					if (ImGui::BeginCombo("##OverlaySwitcher", switchPreview.c_str())) {
+						for (const auto& c : clients) {
+							if (c.client_id == selfClientId)
+								continue;  // already in the helper UI
+							if (c.flags & API::kClientFlag_HUDMode)
+								continue;  // HUD clients are always-on, not switchable
+							std::string label = c.name;
+							if (!c.version.empty())
+								label += " " + c.version;
+							if (!(c.flags & API::kClientFlag_RendersOnFocus))
+								label += "  (manual trigger)";
+							if (ImGui::Selectable(label.c_str(), c.client_id == focusedId)) {
+								// Hand the in-scene overlay to the picked client and
+								// hide the helper UI so the focus reconciler doesn't
+								// immediately reclaim focus for the self-client.
+								impl.RequestFocus(c.client_id);
+								g_visible = false;
+							}
+						}
+						ImGui::EndCombo();
+					}
+				}
+
+				ImGui::Spacing();
+
 				// SteamVR Dashboard picker. The helper owns one shared
 				// dashboard surface; this combo picks which eligible
 				// client's panel texture is mirrored onto it. Selecting
