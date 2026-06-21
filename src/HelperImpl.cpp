@@ -79,12 +79,14 @@ namespace ImGuiVRHelper
 	uint32_t HelperImpl::RegisterClient(const char* name, const char* version,
 		ImGuiVRHelperPluginAPI::OnFrameFn on_frame, void* user, uint32_t flags)
 	{
-		if (!name || !on_frame) {
-			logs::warn("RegisterClient: rejected (name={}, on_frame={})",
-				name ? name : "<null>",
-				static_cast<const void*>(on_frame));
+		if (!name) {
+			logs::warn("RegisterClient: rejected (null name)");
 			return 0;
 		}
+		// on_frame may be null: HUD-mode and poll-based clients don't need the
+		// per-frame Frame callback (DispatchToClients null-checks before
+		// invoking it). The self-client passes an empty callback for the same
+		// reason; external clients can now simply pass nullptr.
 
 		// HUD-mode and Dashboard are mutually exclusive: HUD content is
 		// always-on overlay rendered through the world; Dashboard is a
