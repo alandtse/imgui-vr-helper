@@ -22,11 +22,31 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 #include "ImGuiVRHelperTypes.h"
 
 namespace ImGuiVRHelper::Input
 {
+	/// One recorded VR controller event, for the diagnostics event log
+	/// (the helper's "Recent VR controller events" debug table). Captures
+	/// only what FeedVREvent receives; `isThumbstick` is inferred from the
+	/// key code (axis events aren't button-mapped).
+	struct EventLogEntry
+	{
+		uint32_t device;
+		uint32_t keyCode;
+		bool pressed;
+		bool isThumbstick;
+		float thumbstickX;
+		float thumbstickY;
+	};
+
+	/// Snapshot the recent VR controller event ring buffer, oldest first.
+	/// Thread-safe (FeedVREvent writes from the input thread; the settings
+	/// UI reads from the render thread).
+	std::vector<EventLogEntry> SnapshotEventLog();
+
 	/// Feed one VR input event into the helper's state. `device` is the
 	/// game's BSWin32MouseDevice/BSOpenVRControllerDevice device id.
 	/// `keyCode` is an `RE::BSOpenVRControllerDevice::Keys::*` value.

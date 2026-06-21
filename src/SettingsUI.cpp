@@ -9,10 +9,13 @@
 #include "Dashboard.h"
 #include "Globals.h"
 #include "HelperImpl.h"
+#include "Input.h"
+#include "OpenVRDetection.h"
 #include "Overlay.h"
 #include "WandPointing.h"
 
 #include <algorithm>
+#include <chrono>
 #include <dxgi.h>
 #include <imgui_impl_win32.h>
 
@@ -465,10 +468,88 @@ namespace ImGuiVRHelper::SettingsUI
 			}
 		}
 
+		// Human-readable name for an RE controller key code (diagnostics log).
+		const char* DbgButtonName(uint32_t keyCode)
+		{
+			using K = RE::BSOpenVRControllerDevice::Keys;
+			switch (keyCode) {
+			case static_cast<uint32_t>(K::kTrigger):
+				return "Trigger";
+			case static_cast<uint32_t>(K::kGrip):
+				return "Grip";
+			case static_cast<uint32_t>(K::kGripAlt):
+				return "GripAlt";
+			case static_cast<uint32_t>(K::kJoystickTrigger):
+				return "Stick Click";
+			case static_cast<uint32_t>(K::kTouchpadClick):
+				return "Touchpad";
+			case static_cast<uint32_t>(K::kTouchpadAlt):
+				return "Touchpad Alt";
+			case static_cast<uint32_t>(K::kBY):
+				return "B/Y";
+			case static_cast<uint32_t>(K::kXA):
+				return "A/X";
+			default:
+				return "?";
+			}
+		}
+
+		// Visual thumbstick state: a crosshair box with a dot at (x, y) plus a
+		// numeric readout. Ported from Community Shaders' DrawThumbstickColumn.
+		void DrawThumbstickPad(const char* label, const RE::VRControllerState& cs, RE::ControllerRole role)
+		{
+			const float x = cs.thumbsticks[static_cast<size_t>(role)].x;
+			const float y = cs.thumbsticks[static_cast<size_t>(role)].y;
+
+			const ImVec2 padSize(80.0f, 80.0f);
+			const ImVec2 cursor = ImGui::GetCursorScreenPos();
+			ImDrawList* dl = ImGui::GetWindowDrawList();
+			const ImVec2 center(cursor.x + padSize.x * 0.5f, cursor.y + padSize.y * 0.5f);
+			const float radius = padSize.x * 0.5f - 4.0f;
+
+			dl->AddRectFilled(cursor, ImVec2(cursor.x + padSize.x, cursor.y + padSize.y), ImGui::GetColorU32(ImGuiCol_FrameBg));
+			dl->AddRect(cursor, ImVec2(cursor.x + padSize.x, cursor.y + padSize.y), ImGui::GetColorU32(ImGuiCol_Border), 4.0f, 0, 2.0f);
+			const ImU32 axis = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+			dl->AddLine(ImVec2(center.x, cursor.y + 4), ImVec2(center.x, cursor.y + padSize.y - 4), axis, 1.0f);
+			dl->AddLine(ImVec2(cursor.x + 4, center.y), ImVec2(cursor.x + padSize.x - 4, center.y), axis, 1.0f);
+			dl->AddCircleFilled(ImVec2(center.x + x * radius, center.y - y * radius), 5.0f, ImGui::GetColorU32(ImGuiCol_Text));
+
+			ImGui::Dummy(padSize);
+			ImGui::Text("%s", label);
+			ImGui::Text("X:% .2f Y:% .2f", x, y);
+		}
+
 		void RenderDiagnosticsSection(Overlay::State& state)
 		{
 			auto& s = state.settings;
 			if (ImGui::CollapsingHeader("Diagnostics")) {
+				// OpenVR runtime — detected once at startup (VRDetection::Detect),
+				// cached for display here.
+				const auto& vrInfo = VRDetection::LastResult();
+				ImGui::TextDisabled("OpenVR runtime");
+				if (vrInfo.isAvailable) {
+					if (vrInfo.isCompatible)
+						ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Active & compatible");
+					else
+						ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f), "Active but incompatible");
+					ImGui::Text("Runtime: %s", VRDetection::RuntimeTypeToString(vrInfo.runtimeType));
+					if (!vrInfo.dllPath.empty())
+						ImGui::Text("DLL: %s", vrInfo.dllPath.c_str());
+					ImGui::Text("Version: %s   Size: %llu bytes",
+						vrInfo.version.c_str(), static_cast<unsigned long long>(vrInfo.fileSize));
+					if (!vrInfo.modificationTime.empty())
+						ImGui::Text("Modified: %s", vrInfo.modificationTime.c_str());
+					ImGui::Text("Interfaces:  System %s   Overlay %s   Compositor %s",
+						vrInfo.hasSystemInterface ? "OK" : "missing",
+						vrInfo.hasOverlayInterface ? "OK" : "missing",
+						vrInfo.hasCompositorInterface ? "OK" : "missing");
+					ImGui::Text("Interface probing: %s", vrInfo.probingSucceeded ? "passed" : "failed");
+				} else {
+					ImGui::TextDisabled("OpenVR not available");
+				}
+				ImGui::Spacing();
+				ImGui::Separator();
+
 				ImGui::Text("Overlay visible: %s", state.overlayVisible ? "yes" : "no");
 				ImGui::Text("Left-handed: %s", state.lastKnownLeftHandedMode ? "yes" : "no");
 				ImGui::Text("Wand intersecting: %s",
@@ -478,6 +559,139 @@ namespace ImGuiVRHelper::SettingsUI
 						state.wandState.uvCoordinates.x, state.wandState.uvCoordinates.y);
 				}
 				ImGui::Text("Drag active: %s", state.dragState.dragging ? "yes" : "no");
+
+				// VR controller input diagnostics — migrated from Community
+				// Shaders' VR debug page. The helper owns the authoritative input
+				// state (it drives wand pointing, combos, and focus), so a client's
+				// own debug page would only see what it forwards; this is the place
+				// to inspect the real per-controller state.
+				ImGui::Spacing();
+				ImGui::Separator();
+				ImGui::TextDisabled("VR controller input (live)");
+				ImGui::Text("Focused client: %u   Wand: %s",
+					HelperImpl::GetSingleton().GetFocusedClientId(),
+					state.wandState.isIntersecting ? "intersecting" : "none");
+				if (state.wandState.isIntersecting) {
+					ImGui::Text("    Wand UV (%.3f, %.3f), device %u",
+						state.wandState.uvCoordinates.x, state.wandState.uvCoordinates.y,
+						state.wandState.controllerIndex);
+				}
+
+				const bool leftHanded = state.lastKnownLeftHandedMode;
+				const double nowSecs = std::chrono::duration<double>(
+					std::chrono::steady_clock::now().time_since_epoch())
+				                           .count();
+
+				{
+					using K = RE::BSOpenVRControllerDevice::Keys;
+					struct DbgButton
+					{
+						const char* label;
+						uint32_t key;
+					};
+					static const DbgButton kDbgButtons[] = {
+						{ "Trigger", static_cast<uint32_t>(K::kTrigger) },
+						{ "Grip", static_cast<uint32_t>(K::kGrip) },
+						{ "GripAlt", static_cast<uint32_t>(K::kGripAlt) },
+						{ "Stick Click", static_cast<uint32_t>(K::kJoystickTrigger) },
+						{ "Touchpad", static_cast<uint32_t>(K::kTouchpadClick) },
+						{ "B/Y", static_cast<uint32_t>(K::kBY) },
+						{ "A/X", static_cast<uint32_t>(K::kXA) },
+					};
+
+					const ImU32 pressedBg = ImGui::GetColorU32(ImVec4(0.20f, 0.45f, 0.30f, 0.55f));
+					if (ImGui::BeginTable("##vrButtonState", 5,
+							ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+						ImGui::TableSetupColumn("Button");
+						ImGui::TableSetupColumn(leftHanded ? "Primary" : "Secondary");
+						ImGui::TableSetupColumn("Held s##a");
+						ImGui::TableSetupColumn(leftHanded ? "Secondary" : "Primary");
+						ImGui::TableSetupColumn("Held s##b");
+						ImGui::TableHeadersRow();
+
+						auto stateCell = [&](const RE::ButtonState& b) {
+							if (b.isPressed)
+								ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, pressedBg);
+							ImGui::TextUnformatted(b.isPressed ? "Pressed" : "-");
+						};
+						auto heldCell = [&](const RE::ButtonState& b) {
+							if (b.isPressed)
+								ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, pressedBg);
+							ImGui::Text("%.2f", b.GetCurrentHeldTime(nowSecs));
+						};
+						for (const auto& db : kDbgButtons) {
+							const RE::ButtonState& pri = state.primaryControllerState[db.key];
+							const RE::ButtonState& sec = state.secondaryControllerState[db.key];
+							const RE::ButtonState& a = leftHanded ? pri : sec;
+							const RE::ButtonState& b = leftHanded ? sec : pri;
+							ImGui::TableNextRow();
+							ImGui::TableSetColumnIndex(0);
+							ImGui::TextUnformatted(db.label);
+							ImGui::TableSetColumnIndex(1);
+							stateCell(a);
+							ImGui::TableSetColumnIndex(2);
+							heldCell(a);
+							ImGui::TableSetColumnIndex(3);
+							stateCell(b);
+							ImGui::TableSetColumnIndex(4);
+							heldCell(b);
+						}
+						ImGui::EndTable();
+					}
+				}
+
+				// Thumbstick visualizers (handedness-ordered).
+				if (ImGui::BeginTable("##vrSticks", 2, ImGuiTableFlags_SizingFixedFit)) {
+					ImGui::TableNextRow();
+					ImGui::TableSetColumnIndex(0);
+					ImGui::BeginGroup();
+					DrawThumbstickPad(leftHanded ? "Primary" : "Secondary",
+						leftHanded ? state.primaryControllerState : state.secondaryControllerState,
+						leftHanded ? RE::ControllerRole::Primary : RE::ControllerRole::Secondary);
+					ImGui::EndGroup();
+					ImGui::TableSetColumnIndex(1);
+					ImGui::BeginGroup();
+					DrawThumbstickPad(leftHanded ? "Secondary" : "Primary",
+						leftHanded ? state.secondaryControllerState : state.primaryControllerState,
+						leftHanded ? RE::ControllerRole::Secondary : RE::ControllerRole::Primary);
+					ImGui::EndGroup();
+					ImGui::EndTable();
+				}
+
+				// Recent VR controller events (most recent first).
+				ImGui::SeparatorText("Recent VR controller events");
+				if (ImGui::BeginTable("##vrEvents", 5,
+						ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_ScrollY,
+						ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() * 8.0f))) {
+					ImGui::TableSetupColumn("Device", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+					ImGui::TableSetupColumn("Key / X", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+					ImGui::TableSetupColumn("Y", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+					ImGui::TableSetupColumn("Pressed", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+					ImGui::TableSetupColumn("Mapping", ImGuiTableColumnFlags_WidthStretch);
+					ImGui::TableHeadersRow();
+					const auto events = ImGuiVRHelper::Input::SnapshotEventLog();
+					for (auto it = events.rbegin(); it != events.rend(); ++it) {
+						const auto& e = *it;
+						ImGui::TableNextRow();
+						ImGui::TableSetColumnIndex(0);
+						ImGui::Text("%u", e.device);
+						ImGui::TableSetColumnIndex(1);
+						if (e.isThumbstick)
+							ImGui::Text("%.3f", e.thumbstickX);
+						else
+							ImGui::Text("%u", e.keyCode);
+						ImGui::TableSetColumnIndex(2);
+						if (e.isThumbstick)
+							ImGui::Text("%.3f", e.thumbstickY);
+						else
+							ImGui::TextUnformatted("-");
+						ImGui::TableSetColumnIndex(3);
+						ImGui::TextUnformatted(e.pressed ? "yes" : "no");
+						ImGui::TableSetColumnIndex(4);
+						ImGui::TextUnformatted(e.isThumbstick ? "Thumbstick" : DbgButtonName(e.keyCode));
+					}
+					ImGui::EndTable();
+				}
 
 				ImGui::Spacing();
 				ImGui::Separator();

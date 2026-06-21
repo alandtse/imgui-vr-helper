@@ -55,7 +55,12 @@ namespace VRDetection
 	RuntimeType DetectRuntimeType(const std::string& dllPath, const std::string& version, uint64_t fileSize);
 
 	/// Full detection: gather DLL info, classify runtime, probe interfaces.
+	/// Caches its result for LastResult().
 	OpenVRDetectionResult Detect();
+
+	/// The result of the most recent Detect() call (run once at startup).
+	/// All-default (isAvailable == false) until Detect() has run.
+	const OpenVRDetectionResult& LastResult();
 
 	const char* RuntimeTypeToString(RuntimeType type);
 }

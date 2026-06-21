@@ -26,6 +26,8 @@
 #include <RE/B/BSOpenVRControllerDevice.h>
 
 #include <chrono>
+#include <deque>
+#include <mutex>
 
 namespace ImGuiVRHelper::Input
 {
@@ -95,6 +97,22 @@ namespace ImGuiVRHelper::Input
 				}
 			}
 			return mask;
+		}
+
+		// Recent VR controller events ring buffer (diagnostics UI). Written
+		// from FeedVREvent (input thread), read via SnapshotEventLog (render
+		// thread) — guarded by a mutex.
+		constexpr size_t kMaxEventLog = 32;
+		std::mutex g_eventLogMutex;
+		std::deque<EventLogEntry> g_eventLog;
+
+		bool IsButtonKey(uint32_t keyCode)
+		{
+			for (const auto& m : kButtonMappings) {
+				if (m.reKey == keyCode)
+					return true;
+			}
+			return false;
 		}
 
 		// ---- Pose population --------------------------------------------
@@ -255,6 +273,16 @@ namespace ImGuiVRHelper::Input
 		const float snappedY = (std::abs(thumbstickY) < kHardwareDriftFloor) ? 0.0f : thumbstickY;
 		target.thumbsticks[thumbIdx].x = snappedX;
 		target.thumbsticks[thumbIdx].y = snappedY;
+
+		// Record into the diagnostics event log. Classify as a thumbstick
+		// event when the key isn't one of the mapped buttons.
+		{
+			const bool isStick = !IsButtonKey(keyCode);
+			std::scoped_lock lk{ g_eventLogMutex };
+			g_eventLog.push_back(EventLogEntry{ device, keyCode, pressed, isStick, snappedX, snappedY });
+			if (g_eventLog.size() > kMaxEventLog)
+				g_eventLog.pop_front();
+		}
 	}
 
 	void InvalidateHandedness()
@@ -270,6 +298,12 @@ namespace ImGuiVRHelper::Input
 	void ResetEdgeState()
 	{
 		g_edges = {};
+	}
+
+	std::vector<EventLogEntry> SnapshotEventLog()
+	{
+		std::scoped_lock lk{ g_eventLogMutex };
+		return std::vector<EventLogEntry>(g_eventLog.begin(), g_eventLog.end());
 	}
 
 	void BuildFrame(API::Frame& out, float dt)

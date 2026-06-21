@@ -135,18 +135,26 @@ namespace VRDetection
 		return RuntimeType::Unknown;
 	}
 
+	namespace
+	{
+		// Cached result of the last Detect() so the settings UI can show the
+		// runtime info without re-probing the DLL every frame.
+		OpenVRDetectionResult g_lastResult;
+	}
+
+	const OpenVRDetectionResult& LastResult() { return g_lastResult; }
+
 	OpenVRDetectionResult Detect()
 	{
 		OpenVRDetectionResult result;
 
 		GatherDLLInfo(result);
-		if (!result.isAvailable) {
-			return result;
+		if (result.isAvailable) {
+			result.runtimeType = DetectRuntimeType(result.dllPath, result.version, result.fileSize);
+			result.isCompatible = ProbeRuntimeInterfaces(result);
 		}
 
-		result.runtimeType = DetectRuntimeType(result.dllPath, result.version, result.fileSize);
-		result.isCompatible = ProbeRuntimeInterfaces(result);
-
+		g_lastResult = result;
 		return result;
 	}
 }
