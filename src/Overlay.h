@@ -99,6 +99,12 @@ namespace ImGuiVRHelper::Overlay
 		// Drag-to-reposition.
 		bool enableDragToReposition = false;
 		float autoResetDistance = 1000.0f;  ///< game units; 0 disables auto-reset
+
+		/// When true, an overlay may only be OPENED while the game is paused
+		/// (RE::UI::GameIsPaused()), so menus never affect live gameplay —
+		/// matching Community Shaders' original pause-only menu. Switching
+		/// between already-open overlays and closing are always allowed.
+		bool onlyOpenWhilePaused = true;
 		// Thumbstick deadzone (also used for drag-depth control). Bumped
 		// from 0.1 to 0.2 — most VR controllers have hardware drift in
 		// the 0.05-0.15 range, and 0.1 left the cursor noticeably

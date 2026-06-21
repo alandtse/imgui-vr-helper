@@ -21,6 +21,7 @@
 #include "internal/VRUtils.h"
 
 #include <RE/B/BSOpenVRControllerDevice.h>
+#include <RE/U/UI.h>
 
 #include <nlohmann/json.hpp>
 
@@ -60,6 +61,22 @@ namespace
 				return false;
 		}
 		return true;
+	}
+
+	// True iff an overlay may be OPENED right now. When the user keeps the
+	// "only open while paused" setting on (the default — matches Community
+	// Shaders' original pause-only menu), opening an overlay from nothing is
+	// blocked during live gameplay so menus never affect it. Once something is
+	// already shown (currentFocus != 0), switching/closing stays allowed.
+	bool OverlayOpenAllowed(uint32_t currentFocus)
+	{
+		const auto& s = ImGuiVRHelper::Overlay::State::GetSingleton().settings;
+		if (!s.onlyOpenWhilePaused)
+			return true;
+		if (currentFocus != 0)
+			return true;
+		auto* ui = RE::UI::GetSingleton();
+		return ui && ui->GameIsPaused();
 	}
 }
 
@@ -496,6 +513,8 @@ namespace ImGuiVRHelper
 
 	void HelperImpl::OnKeyboardToggle()
 	{
+		// Intentionally NOT pause-gated — keyboard is a desktop/dev convenience;
+		// only controller activation is gated (see the self-toggle combo).
 		SettingsUI::Toggle();
 		logs::info("Keyboard toggle (Shift+F4): settings UI now {}",
 			SettingsUI::IsVisible() ? "VISIBLE" : "hidden");
@@ -506,6 +525,10 @@ namespace ImGuiVRHelper
 
 	void HelperImpl::RequestFocus(uint32_t client_id)
 	{
+		// NOT pause-gated: RequestFocus is reached by keyboard-driven opens
+		// (the helper's Shift+F4 and a client's own keyboard hotkey), which are
+		// desktop/dev conveniences. The pause gate applies only to controller
+		// activation — see the self-toggle combo in ReconcileSelfFocusAndCombos.
 		std::scoped_lock lk{ m_mutex };
 		if (m_clients.contains(client_id)) {
 			m_focused_client = client_id;
@@ -637,9 +660,14 @@ namespace ImGuiVRHelper
 		// Self-toggle combo (bound via "Rebind toggle"; default is Shift+F4 in
 		// OnKeyboardToggle). Latches rising edges → fires once per held cycle.
 		if (m_self_toggle_combo != 0 && ComboFired(m_self_toggle_combo)) {
-			SettingsUI::Toggle();
-			logs::info("Controller toggle combo: settings UI now {}",
-				SettingsUI::IsVisible() ? "VISIBLE" : "hidden");
+			// Gate opening on pause (closing is always allowed).
+			if (SettingsUI::IsVisible() || OverlayOpenAllowed(m_focused_client)) {
+				SettingsUI::Toggle();
+				logs::info("Controller toggle combo: settings UI now {}",
+					SettingsUI::IsVisible() ? "VISIBLE" : "hidden");
+			} else {
+				logs::info("Controller toggle combo ignored: game not paused");
+			}
 		}
 
 		// When the SteamVR dashboard shows the helper's own panel, force-render

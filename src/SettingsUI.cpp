@@ -135,6 +135,7 @@ namespace ImGuiVRHelper::SettingsUI
 			if (ImGui::CollapsingHeader("Interaction")) {
 				ImGui::Checkbox("Wand pointer (laser cursor)", &s.enableWandPointing);
 				ImGui::Checkbox("Grip-to-drag repositioning", &s.enableDragToReposition);
+				ImGui::Checkbox("Only open overlays while the game is paused", &s.onlyOpenWhilePaused);
 				ImGui::SliderFloat("Mouse deadzone", &s.mouseDeadzone, 0.0f, 1.0f, "%.2f");
 				ImGui::SliderFloat("Auto-reset distance",
 					&s.autoResetDistance, 0.0f, 5000.0f, "%.0f units");

@@ -64,6 +64,7 @@ namespace ImGuiVRHelper::Overlay
 			s.controllerOffsetZ = tomlGet<float>(t, "controllerOffsetZ", s.controllerOffsetZ);
 			s.enableWandPointing = tomlGet<bool>(t, "enableWandPointing", s.enableWandPointing);
 			s.enableDragToReposition = tomlGet<bool>(t, "enableDragToReposition", s.enableDragToReposition);
+			s.onlyOpenWhilePaused = tomlGet<bool>(t, "onlyOpenWhilePaused", s.onlyOpenWhilePaused);
 			s.autoResetDistance = tomlGet<float>(t, "autoResetDistance", s.autoResetDistance);
 			s.mouseDeadzone = tomlGet<float>(t, "mouseDeadzone", s.mouseDeadzone);
 			s.logLevel = tomlGet<std::string>(t, "logLevel", s.logLevel);
@@ -109,6 +110,7 @@ namespace ImGuiVRHelper::Overlay
 				<< "# Interaction\n"
 				<< "enableWandPointing = " << (s.enableWandPointing ? "true" : "false") << "\n"
 				<< "enableDragToReposition = " << (s.enableDragToReposition ? "true" : "false") << "\n"
+				<< "onlyOpenWhilePaused = " << (s.onlyOpenWhilePaused ? "true" : "false") << "\n"
 				<< "mouseDeadzone = " << s.mouseDeadzone << "\n"
 				<< "autoResetDistance = " << s.autoResetDistance << "  # game units\n\n"
 
@@ -162,6 +164,7 @@ namespace ImGuiVRHelper::Overlay
 				s.controllerOffsetZ = j.value("controllerOffsetZ", s.controllerOffsetZ);
 				s.enableWandPointing = j.value("enableWandPointing", s.enableWandPointing);
 				s.enableDragToReposition = j.value("enableDragToReposition", s.enableDragToReposition);
+				s.onlyOpenWhilePaused = j.value("onlyOpenWhilePaused", s.onlyOpenWhilePaused);
 				s.autoResetDistance = j.value("autoResetDistance", s.autoResetDistance);
 				s.mouseDeadzone = j.value("mouseDeadzone", s.mouseDeadzone);
 				s.logLevel = j.value("logLevel", s.logLevel);
