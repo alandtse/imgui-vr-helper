@@ -244,6 +244,10 @@ namespace ImGuiVRHelper
 			return false;
 		}
 
+		// Stamp the access so the HUD pass knows this client painted this frame
+		// (idle HUD layers are skipped to save the always-on composite cost).
+		it->second.lastPanelFrame = m_frameCounter;
+
 		out->width = static_cast<uint32_t>(Overlay::Config::kOverlayWidth);
 		out->height = static_cast<uint32_t>(Overlay::Config::kOverlayHeight);
 		out->rtv = it->second.rtv.get();
@@ -362,6 +366,13 @@ namespace ImGuiVRHelper
 		return it->second.texture.get();
 	}
 
+	void HelperImpl::SetHudForceDisabled(uint32_t client_id, bool disabled)
+	{
+		std::scoped_lock lk{ m_mutex };
+		if (auto it = m_clients.find(client_id); it != m_clients.end())
+			it->second.hudForceDisabled = disabled;
+	}
+
 	std::vector<HelperImpl::ClientSnapshot> HelperImpl::SnapshotClients()
 	{
 		std::vector<ClientSnapshot> out;
@@ -378,6 +389,10 @@ namespace ImGuiVRHelper
 			snap.dashboard_eligible = (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_Dashboard) != 0;
 			snap.dashboard_active = (Dashboard::GetActiveClient() == id) ||
 			                        (Dashboard::GetActiveClient() == 0 && id == m_self_client_id);
+			const bool isHud = (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_HUDMode) != 0;
+			snap.hud_force_disabled = rec.hudForceDisabled;
+			snap.hud_compositing = isHud && !rec.hudForceDisabled && rec.lastPanelFrame != 0 &&
+			                       (m_frameCounter - rec.lastPanelFrame) <= 2;  // matches kHudIdleFrames
 			out.push_back(std::move(snap));
 		}
 		// Stable order by client_id so the list doesn't reshuffle
@@ -397,14 +412,21 @@ namespace ImGuiVRHelper
 		// reserve to 4 covers the common multi-HUD case (subtitles +
 		// damage numbers + radar + ...) without reallocating.
 		out.reserve(4);
+		// Composite a HUD layer only if it painted within the last few frames —
+		// an idle layer (toast dismissed, welcome gone, demo off) would otherwise
+		// cost a full-FOV alpha blend per eye for zero pixels. Always-on during
+		// gameplay, so this keeps idle HUD cost at zero.
+		constexpr uint64_t kHudIdleFrames = 2;
 		for (auto& [id, rec] : m_clients) {
 			if ((rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_HUDMode) == 0)
 				continue;
-			ID3D11Texture2D* tex = nullptr;
-			if (EnsureClientTextureLocked(rec)) {
-				tex = rec.texture.get();
-			}
-			out.push_back({ id, tex });
+			if (rec.hudForceDisabled)
+				continue;  // debug: layer hidden to isolate others
+			if (rec.lastPanelFrame == 0 || (m_frameCounter - rec.lastPanelFrame) > kHudIdleFrames)
+				continue;  // never painted, or idle → skip the composite
+			if (!EnsureClientTextureLocked(rec))
+				continue;
+			out.push_back({ id, rec.texture.get() });
 		}
 		return out;
 	}
@@ -1010,6 +1032,7 @@ namespace ImGuiVRHelper
 
 	void HelperImpl::DispatchFrame(float dt)
 	{
+		++m_frameCounter;  // HUD-idle skipping compares GetPanel access against this
 		UpdateWandPointer();
 
 		ImGuiVRHelperPluginAPI::Frame baseFrame;

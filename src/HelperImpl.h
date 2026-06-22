@@ -96,6 +96,8 @@ namespace ImGuiVRHelper
 			bool has_focus;           ///< this client currently holds focus
 			bool dashboard_eligible;  ///< client has kClientFlag_Dashboard (appears in dashboard picker)
 			bool dashboard_active;    ///< picker currently has this client selected (shown in dashboard rn)
+			bool hud_compositing;     ///< HUD-mode client painted recently → being composited this frame
+			bool hud_force_disabled;  ///< debug: compositing suppressed by the HUD-layers debug UI
 		};
 		std::vector<ClientSnapshot> SnapshotClients();
 
@@ -109,6 +111,10 @@ namespace ImGuiVRHelper
 		/// client. Backs the Prev/Next buttons and the off-panel stick-click
 		/// shortcut.
 		void CycleOverlay(int direction);
+
+		/// Debug: force-hide a HUD-mode client from compositing so a developer
+		/// can isolate which layer draws what. No-op for unknown ids.
+		void SetHudForceDisabled(uint32_t client_id, bool disabled);
 
 		/// Allocate the helper's own self-client (so the helper's settings
 		/// UI gets a panel texture via the same per-client allocation
@@ -164,6 +170,7 @@ namespace ImGuiVRHelper
 			m_combos;
 		ImGuiVRHelperPluginAPI::ComboId m_next_combo_id = 1;
 		uint32_t m_focused_client = 0;
+		uint64_t m_frameCounter = 0;  ///< ++ each DispatchFrame; HUD-idle skipping uses it
 
 		/// Allocate (or return existing) per-client overlay texture
 		/// resources. Returns true on success, false if D3D isn't ready
@@ -232,6 +239,13 @@ namespace ImGuiVRHelper
 		ImGuiVRHelperPluginAPI::OnFrameFn on_frame = nullptr;
 		void* user = nullptr;
 		uint32_t flags = 0;
+
+		// HUD compositing bookkeeping. lastPanelFrame is the frame counter at the
+		// most recent GetPanel call; the HUD pass composites a HUD-mode client
+		// only when it painted recently, so idle HUD layers cost nothing.
+		// hudForceDisabled lets the debug UI hide a layer to isolate it.
+		uint64_t lastPanelFrame = 0;
+		bool hudForceDisabled = false;
 
 		// Helper-owned panel render target. Allocated lazily on the first
 		// GetPanel call after InitD3D has fired. Format is fixed at

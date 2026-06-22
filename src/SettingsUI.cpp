@@ -733,6 +733,35 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::TextDisabled("    Coverage = fraction of the view the HUD fills.");
 				ImGui::TextDisabled("    1.0 = edge-to-edge (may clip at lens mask); 0.92 = margin.");
 				ImGui::TextDisabled("    If panel edges are clipped by the lens, lower FOV.");
+
+				ImGui::Spacing();
+				ImGui::Separator();
+				ImGui::TextDisabled("HUD layers (debug) — always-on, drawn in registration order");
+				{
+					namespace API = ImGuiVRHelperPluginAPI;
+					auto& impl = HelperImpl::GetSingleton();
+					const auto clients = impl.SnapshotClients();
+					int hudCount = 0;
+					for (const auto& c : clients) {
+						if (!(c.flags & API::kClientFlag_HUDMode))
+							continue;
+						++hudCount;
+						// Checkbox = "enabled"; unchecking force-disables the layer
+						// so a developer can isolate who draws what / spot overlaps.
+						bool enabled = !c.hud_force_disabled;
+						const std::string label = c.name + "##hud" + std::to_string(c.client_id);
+						if (ImGui::Checkbox(label.c_str(), &enabled))
+							impl.SetHudForceDisabled(c.client_id, !enabled);
+						ImGui::SameLine();
+						ImGui::TextColored(
+							c.hud_compositing ? ImVec4(0.4f, 1.0f, 0.4f, 1.0f) : ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+							c.hud_force_disabled ? "disabled" : (c.hud_compositing ? "compositing" : "idle (no cost)"));
+					}
+					if (hudCount == 0)
+						ImGui::TextDisabled("    (no HUD-mode clients registered)");
+					else
+						ImGui::TextDisabled("    Uncheck to hide a layer; 'idle' layers are skipped (zero cost).");
+				}
 			}
 		}
 
