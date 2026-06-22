@@ -1056,6 +1056,16 @@ namespace ImGuiVRHelper::SettingsUI
 			ImGui_ImplWin32_NewFrame();
 		}
 		ImGui::NewFrame();
+
+		// Cursor visibility (single source of truth; post-NewFrame so io.MousePos
+		// is final): draw it only when it actually lands on the panel — placed by
+		// the wand, the thumbstick, or the desktop mouse (the backend reports
+		// in-bounds while the mirror window has focus, -FLT_MAX otherwise). The
+		// in-game OS hardware cursor is hidden, so this is the only cursor shown.
+		io.MouseDrawCursor =
+			io.MousePos.x >= 0.0f && io.MousePos.y >= 0.0f &&
+			io.MousePos.x < io.DisplaySize.x && io.MousePos.y < io.DisplaySize.y;
+
 		if (g_visible || g_forceVisible) {
 			RenderWindow();
 		}
