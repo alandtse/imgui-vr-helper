@@ -680,6 +680,17 @@ namespace ImGuiVRHelper
 		// (hotkey, combo, ImGui X-button); otherwise a stale focus would keep
 		// InSceneOverlay painting the closed panel to both eyes.
 		if (m_self_client_id != 0) {
+			// Yield to clients: if a client took focus while our self-UI is open
+			// (its hotkey/combo, or the launcher picking it), close the self-UI
+			// instead of re-grabbing focus below. Skip during combo recording
+			// (it needs the UI up). Fires once, so the save is a one-shot.
+			if (SettingsUI::IsVisible() && !ComboRecording::IsActive() &&
+				m_focused_client != 0 && m_focused_client != m_self_client_id) {
+				SettingsUI::SetVisible(false);
+				Overlay::SaveSettings();
+				logs::info("Client {} took focus; self-UI auto-closed (yielded)", m_focused_client);
+			}
+
 			const bool selfActive = SettingsUI::IsVisible() || ComboRecording::IsActive();
 			if (selfActive) {
 				if (m_focused_client != m_self_client_id) {

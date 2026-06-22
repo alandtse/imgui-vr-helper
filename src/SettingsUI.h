@@ -47,6 +47,10 @@ namespace ImGuiVRHelper::SettingsUI
 	/// straight on the settings/picker without needing the hotkey.
 	void SetForceVisible(bool forced);
 
+	/// Programmatically set self-UI visibility. Used by the focus reconciler
+	/// to auto-close the settings UI when a client takes focus (yield).
+	void SetVisible(bool visible);
+
 	/// The helper's own ImGui context. Used by the dashboard input pump
 	/// to route SteamVR dashboard mouse events into the right context.
 	/// nullptr before Init().

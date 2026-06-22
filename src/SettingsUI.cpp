@@ -857,6 +857,11 @@ namespace ImGuiVRHelper::SettingsUI
 
 	void SetForceVisible(bool forced) { g_forceVisible = forced; }
 
+	// Programmatic visibility set (e.g. the focus reconciler auto-closing the
+	// self-UI when a client takes focus). Like Toggle, this is a pure flag set;
+	// HelperImpl's reconciler owns the focus/persist cleanup.
+	void SetVisible(bool visible) { g_visible = visible; }
+
 	ImGuiContext* GetContext() { return g_ctx; }
 
 	bool Render(float dt)
