@@ -229,6 +229,12 @@ namespace ImGuiVRHelper::OverlayDrag
 			if (!system)
 				return;
 
+			// Off-panel only: while the wand is on the panel, grip is the menu's
+			// right-click. Aim off the overlay to grab and reposition it. Keeps
+			// grip-to-drag from hijacking a right-click on a menu option.
+			if (state.wandState.isIntersecting)
+				return;
+
 			struct DragMode
 			{
 				DragState::Mode mode;
