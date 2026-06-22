@@ -285,7 +285,7 @@ namespace ImGuiVRHelper
 
 	ImGuiVRHelperPluginAPI::ComboId HelperImpl::RegisterCombo(uint32_t client_id,
 		const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n, float timeout_s,
-		const char* label)
+		const char* label, ImGuiVRHelperPluginAPI::ComboRebindFn on_rebind, void* user)
 	{
 		if (!keys || n == 0) {
 			return 0;
@@ -318,6 +318,8 @@ namespace ImGuiVRHelper
 		rec.keys.assign(keys, keys + n);
 		rec.timeout_s = timeout_s;
 		rec.latched = false;
+		rec.on_rebind = on_rebind;
+		rec.on_rebind_user = user;
 		logs::info("RegisterCombo(client={}, keys={}, timeout={}s) -> combo={}",
 			client_id, n, timeout_s, id);
 		return id;
@@ -328,16 +330,26 @@ namespace ImGuiVRHelper
 	{
 		if (!keys || n == 0 || n > 8)
 			return;
-		std::scoped_lock lk{ m_mutex };
-		auto it = m_combos.find(combo);
-		if (it == m_combos.end())
-			return;
-		// Update in place — same ComboId so the owning client keeps polling the
-		// same handle. Reset match state so a key held during recording doesn't
-		// fire a spurious activation.
-		it->second.keys.assign(keys, keys + n);
-		it->second.was_matched = false;
-		it->second.latched = false;
+		ImGuiVRHelperPluginAPI::ComboRebindFn cb = nullptr;
+		void* user = nullptr;
+		{
+			std::scoped_lock lk{ m_mutex };
+			auto it = m_combos.find(combo);
+			if (it == m_combos.end())
+				return;
+			// Update in place — same ComboId so the owning client keeps polling
+			// the same handle. Reset match state so a key held during recording
+			// doesn't fire a spurious activation.
+			it->second.keys.assign(keys, keys + n);
+			it->second.was_matched = false;
+			it->second.latched = false;
+			cb = it->second.on_rebind;
+			user = it->second.on_rebind_user;
+		}
+		// Notify the owning client OUTSIDE the lock so it can persist the new
+		// binding (and is free to call back into the API).
+		if (cb)
+			cb(keys, n, user);
 		logs::info("RebindCombo(combo={}) -> {} keys", combo, n);
 	}
 
@@ -552,7 +564,7 @@ namespace ImGuiVRHelper
 			std::scoped_lock lk{ m_mutex };
 			m_combos.erase(m_self_toggle_combo);
 		}
-		m_self_toggle_combo = RegisterCombo(m_self_client_id, keys, n, 3.0f, "Open ImGuiVRHelper settings");
+		m_self_toggle_combo = RegisterCombo(m_self_client_id, keys, n, 3.0f, "Open ImGuiVRHelper settings", nullptr, nullptr);
 		logs::info("Rebound self-toggle combo to {} keys (combo_id={})",
 			n, m_self_toggle_combo);
 	}

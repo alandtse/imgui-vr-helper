@@ -31,7 +31,8 @@ namespace ImGuiVRHelper
 
 		ImGuiVRHelperPluginAPI::ComboId RegisterCombo(uint32_t client_id,
 			const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n,
-			float timeout_s, const char* label) override;
+			float timeout_s, const char* label,
+			ImGuiVRHelperPluginAPI::ComboRebindFn on_rebind, void* user) override;
 		bool ComboFired(ImGuiVRHelperPluginAPI::ComboId) override;
 		void StartComboRecording(uint32_t client_id, const char* label,
 			ImGuiVRHelperPluginAPI::ComboRecordedFn on_done, void* user,
@@ -132,10 +133,11 @@ namespace ImGuiVRHelper
 
 		/// Replace an existing combo's keys in place (same ComboId, so the owning
 		/// client keeps polling the same handle). Backs the controller-map UI's
-		/// Rebind buttons via ComboRecording. Live only — matches the self-toggle
-		/// rebind; clients persist their own bindings.
+		/// Rebind buttons and the client SDK's bindings table via ComboRecording.
+		/// Updates the live keys and invokes the combo's on_rebind so the owner
+		/// can persist the new chord.
 		void RebindCombo(ImGuiVRHelperPluginAPI::ComboId combo,
-			const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n);
+			const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n) override;
 
 		/// Allocate the helper's own self-client (so the helper's settings
 		/// UI gets a panel texture via the same per-client allocation
@@ -292,7 +294,9 @@ namespace ImGuiVRHelper
 		std::string label;  ///< human-readable name, for the controller-mapping UI
 		std::vector<ImGuiVRHelperPluginAPI::InputCombo> keys;
 		float timeout_s = 0.0f;
-		bool latched = false;      ///< edge-fired, cleared on read
-		bool was_matched = false;  ///< previous-frame match, for rising edge detection
+		bool latched = false;                                       ///< edge-fired, cleared on read
+		bool was_matched = false;                                   ///< previous-frame match, for rising edge detection
+		ImGuiVRHelperPluginAPI::ComboRebindFn on_rebind = nullptr;  ///< client persist hook
+		void* on_rebind_user = nullptr;
 	};
 }
