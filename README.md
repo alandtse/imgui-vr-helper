@@ -37,14 +37,14 @@ clients have no link-time dependency on the helper.
 Split license, designed so non-GPL clients can integrate without GPL
 infection:
 
--   **`src/`** — GPL-3.0-or-later WITH a Skyrim modding exception (lifted
-    verbatim from Skyrim Community Shaders). See [COPYING](./COPYING) and
-    [EXCEPTIONS.md](./EXCEPTIONS.md).
--   **`api/`** — LGPL-3.0-or-later. Clients vendor `api/*.h` and
-    `api/ImGuiVRHelperAPI.cpp` under permissive terms; their own code stays
-    under their own license. The LGPL "must allow relinking" requirement is
-    satisfied trivially because the messaging handshake makes the helper DLL
-    replaceable at runtime. See [COPYING.LESSER](./COPYING.LESSER).
+- **`src/`** — GPL-3.0-or-later WITH a Skyrim modding exception (lifted
+  verbatim from Skyrim Community Shaders). See [COPYING](./COPYING) and
+  [EXCEPTIONS.md](./EXCEPTIONS.md).
+- **`api/`** — LGPL-3.0-or-later. Clients vendor `api/*.h` and
+  `api/ImGuiVRHelperAPI.cpp` under permissive terms; their own code stays
+  under their own license. The LGPL "must allow relinking" requirement is
+  satisfied trivially because the messaging handshake makes the helper DLL
+  replaceable at runtime. See [COPYING.LESSER](./COPYING.LESSER).
 
 Each source file carries an SPDX identifier in its header.
 
@@ -70,10 +70,10 @@ deploy targets shouldn't collide with non-VR plugins' deploy paths.
 Vendor four files into your client's source tree, or pull this repo as a
 submodule and add `api/` to your include path:
 
--   `api/ImGuiVRHelperAPI.h`
--   `api/ImGuiVRHelperAPI.cpp`
--   `api/ImGuiVRHelperTypes.h`
--   `api/ImGuiVRHelperInput.h`
+- `api/ImGuiVRHelperAPI.h`
+- `api/ImGuiVRHelperAPI.cpp`
+- `api/ImGuiVRHelperTypes.h`
+- `api/ImGuiVRHelperInput.h`
 
 In your `kPostLoad` SKSE message handler:
 
@@ -96,10 +96,10 @@ uint32_t client_id = g_helper->RegisterClient("MyMod", &OnFrame, /*user*/ nullpt
 
 ## Credits
 
--   Handshake pattern derived from
-    [SkyrimVRESL](https://github.com/alandtse/SkyrimVRESL), itself credited to
-    [HIGGS](https://github.com/adamhynek/higgs).
--   xmake plugin scaffolding adapted from
-    [Intellightent](https://github.com/alandtse/Intellightent).
--   VR overlay/input infrastructure ported from
-    [Skyrim Community Shaders](https://github.com/doodlum/skyrim-community-shaders).
+- Handshake pattern derived from
+  [SkyrimVRESL](https://github.com/alandtse/SkyrimVRESL), itself credited to
+  [HIGGS](https://github.com/adamhynek/higgs).
+- xmake plugin scaffolding adapted from
+  [Intellightent](https://github.com/alandtse/Intellightent).
+- VR overlay/input infrastructure ported from
+  [Skyrim Community Shaders](https://github.com/doodlum/skyrim-community-shaders).
