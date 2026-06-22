@@ -185,6 +185,29 @@ namespace ImGuiVRHelper::OverlayDrag
 						} else if (drag.mode == DragState::Mode::Controller) {
 							drag.initialControllerOffset.z = std::clamp(
 								drag.initialControllerOffset.z + depthDelta, -10.0f, 10.0f);
+						} else if (drag.mode == DragState::Mode::FixedWorld) {
+							// World-anchored overlay (the DEFAULT positioning mode):
+							// push/pull along the line from the HMD to the overlay
+							// (thumb up = away). The FixedWorld drag-update re-derives
+							// fixedWorld.m from initialOverlayMatrix each frame, so
+							// accumulate the depth into that base matrix.
+							vr::TrackedDevicePose_t hmdPose;
+							if (Util::GetDeviceToAbsoluteTrackingPoseCompatible(
+									vr::TrackingUniverseStanding, 0, &hmdPose, 1) &&
+								hmdPose.bPoseIsValid) {
+								const Matrix hmdMatrix = Util::HmdMatrix34ToMatrix(hmdPose.mDeviceToAbsoluteTracking);
+								Vector3 dir(
+									drag.initialOverlayMatrix._41 - hmdMatrix._41,
+									drag.initialOverlayMatrix._42 - hmdMatrix._42,
+									drag.initialOverlayMatrix._43 - hmdMatrix._43);
+								if (dir.LengthSquared() > 1e-4f) {
+									dir.Normalize();
+									const Vector3 move = dir * (-depthDelta);  // thumb up → push away
+									drag.initialOverlayMatrix._41 += move.x;
+									drag.initialOverlayMatrix._42 += move.y;
+									drag.initialOverlayMatrix._43 += move.z;
+								}
+							}
 						}
 					}
 				}
