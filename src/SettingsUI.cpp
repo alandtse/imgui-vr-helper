@@ -12,6 +12,7 @@
 #include "Input.h"
 #include "OpenVRDetection.h"
 #include "Overlay.h"
+#include "Theme.h"
 #include "WandPointing.h"
 
 #include <algorithm>
@@ -814,6 +815,9 @@ namespace ImGuiVRHelper::SettingsUI
 			static_cast<float>(Overlay::Config::kOverlayHeight));
 		io.BackendFlags |= ImGuiBackendFlags_HasMouseCursors;
 		io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
+		// Match the Community Shaders color scheme.
+		Theme::Apply(ImGui::GetStyle());
 
 		// Mouse-cursor scaling so a 1920x1080 panel looks reasonable in VR.
 		ImGui::GetStyle().ScaleAllSizes(2.0f);

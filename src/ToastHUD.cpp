@@ -7,6 +7,7 @@
 
 #include "Globals.h"
 #include "Overlay.h"
+#include "Theme.h"
 
 namespace ImGuiVRHelper::ToastHUD
 {
@@ -37,6 +38,7 @@ namespace ImGuiVRHelper::ToastHUD
 				io.IniFilename = nullptr;
 				io.LogFilename = nullptr;
 				io.DisplaySize = ImVec2(kPanelWidth, kPanelHeight);
+				Theme::Apply(ImGui::GetStyle());  // match the Community Shaders look
 				ImGui::GetStyle().ScaleAllSizes(2.0f);
 				io.FontGlobalScale = 1.5f;
 			}
