@@ -430,11 +430,13 @@ namespace ImGuiVRHelper
 
 	bool HelperImpl::ShouldSwallowInput() const
 	{
-		// Any visible helper UI consumes VR controller input. Today that's
-		// just the settings window or the combo-recording modal; future
-		// external clients with focus would extend this with a "panel
-		// wants input" check.
-		return SettingsUI::IsVisible() || ComboRecording::IsActive();
+		// Swallow VR controller input from the game whenever an interactive
+		// overlay is up: our settings window, the combo-recording modal, or a
+		// focused client panel (e.g. a swapped-to client menu). m_focused_client
+		// is only ever a panel overlay (HUD clients are never focused), so this
+		// is exactly "an interactive overlay wants the input."
+		return SettingsUI::IsVisible() || ComboRecording::IsActive() ||
+		       m_focused_client != 0;
 	}
 
 	uint32_t HelperImpl::GetSelfClientId() const { return m_self_client_id; }
