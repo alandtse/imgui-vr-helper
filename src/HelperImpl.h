@@ -31,7 +31,7 @@ namespace ImGuiVRHelper
 
 		ImGuiVRHelperPluginAPI::ComboId RegisterCombo(uint32_t client_id,
 			const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n,
-			float timeout_s) override;
+			float timeout_s, const char* label) override;
 		bool ComboFired(ImGuiVRHelperPluginAPI::ComboId) override;
 		void StartComboRecording(uint32_t client_id, const char* label,
 			ImGuiVRHelperPluginAPI::ComboRecordedFn on_done, void* user,
@@ -100,6 +100,20 @@ namespace ImGuiVRHelper
 			bool hud_force_disabled;  ///< debug: compositing suppressed by the HUD-layers debug UI
 		};
 		std::vector<ClientSnapshot> SnapshotClients();
+
+		/// Snapshot of every registered combo across all clients, for the
+		/// controller-mapping UI. `conflict` is set when another combo shares
+		/// an identical chord (same keys), so the UI can warn about clashes.
+		struct ComboSnapshot
+		{
+			ImGuiVRHelperPluginAPI::ComboId combo_id;
+			uint32_t client_id;
+			std::string client_name;
+			std::string label;
+			std::vector<ImGuiVRHelperPluginAPI::InputCombo> keys;
+			bool conflict;
+		};
+		std::vector<ComboSnapshot> SnapshotCombos();
 
 		/// Returns the currently-focused client_id, or 0 if no client
 		/// holds focus. Used by InSceneOverlay to pick which client's
@@ -268,6 +282,7 @@ namespace ImGuiVRHelper
 	struct ComboRecord
 	{
 		uint32_t client_id = 0;
+		std::string label;  ///< human-readable name, for the controller-mapping UI
 		std::vector<ImGuiVRHelperPluginAPI::InputCombo> keys;
 		float timeout_s = 0.0f;
 		bool latched = false;      ///< edge-fired, cleared on read

@@ -284,7 +284,8 @@ namespace ImGuiVRHelper
 	}
 
 	ImGuiVRHelperPluginAPI::ComboId HelperImpl::RegisterCombo(uint32_t client_id,
-		const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n, float timeout_s)
+		const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n, float timeout_s,
+		const char* label)
 	{
 		if (!keys || n == 0) {
 			return 0;
@@ -313,6 +314,7 @@ namespace ImGuiVRHelper
 		const auto id = m_next_combo_id++;
 		auto& rec = m_combos[id];
 		rec.client_id = client_id;
+		rec.label = label ? label : "";
 		rec.keys.assign(keys, keys + n);
 		rec.timeout_s = timeout_s;
 		rec.latched = false;
@@ -371,6 +373,56 @@ namespace ImGuiVRHelper
 		std::scoped_lock lk{ m_mutex };
 		if (auto it = m_clients.find(client_id); it != m_clients.end())
 			it->second.hudForceDisabled = disabled;
+	}
+
+	std::vector<HelperImpl::ComboSnapshot> HelperImpl::SnapshotCombos()
+	{
+		std::vector<ComboSnapshot> out;
+		{
+			std::scoped_lock lk{ m_mutex };
+			out.reserve(m_combos.size());
+			for (const auto& [id, rec] : m_combos) {
+				ComboSnapshot s{};
+				s.combo_id = id;
+				s.client_id = rec.client_id;
+				if (auto it = m_clients.find(rec.client_id); it != m_clients.end())
+					s.client_name = it->second.name;
+				s.label = rec.label;
+				s.keys = rec.keys;
+				s.conflict = false;
+				out.push_back(std::move(s));
+			}
+		}
+		// Flag identical chords (same set of device+key) so the UI can warn when
+		// two combos clash. O(n^2) but n is tiny (a handful of combos).
+		const auto sameChord = [](const std::vector<ImGuiVRHelperPluginAPI::InputCombo>& a,
+								   const std::vector<ImGuiVRHelperPluginAPI::InputCombo>& b) {
+			if (a.empty() || a.size() != b.size())
+				return false;
+			for (const auto& k : a) {
+				bool found = false;
+				for (const auto& k2 : b)
+					if (k2.GetDevice() == k.GetDevice() && k2.GetKey() == k.GetKey()) {
+						found = true;
+						break;
+					}
+				if (!found)
+					return false;
+			}
+			return true;
+		};
+		for (size_t i = 0; i < out.size(); ++i)
+			for (size_t j = i + 1; j < out.size(); ++j)
+				if (sameChord(out[i].keys, out[j].keys)) {
+					out[i].conflict = true;
+					out[j].conflict = true;
+				}
+		std::sort(out.begin(), out.end(), [](const ComboSnapshot& a, const ComboSnapshot& b) {
+			if (a.client_id != b.client_id)
+				return a.client_id < b.client_id;
+			return a.combo_id < b.combo_id;
+		});
+		return out;
 	}
 
 	std::vector<HelperImpl::ClientSnapshot> HelperImpl::SnapshotClients()
@@ -482,7 +534,7 @@ namespace ImGuiVRHelper
 			std::scoped_lock lk{ m_mutex };
 			m_combos.erase(m_self_toggle_combo);
 		}
-		m_self_toggle_combo = RegisterCombo(m_self_client_id, keys, n, 3.0f);
+		m_self_toggle_combo = RegisterCombo(m_self_client_id, keys, n, 3.0f, "Open ImGuiVRHelper settings");
 		logs::info("Rebound self-toggle combo to {} keys (combo_id={})",
 			n, m_self_toggle_combo);
 	}

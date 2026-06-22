@@ -516,6 +516,55 @@ namespace ImGuiVRHelper::SettingsUI
 			}
 		}
 
+		// Controller map: every registered combo across all clients, grouped by
+		// client, each key color-coded by its controller (Theme::DeviceColor) and
+		// clashes flagged. View-only for now; rebinding is the next step.
+		void RenderControllerMapSection()
+		{
+			if (!ImGui::CollapsingHeader("Controller map"))
+				return;
+			namespace API = ImGuiVRHelperPluginAPI;
+			const auto combos = HelperImpl::GetSingleton().SnapshotCombos();
+			if (combos.empty()) {
+				ImGui::TextDisabled("    No controller combos registered yet.");
+				return;
+			}
+			uint32_t lastClient = 0xFFFFFFFFu;
+			for (const auto& c : combos) {
+				if (c.client_id != lastClient) {
+					lastClient = c.client_id;
+					ImGui::SeparatorText(c.client_name.empty() ? "(client)" : c.client_name.c_str());
+				}
+				ImGui::TextUnformatted(c.label.empty() ? "(unnamed)" : c.label.c_str());
+				ImGui::SameLine(260.0f);
+				for (size_t i = 0; i < c.keys.size(); ++i) {
+					if (i != 0) {
+						ImGui::SameLine(0.0f, 0.0f);
+						ImGui::TextDisabled(" + ");
+						ImGui::SameLine(0.0f, 0.0f);
+					}
+					ImGui::TextColored(Theme::DeviceColor(c.keys[i].GetDevice()), "%s",
+						DbgButtonName(c.keys[i].GetKey()));
+				}
+				if (c.conflict) {
+					ImGui::SameLine();
+					ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "  [conflict]");
+				}
+			}
+			ImGui::Spacing();
+			ImGui::TextDisabled("    Key color = controller:");
+			ImGui::SameLine();
+			ImGui::TextColored(Theme::DeviceColor(API::InputDeviceType::Primary), "Primary");
+			ImGui::SameLine(0.0f, 0.0f);
+			ImGui::TextDisabled(",");
+			ImGui::SameLine();
+			ImGui::TextColored(Theme::DeviceColor(API::InputDeviceType::Secondary), "Secondary");
+			ImGui::SameLine(0.0f, 0.0f);
+			ImGui::TextDisabled(",");
+			ImGui::SameLine();
+			ImGui::TextColored(Theme::DeviceColor(API::InputDeviceType::Both), "Both");
+		}
+
 		// Visual thumbstick state: a crosshair box with a dot at (x, y) plus a
 		// numeric readout. Ported from Community Shaders' DrawThumbstickColumn.
 		void DrawThumbstickPad(const char* label, const RE::VRControllerState& cs, RE::ControllerRole role)
@@ -804,6 +853,7 @@ namespace ImGuiVRHelper::SettingsUI
 				if (ImGui::BeginTabItem("Settings")) {
 					RenderPositioningSection(s);
 					RenderInteractionSection(s);
+					RenderControllerMapSection();
 					RenderClientsSection();
 
 					ImGui::Separator();
