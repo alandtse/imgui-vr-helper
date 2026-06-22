@@ -800,11 +800,13 @@ namespace ImGuiVRHelper
 		const bool leftClick = leftCtl[K::kJoystickTrigger].isPressed;
 		const bool rightClick = rightCtl[K::kJoystickTrigger].isPressed;
 
-		// Off-panel only: while the wand is on the panel, stick-click belongs to
-		// the menu. Mirrors the grip-drag gating so every overlay-management
-		// gesture lives "off the menu". State is tracked even when on-panel so a
-		// press that began on-panel doesn't fire a stale edge on the way off.
-		if (!state.wandState.isIntersecting) {
+		// Cycle only when an overlay is already open AND the wand is off the
+		// panel. Gating on "open" means a stick-click while nothing is shown
+		// falls through to the mod's own open combo (which may be stick-click) —
+		// so state disambiguates open-vs-cycle. Off-panel gating keeps cycling
+		// from fighting menu interaction. State is tracked unconditionally so a
+		// press begun while ineligible doesn't fire a stale edge later.
+		if (m_focused_client != 0 && !state.wandState.isIntersecting) {
 			if (leftClick && !m_prevLeftStickClick)
 				CycleOverlay(-1);
 			else if (rightClick && !m_prevRightStickClick)
