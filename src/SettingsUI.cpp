@@ -535,6 +535,7 @@ namespace ImGuiVRHelper::SettingsUI
 					lastClient = c.client_id;
 					ImGui::SeparatorText(c.client_name.empty() ? "(client)" : c.client_name.c_str());
 				}
+				ImGui::PushID(static_cast<int>(c.combo_id));
 				ImGui::TextUnformatted(c.label.empty() ? "(unnamed)" : c.label.c_str());
 				ImGui::SameLine(260.0f);
 				for (size_t i = 0; i < c.keys.size(); ++i) {
@@ -550,6 +551,18 @@ namespace ImGuiVRHelper::SettingsUI
 					ImGui::SameLine();
 					ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "  [conflict]");
 				}
+				// Rebind reuses the same combo-recording modal as the self-toggle.
+				// The combo_id rides through as `user`; RebindCombo updates it in
+				// place (same id, so the client keeps polling its handle).
+				ImGui::SameLine();
+				if (ImGui::SmallButton("Rebind")) {
+					ComboRecording::Begin(c.client_id, c.label.c_str(), +[](const API::InputCombo* keys, std::size_t n, void* user) {
+							if (n == 0)
+								return;  // cancelled / timed out
+							HelperImpl::GetSingleton().RebindCombo(
+								static_cast<API::ComboId>(reinterpret_cast<uintptr_t>(user)), keys, n); }, reinterpret_cast<void*>(static_cast<uintptr_t>(c.combo_id)), 5.0f);
+				}
+				ImGui::PopID();
 			}
 			ImGui::Spacing();
 			ImGui::TextDisabled("    Key color = controller:");

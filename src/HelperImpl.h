@@ -130,6 +130,13 @@ namespace ImGuiVRHelper
 		/// can isolate which layer draws what. No-op for unknown ids.
 		void SetHudForceDisabled(uint32_t client_id, bool disabled);
 
+		/// Replace an existing combo's keys in place (same ComboId, so the owning
+		/// client keeps polling the same handle). Backs the controller-map UI's
+		/// Rebind buttons via ComboRecording. Live only — matches the self-toggle
+		/// rebind; clients persist their own bindings.
+		void RebindCombo(ImGuiVRHelperPluginAPI::ComboId combo,
+			const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n);
+
 		/// Allocate the helper's own self-client (so the helper's settings
 		/// UI gets a panel texture via the same per-client allocation
 		/// pipeline as external clients). Idempotent.

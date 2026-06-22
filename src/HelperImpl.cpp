@@ -323,6 +323,24 @@ namespace ImGuiVRHelper
 		return id;
 	}
 
+	void HelperImpl::RebindCombo(ImGuiVRHelperPluginAPI::ComboId combo,
+		const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n)
+	{
+		if (!keys || n == 0 || n > 8)
+			return;
+		std::scoped_lock lk{ m_mutex };
+		auto it = m_combos.find(combo);
+		if (it == m_combos.end())
+			return;
+		// Update in place — same ComboId so the owning client keeps polling the
+		// same handle. Reset match state so a key held during recording doesn't
+		// fire a spurious activation.
+		it->second.keys.assign(keys, keys + n);
+		it->second.was_matched = false;
+		it->second.latched = false;
+		logs::info("RebindCombo(combo={}) -> {} keys", combo, n);
+	}
+
 	bool HelperImpl::ComboFired(ImGuiVRHelperPluginAPI::ComboId combo_id)
 	{
 		std::scoped_lock lk{ m_mutex };
