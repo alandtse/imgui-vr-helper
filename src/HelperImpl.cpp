@@ -716,6 +716,76 @@ namespace ImGuiVRHelper
 		}
 	}
 
+	void HelperImpl::CycleOverlay(int direction)
+	{
+		// Cycle order: the helper's own UI first, then every non-HUD client
+		// (HUD overlays are always-on, not switchable).
+		std::vector<uint32_t> order;
+		uint32_t current;
+		{
+			std::scoped_lock lk{ m_mutex };
+			if (m_self_client_id != 0)
+				order.push_back(m_self_client_id);
+			for (const auto& [id, rec] : m_clients) {
+				if (id == m_self_client_id)
+					continue;
+				if (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_HUDMode)
+					continue;
+				order.push_back(id);
+			}
+			current = m_focused_client;
+		}
+		if (order.empty())
+			return;
+
+		int idx = 0;
+		for (size_t i = 0; i < order.size(); ++i) {
+			if (order[i] == current) {
+				idx = static_cast<int>(i);
+				break;
+			}
+		}
+		const int n = static_cast<int>(order.size());
+		idx = ((idx + direction) % n + n) % n;  // wrap in both directions
+		const uint32_t target = order[idx];
+
+		if (target == m_self_client_id) {
+			SettingsUI::SetVisible(true);
+			RequestFocus(m_self_client_id);
+		} else {
+			// Hand focus to the client and hide our UI so the reconciler doesn't
+			// reclaim focus — same yield path as the launcher dropdown.
+			SettingsUI::SetVisible(false);
+			RequestFocus(target);
+		}
+		logs::info("CycleOverlay({}) -> client {}", direction, target);
+	}
+
+	void HelperImpl::ProcessOverlayCycleInput()
+	{
+		auto& state = Overlay::State::GetSingleton();
+		using K = RE::BSOpenVRControllerDevice::Keys;
+
+		const bool leftHanded = state.lastKnownLeftHandedMode;
+		const auto& leftCtl = leftHanded ? state.primaryControllerState : state.secondaryControllerState;
+		const auto& rightCtl = leftHanded ? state.secondaryControllerState : state.primaryControllerState;
+		const bool leftClick = leftCtl[K::kJoystickTrigger].isPressed;
+		const bool rightClick = rightCtl[K::kJoystickTrigger].isPressed;
+
+		// Off-panel only: while the wand is on the panel, stick-click belongs to
+		// the menu. Mirrors the grip-drag gating so every overlay-management
+		// gesture lives "off the menu". State is tracked even when on-panel so a
+		// press that began on-panel doesn't fire a stale edge on the way off.
+		if (!state.wandState.isIntersecting) {
+			if (leftClick && !m_prevLeftStickClick)
+				CycleOverlay(-1);
+			else if (rightClick && !m_prevRightStickClick)
+				CycleOverlay(+1);
+		}
+		m_prevLeftStickClick = leftClick;
+		m_prevRightStickClick = rightClick;
+	}
+
 	// Snapshot clients under the lock, render the self UI, then run each
 	// client's on_frame outside the lock (a client may call back into
 	// Register/UnregisterClient). Returns the focused id captured this frame.
@@ -846,6 +916,7 @@ namespace ImGuiVRHelper
 		ComboRecording::Tick(dt);
 
 		ReconcileSelfFocusAndCombos();
+		ProcessOverlayCycleInput();
 
 		const uint32_t focused = DispatchToClients(baseFrame, dt);
 

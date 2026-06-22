@@ -137,6 +137,14 @@ namespace ImGuiVRHelper::SettingsUI
 			}
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("Pick which mod's overlay shows in VR. Selecting one closes this panel.");
+
+			if (ImGui::Button("< Prev"))
+				impl.CycleOverlay(-1);
+			ImGui::SameLine();
+			if (ImGui::Button("Next >"))
+				impl.CycleOverlay(1);
+			ImGui::SameLine();
+			ImGui::TextDisabled("(or, off-panel: left stick-click = prev, right = next)");
 		}
 
 		void RenderPositioningSection(Overlay::Settings& s)
@@ -1050,7 +1058,8 @@ namespace ImGuiVRHelper::SettingsUI
 			{ K::kGrip, ImGuiMouseButton_Right, ImGuiKey_None, false },
 			{ K::kGripAlt, ImGuiMouseButton_Right, ImGuiKey_None, false },
 			{ K::kTouchpadClick, ImGuiMouseButton_Middle, ImGuiKey_None, false },
-			{ K::kJoystickTrigger, ImGuiMouseButton_Middle, ImGuiKey_None, false },
+			// Stick-click is the off-panel overlay-cycle shortcut
+			// (HelperImpl::ProcessOverlayCycleInput), not a mouse button.
 			{ K::kBY, -1, ImGuiKey_Tab, true },
 			{ K::kXA, -1, ImGuiKey_Enter, false },
 		};

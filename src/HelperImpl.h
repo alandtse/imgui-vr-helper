@@ -104,6 +104,12 @@ namespace ImGuiVRHelper
 		/// panel to draw on each Submit.
 		uint32_t GetFocusedClientId();
 
+		/// Cycle VR focus to the previous/next overlay (direction -1/+1),
+		/// wrapping through the helper's own settings UI and every non-HUD
+		/// client. Backs the Prev/Next buttons and the off-panel stick-click
+		/// shortcut.
+		void CycleOverlay(int direction);
+
 		/// Allocate the helper's own self-client (so the helper's settings
 		/// UI gets a panel texture via the same per-client allocation
 		/// pipeline as external clients). Idempotent.
@@ -168,6 +174,11 @@ namespace ImGuiVRHelper
 		/// Combo IDs the helper registers for its own toggle hotkey.
 		ImGuiVRHelperPluginAPI::ComboId m_self_toggle_combo = 0;
 
+		// Previous stick-click state per hand, for edge-detecting the off-panel
+		// overlay-cycle shortcut (left = prev, right = next).
+		bool m_prevLeftStickClick = false;
+		bool m_prevRightStickClick = false;
+
 		/// Synthetic HUD-mode client used by the Settings::showHUDDemo
 		/// smoke test. Registered once during EnsureSelfClient. Each
 		/// frame DispatchFrame checks the toggle and clears this
@@ -180,6 +191,10 @@ namespace ImGuiVRHelper
 		// readability; each touches helper state directly.
 		void UpdateWandPointer();
 		void ReconcileSelfFocusAndCombos();
+		/// Edge-detect the off-panel stick-click overlay-cycle shortcut and
+		/// dispatch CycleOverlay. Runs every frame; no-ops while the wand is on
+		/// the panel so it doesn't fight menu interaction.
+		void ProcessOverlayCycleInput();
 		/// Snapshot clients under the lock, render the self UI, then run each
 		/// client's on_frame. Returns the focused client id used this frame.
 		uint32_t DispatchToClients(const ImGuiVRHelperPluginAPI::Frame& baseFrame, float dt);
