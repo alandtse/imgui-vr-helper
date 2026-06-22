@@ -207,6 +207,7 @@ namespace ImGuiVRHelper::SettingsUI
 				if (ImGui::IsItemHovered())
 					ImGui::SetTooltip("Hold grip and move your hand to reposition the overlay;\nthumbstick up/down moves it farther/closer.");
 				ImGui::Checkbox("Only open overlays while the game is paused", &s.onlyOpenWhilePaused);
+				ImGui::Checkbox("Show welcome banner on startup", &s.showWelcome);
 				ImGui::SliderFloat("Mouse deadzone", &s.mouseDeadzone, 0.0f, 1.0f, "%.2f");
 				ImGui::SliderFloat("Auto-reset distance",
 					&s.autoResetDistance, 0.0f, 5000.0f, "%.0f units");

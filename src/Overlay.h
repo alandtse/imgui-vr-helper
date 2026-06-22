@@ -105,6 +105,11 @@ namespace ImGuiVRHelper::Overlay
 		/// matching Community Shaders' original pause-only menu. Switching
 		/// between already-open overlays and closing are always allowed.
 		bool onlyOpenWhilePaused = true;
+
+		/// Show a one-time welcome banner on the HUD at startup (how to open
+		/// overlays). Auto-dismisses after ~30s or when you enter the game.
+		bool showWelcome = true;
+
 		// Thumbstick deadzone (also used for drag-depth control). Bumped
 		// from 0.1 to 0.2 — most VR controllers have hardware drift in
 		// the 0.05-0.15 range, and 0.1 left the cursor noticeably

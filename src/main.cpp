@@ -102,6 +102,12 @@ namespace
 			break;
 		case SKSE::MessagingInterface::kDataLoaded:
 			break;
+		case SKSE::MessagingInterface::kPostLoadGame:
+		case SKSE::MessagingInterface::kNewGame:
+			// Entered the world (loaded a save or started new) — dismiss the
+			// startup welcome banner.
+			ImGuiVRHelper::HelperImpl::GetSingleton().NotifyEnteredGame();
+			break;
 		default:
 			break;
 		}

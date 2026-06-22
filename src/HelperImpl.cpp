@@ -439,6 +439,11 @@ namespace ImGuiVRHelper
 		       m_focused_client != 0;
 	}
 
+	void HelperImpl::NotifyEnteredGame()
+	{
+		m_enteredGame = true;  // one-way latch; dismisses the startup welcome
+	}
+
 	uint32_t HelperImpl::GetSelfClientId() const { return m_self_client_id; }
 
 	void HelperImpl::RebindSelfToggle(const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n)
@@ -504,6 +509,14 @@ namespace ImGuiVRHelper
 		// registered; texture allocation stays lazy until the first toast.
 		m_toast_client_id = RegisterClient(
 			"ImGuiVRHelper.Toast",
+			nullptr,
+			+[](const ImGuiVRHelperPluginAPI::Frame*, void*) { /* no-op */ },
+			nullptr,
+			ImGuiVRHelperPluginAPI::kClientFlag_HUDMode);
+
+		// HUD-mode client for the startup welcome banner (see m_welcome*).
+		m_welcome_client_id = RegisterClient(
+			"ImGuiVRHelper.Welcome",
 			nullptr,
 			+[](const ImGuiVRHelperPluginAPI::Frame*, void*) { /* no-op */ },
 			nullptr,
@@ -945,6 +958,45 @@ namespace ImGuiVRHelper
 					ToastHUD::ClearToTransparent(handle.rtv);  // expired → clear once
 				}
 			}
+		}
+
+		// Startup welcome banner. Shows once from the first rendered frame until
+		// it times out, the user enters the world, or the setting is off. Reuses
+		// the toast HUD renderer, into its own always-on HUD-mode panel.
+		constexpr float kWelcomeDurationSeconds = 30.0f;
+		constexpr float kWelcomeFadeSeconds = 1.0f;
+		static constexpr const char* kWelcomeBannerText =
+			"ImGuiVRHelper ready\n"
+			"Open settings: Shift+F4    Cycle overlays: stick-click (aim off the panel)";
+		if (!overlayState.settings.showWelcome || m_enteredGame)
+			m_welcomeDismissed = true;
+		if (!m_welcomeDismissed) {
+			if (!m_welcomeStarted) {
+				m_welcomeStarted = true;
+				m_welcomeRemaining = kWelcomeDurationSeconds;
+			}
+			m_welcomeRemaining -= dt;
+			if (m_welcomeRemaining <= 0.0f)
+				m_welcomeDismissed = true;
+		}
+		if (m_welcome_client_id != 0) {
+			const bool show = m_welcomeStarted && !m_welcomeDismissed;
+			if (show || m_welcomeWasShown) {  // render while up; clear once on dismiss
+				ImGuiVRHelperPluginAPI::PanelHandle handle{};
+				if (GetPanel(m_welcome_client_id, &handle) && handle.rtv) {
+					if (show) {
+						const float alpha = m_welcomeRemaining >= kWelcomeFadeSeconds ?
+						                        1.0f :
+						                        m_welcomeRemaining / kWelcomeFadeSeconds;
+						// Lower + smaller than the swap toast: it's a multi-line
+						// info banner, not a quick name flash.
+						ToastHUD::Render(handle.rtv, kWelcomeBannerText, alpha, 0.18f, 1.2f);
+					} else {
+						ToastHUD::ClearToTransparent(handle.rtv);
+					}
+				}
+			}
+			m_welcomeWasShown = show;
 		}
 
 		// Keep overlayVisible in sync so OverlayDrag::CanPerform sees it next frame.

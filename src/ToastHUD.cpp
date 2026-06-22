@@ -56,7 +56,8 @@ namespace ImGuiVRHelper::ToastHUD
 		}
 	}
 
-	void Render(ID3D11RenderTargetView* rtv, const std::string& text, float alpha)
+	void Render(ID3D11RenderTargetView* rtv, const std::string& text, float alpha,
+		float topFraction, float fontScale)
 	{
 		if (!rtv || text.empty())
 			return;
@@ -77,7 +78,7 @@ namespace ImGuiVRHelper::ToastHUD
 
 		// Pivot the window by its top-center so the banner stays centered
 		// regardless of name length.
-		ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.10f),
+		ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * topFraction),
 			ImGuiCond_Always, ImVec2(0.5f, 0.0f));
 		ImGui::SetNextWindowBgAlpha(0.65f);
 		constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
@@ -86,7 +87,7 @@ namespace ImGuiVRHelper::ToastHUD
 		                                   ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs |
 		                                   ImGuiWindowFlags_AlwaysAutoResize;
 		if (ImGui::Begin("##SwapToast", nullptr, flags)) {
-			ImGui::SetWindowFontScale(1.8f);
+			ImGui::SetWindowFontScale(fontScale);
 			ImGui::TextUnformatted(text.c_str());
 		}
 		ImGui::End();

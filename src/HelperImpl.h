@@ -135,6 +135,10 @@ namespace ImGuiVRHelper
 		/// reaches us.
 		void OnKeyboardToggle();
 
+		/// Called from the SKSE messaging listener on kPostLoadGame/kNewGame.
+		/// Dismisses the startup welcome banner once the user enters the world.
+		void NotifyEnteredGame();
+
 		/// True iff VR controller input should be intercepted from the
 		/// game this frame — i.e. some helper UI is up and consuming
 		/// trigger / grip / stick events. The PollInputDevices thunk
@@ -193,6 +197,15 @@ namespace ImGuiVRHelper
 		std::string m_toastText;
 		float m_toastRemaining = 0.0f;     ///< seconds left on the toast; counts down by dt
 		uint32_t m_lastFocusForToast = 0;  ///< last focused id, to detect swaps
+
+		// Startup welcome banner (HUD-mode). Shows once at launch, then
+		// dismisses after a timeout, on entering the game, or if disabled.
+		uint32_t m_welcome_client_id = 0;
+		bool m_welcomeStarted = false;
+		bool m_welcomeDismissed = false;
+		bool m_welcomeWasShown = false;
+		float m_welcomeRemaining = 0.0f;
+		bool m_enteredGame = false;  ///< set from the SKSE message thread (one-way latch)
 
 		// DispatchFrame phases, run in order each frame. Split out only for
 		// readability; each touches helper state directly.
