@@ -728,38 +728,41 @@ namespace ImGuiVRHelper
 		}
 	}
 
+	std::vector<std::pair<uint32_t, std::string>> HelperImpl::BuildOverlayOrder()
+	{
+		// Helper's own UI first, then every non-HUD client (HUD overlays are
+		// always-on, not switchable). Shared by cycling and the toast counter.
+		std::vector<std::pair<uint32_t, std::string>> order;
+		std::scoped_lock lk{ m_mutex };
+		if (m_self_client_id != 0)
+			order.emplace_back(m_self_client_id, "ImGuiVRHelper");
+		for (const auto& [id, rec] : m_clients) {
+			if (id == m_self_client_id)
+				continue;
+			if (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_HUDMode)
+				continue;
+			order.emplace_back(id, rec.name);
+		}
+		return order;
+	}
+
 	void HelperImpl::CycleOverlay(int direction)
 	{
-		// Cycle order: the helper's own UI first, then every non-HUD client
-		// (HUD overlays are always-on, not switchable).
-		std::vector<uint32_t> order;
-		uint32_t current;
-		{
-			std::scoped_lock lk{ m_mutex };
-			if (m_self_client_id != 0)
-				order.push_back(m_self_client_id);
-			for (const auto& [id, rec] : m_clients) {
-				if (id == m_self_client_id)
-					continue;
-				if (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_HUDMode)
-					continue;
-				order.push_back(id);
-			}
-			current = m_focused_client;
-		}
+		const auto order = BuildOverlayOrder();
 		if (order.empty())
 			return;
+		const uint32_t current = m_focused_client;  // racy read is fine (uint)
 
 		int idx = 0;
 		for (size_t i = 0; i < order.size(); ++i) {
-			if (order[i] == current) {
+			if (order[i].first == current) {
 				idx = static_cast<int>(i);
 				break;
 			}
 		}
 		const int n = static_cast<int>(order.size());
 		idx = ((idx + direction) % n + n) % n;  // wrap in both directions
-		const uint32_t target = order[idx];
+		const uint32_t target = order[idx].first;
 
 		if (target == m_self_client_id) {
 			SettingsUI::SetVisible(true);
@@ -915,18 +918,16 @@ namespace ImGuiVRHelper
 		if (focused != m_lastFocusForToast) {
 			m_lastFocusForToast = focused;
 			if (focused != 0) {
-				std::string name;
-				{
-					std::scoped_lock lk{ m_mutex };
-					if (focused == m_self_client_id) {
-						name = "ImGuiVRHelper";
-					} else if (auto it = m_clients.find(focused); it != m_clients.end()) {
-						name = it->second.name;
+				// Name + position in the cycle (e.g. "CommunityShaders  (1/2)")
+				// so the user knows where they are in the overlay list.
+				const auto order = BuildOverlayOrder();
+				for (size_t i = 0; i < order.size(); ++i) {
+					if (order[i].first == focused) {
+						m_toastText = order[i].second + "  (" + std::to_string(i + 1) +
+						              "/" + std::to_string(order.size()) + ")";
+						m_toastRemaining = kToastDurationSeconds;
+						break;
 					}
-				}
-				if (!name.empty()) {
-					m_toastText = name;
-					m_toastRemaining = kToastDurationSeconds;
 				}
 			}
 		}

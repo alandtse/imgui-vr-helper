@@ -202,6 +202,10 @@ namespace ImGuiVRHelper
 		/// dispatch CycleOverlay. Runs every frame; no-ops while the wand is on
 		/// the panel so it doesn't fight menu interaction.
 		void ProcessOverlayCycleInput();
+		/// Ordered cyclable overlays — the helper's own UI first, then every
+		/// non-HUD client — as (client_id, display name). Backs CycleOverlay and
+		/// the swap-toast position counter.
+		std::vector<std::pair<uint32_t, std::string>> BuildOverlayOrder();
 		/// Snapshot clients under the lock, render the self UI, then run each
 		/// client's on_frame. Returns the focused client id used this frame.
 		uint32_t DispatchToClients(const ImGuiVRHelperPluginAPI::Frame& baseFrame, float dt);
