@@ -187,6 +187,13 @@ namespace ImGuiVRHelper
 		/// any real client connects.
 		uint32_t m_hud_demo_client_id = 0;
 
+		/// HUD-mode client for the swap toast: a transient banner naming the
+		/// overlay focus just switched to, composited over whatever is focused.
+		uint32_t m_toast_client_id = 0;
+		std::string m_toastText;
+		float m_toastRemaining = 0.0f;     ///< seconds left on the toast; counts down by dt
+		uint32_t m_lastFocusForToast = 0;  ///< last focused id, to detect swaps
+
 		// DispatchFrame phases, run in order each frame. Split out only for
 		// readability; each touches helper state directly.
 		void UpdateWandPointer();
@@ -198,7 +205,7 @@ namespace ImGuiVRHelper
 		/// Snapshot clients under the lock, render the self UI, then run each
 		/// client's on_frame. Returns the focused client id used this frame.
 		uint32_t DispatchToClients(const ImGuiVRHelperPluginAPI::Frame& baseFrame, float dt);
-		void PostProcessFrame(uint32_t focused);
+		void PostProcessFrame(uint32_t focused, float dt);
 	};
 
 	struct ClientRecord

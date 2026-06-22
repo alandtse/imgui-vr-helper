@@ -17,6 +17,7 @@
 #include "OverlayDrag.h"
 #include "OverlayTinter.h"
 #include "SettingsUI.h"
+#include "ToastHUD.h"
 #include "WandPointing.h"
 #include "internal/VRUtils.h"
 
@@ -497,6 +498,15 @@ namespace ImGuiVRHelper
 			nullptr,
 			ImGuiVRHelperPluginAPI::kClientFlag_HUDMode);
 
+		// HUD-mode client for the overlay-swap toast (see m_toastText). Always
+		// registered; texture allocation stays lazy until the first toast.
+		m_toast_client_id = RegisterClient(
+			"ImGuiVRHelper.Toast",
+			nullptr,
+			+[](const ImGuiVRHelperPluginAPI::Frame*, void*) { /* no-op */ },
+			nullptr,
+			ImGuiVRHelperPluginAPI::kClientFlag_HUDMode);
+
 		// No default controller toggle combo. SCS already binds many of
 		// the obvious face/grip combinations for its own menu, and every
 		// auto-default we've tried has bumped into a SCS or main-menu
@@ -858,7 +868,7 @@ namespace ImGuiVRHelper
 	// End-of-frame post-processing: drag-highlight tint, HUD-demo smoke test,
 	// overlay-visible sync, dashboard mirror. Texture submission to the headset
 	// happens later, lazily, from the IVRCompositor::Submit detour.
-	void HelperImpl::PostProcessFrame(uint32_t focused)
+	void HelperImpl::PostProcessFrame(uint32_t focused, float dt)
 	{
 		auto& overlayState = Overlay::State::GetSingleton();
 
@@ -895,6 +905,45 @@ namespace ImGuiVRHelper
 		}
 		s_prevDemoOn = demoOn;
 
+		// Swap toast: when the focused overlay changes, flash its name for a
+		// couple of seconds so the user knows what they switched to. Rendered as
+		// a HUD-mode layer over whatever is now focused.
+		constexpr float kToastDurationSeconds = 2.0f;
+		constexpr float kToastFadeSeconds = 0.6f;  // fade over the final stretch
+		if (focused != m_lastFocusForToast) {
+			m_lastFocusForToast = focused;
+			if (focused != 0) {
+				std::string name;
+				{
+					std::scoped_lock lk{ m_mutex };
+					if (focused == m_self_client_id) {
+						name = "ImGuiVRHelper";
+					} else if (auto it = m_clients.find(focused); it != m_clients.end()) {
+						name = it->second.name;
+					}
+				}
+				if (!name.empty()) {
+					m_toastText = name;
+					m_toastRemaining = kToastDurationSeconds;
+				}
+			}
+		}
+		if (m_toast_client_id != 0 && m_toastRemaining > 0.0f) {
+			m_toastRemaining -= dt;
+			const bool active = m_toastRemaining > 0.0f;
+			ImGuiVRHelperPluginAPI::PanelHandle handle{};
+			if (GetPanel(m_toast_client_id, &handle) && handle.rtv) {
+				if (active) {
+					const float alpha = m_toastRemaining >= kToastFadeSeconds ?
+					                        1.0f :
+					                        m_toastRemaining / kToastFadeSeconds;
+					ToastHUD::Render(handle.rtv, m_toastText, alpha);
+				} else {
+					ToastHUD::ClearToTransparent(handle.rtv);  // expired → clear once
+				}
+			}
+		}
+
 		// Keep overlayVisible in sync so OverlayDrag::CanPerform sees it next frame.
 		overlayState.overlayVisible = (focused != 0);
 
@@ -920,7 +969,7 @@ namespace ImGuiVRHelper
 
 		const uint32_t focused = DispatchToClients(baseFrame, dt);
 
-		PostProcessFrame(focused);
+		PostProcessFrame(focused, dt);
 	}
 
 	bool HelperImpl::IsDashboardVisible()
