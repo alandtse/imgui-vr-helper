@@ -89,9 +89,59 @@ namespace ImGuiVRHelper::SettingsUI
 			}
 		}
 
+		// Primary action, shown at the top of the window: which registered
+		// client's overlay is displayed in VR right now. This is the helper's
+		// "launcher" — picking a client hands it the in-scene focus
+		// (RequestFocus) so the user switches mods from here with no per-mod
+		// controller combo, then closes this panel so the focus reconciler
+		// doesn't immediately reclaim focus for the self-client.
+		void RenderActiveOverlaySection()
+		{
+			namespace API = ImGuiVRHelperPluginAPI;
+			auto& impl = HelperImpl::GetSingleton();
+			const auto clients = impl.SnapshotClients();
+			const uint32_t focusedId = impl.GetFocusedClientId();
+			const uint32_t selfClientId = impl.GetSelfClientId();
+
+			std::string preview = "(this) ImGuiVRHelper";
+			if (focusedId != 0 && focusedId != selfClientId) {
+				for (const auto& c : clients) {
+					if (c.client_id == focusedId) {
+						preview = c.name;
+						if (!c.version.empty())
+							preview += " " + c.version;
+						break;
+					}
+				}
+			}
+
+			ImGui::TextUnformatted("Active overlay (shown in VR)");
+			ImGui::SetNextItemWidth(-FLT_MIN);
+			if (ImGui::BeginCombo("##ActiveOverlay", preview.c_str())) {
+				for (const auto& c : clients) {
+					if (c.client_id == selfClientId)
+						continue;  // the helper itself is the current panel
+					if (c.flags & API::kClientFlag_HUDMode)
+						continue;  // HUD clients are always-on, not switchable
+					std::string label = c.name;
+					if (!c.version.empty())
+						label += " " + c.version;
+					if (!(c.flags & API::kClientFlag_RendersOnFocus))
+						label += "  (manual trigger)";
+					if (ImGui::Selectable(label.c_str(), c.client_id == focusedId)) {
+						impl.RequestFocus(c.client_id);
+						g_visible = false;  // yield; reconciler hands focus to the client
+					}
+				}
+				ImGui::EndCombo();
+			}
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("Pick which mod's overlay shows in VR. Selecting one closes this panel.");
+		}
+
 		void RenderPositioningSection(Overlay::Settings& s)
 		{
-			if (ImGui::CollapsingHeader("Positioning", ImGuiTreeNodeFlags_DefaultOpen)) {
+			if (ImGui::CollapsingHeader("Overlay placement", ImGuiTreeNodeFlags_DefaultOpen)) {
 				const char* attachLabels[] = { "HMD only", "Controller only", "Both", "None" };
 				int attachIndex = static_cast<int>(s.attachMode);
 				if (ImGui::Combo("Attach mode", &attachIndex, attachLabels, IM_ARRAYSIZE(attachLabels))) {
@@ -110,6 +160,11 @@ namespace ImGuiVRHelper::SettingsUI
 
 				ImGui::SliderFloat("Scale (m wide)", &s.menuScale,
 					Overlay::Config::kMinMenuScale, Overlay::Config::kMaxMenuScale, "%.2f");
+
+				ImGui::Spacing();
+				ImGui::TextDisabled("Reposition in VR: hold grip on a controller and move your hand.");
+				ImGui::TextDisabled("Push that hand's thumbstick up/down to move it farther/closer.");
+				ImGui::TextDisabled("(Enable \"Grip-to-drag repositioning\" under Interaction first.)");
 			}
 
 			if (ImGui::CollapsingHeader("HMD-relative offsets")) {
@@ -136,16 +191,19 @@ namespace ImGuiVRHelper::SettingsUI
 		void RenderInteractionSection(Overlay::Settings& s)
 		{
 			if (ImGui::CollapsingHeader("Interaction")) {
-				ImGui::Checkbox("Wand pointer (laser cursor)", &s.enableWandPointing);
+				ImGui::Checkbox("Wand pointing", &s.enableWandPointing);
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("Aim a controller at the panel to move the cursor.");
 				ImGui::Checkbox("Grip-to-drag repositioning", &s.enableDragToReposition);
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("Hold grip and move your hand to reposition the overlay;\nthumbstick up/down moves it farther/closer.");
 				ImGui::Checkbox("Only open overlays while the game is paused", &s.onlyOpenWhilePaused);
 				ImGui::SliderFloat("Mouse deadzone", &s.mouseDeadzone, 0.0f, 1.0f, "%.2f");
 				ImGui::SliderFloat("Auto-reset distance",
 					&s.autoResetDistance, 0.0f, 5000.0f, "%.0f units");
 
 				ImGui::Separator();
-				ImGui::TextUnformatted("Toggle hotkey: Shift+F4 (keyboard).");
-				ImGui::TextDisabled("Click below to bind a controller combo too.");
+				ImGui::TextDisabled("Toggle this panel: Shift+F4 (default). Bind a controller combo below.");
 				if (ImGui::Button("Rebind toggle key")) {
 					auto& impl = HelperImpl::GetSingleton();
 					ComboRecording::Begin(impl.GetSelfClientId(), "ImGuiVRHelper toggle", +[](const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n, void* /*user*/) {
@@ -161,55 +219,9 @@ namespace ImGuiVRHelper::SettingsUI
 				auto clients = HelperImpl::GetSingleton().SnapshotClients();
 				ImGui::Text("Active clients: %zu", clients.size());
 
-				// In-scene overlay switcher (the "launcher"): pick which client's
-				// panel is shown in-world. Drives the focus model directly
-				// (RequestFocus), so the user opens this menu with one controller
-				// gesture and switches between mods here — no per-mod controller
-				// combo needed. Distinct from the SteamVR dashboard picker below,
-				// which only selects what the separate dashboard surface mirrors.
-				{
-					namespace API = ImGuiVRHelperPluginAPI;
-					auto& impl = HelperImpl::GetSingleton();
-					const uint32_t focusedId = impl.GetFocusedClientId();
-					const uint32_t selfClientId = impl.GetSelfClientId();
-
-					std::string switchPreview = "(this) ImGuiVRHelper";
-					if (focusedId != 0 && focusedId != selfClientId) {
-						for (const auto& c : clients) {
-							if (c.client_id == focusedId) {
-								switchPreview = c.name;
-								if (!c.version.empty())
-									switchPreview += " " + c.version;
-								break;
-							}
-						}
-					}
-
-					ImGui::TextUnformatted("Show in VR:");
-					if (ImGui::BeginCombo("##OverlaySwitcher", switchPreview.c_str())) {
-						for (const auto& c : clients) {
-							if (c.client_id == selfClientId)
-								continue;  // already in the helper UI
-							if (c.flags & API::kClientFlag_HUDMode)
-								continue;  // HUD clients are always-on, not switchable
-							std::string label = c.name;
-							if (!c.version.empty())
-								label += " " + c.version;
-							if (!(c.flags & API::kClientFlag_RendersOnFocus))
-								label += "  (manual trigger)";
-							if (ImGui::Selectable(label.c_str(), c.client_id == focusedId)) {
-								// Hand the in-scene overlay to the picked client and
-								// hide the helper UI so the focus reconciler doesn't
-								// immediately reclaim focus for the self-client.
-								impl.RequestFocus(c.client_id);
-								g_visible = false;
-							}
-						}
-						ImGui::EndCombo();
-					}
-				}
-
-				ImGui::Spacing();
+				// Overlay switching is handled by RenderActiveOverlaySection at
+				// the top of the window; this section is the client roster plus
+				// the SteamVR dashboard picker.
 
 				// SteamVR Dashboard picker. The helper owns one shared
 				// dashboard surface; this combo picks which eligible
@@ -743,20 +755,32 @@ namespace ImGuiVRHelper::SettingsUI
 				}
 			}
 
-			ImGui::TextUnformatted("Drag this window with controller grip to reposition the overlay.");
+			RenderActiveOverlaySection();  // primary action, on top
 			ImGui::Separator();
 
-			RenderPositioningSection(s);
-			RenderInteractionSection(s);
-			RenderClientsSection();
-			RenderDiagnosticsSection(state);
+			// Tabs keep the live, per-frame Diagnostics readouts off the Settings
+			// page so their constantly-changing height doesn't scroll the
+			// settings up and down while you're watching controller input.
+			if (ImGui::BeginTabBar("##HelperTabs")) {
+				if (ImGui::BeginTabItem("Settings")) {
+					RenderPositioningSection(s);
+					RenderInteractionSection(s);
+					RenderClientsSection();
 
-			ImGui::Separator();
-			if (ImGui::Button("Reset all settings to defaults")) {
-				s = Overlay::Settings{};
-				Overlay::ApplyLogLevel();  // logLevel is applied once, not per-frame
-				Overlay::SaveSettings();
-				logs::info("Settings reset to defaults");
+					ImGui::Separator();
+					if (ImGui::Button("Reset all settings to defaults")) {
+						s = Overlay::Settings{};
+						Overlay::ApplyLogLevel();  // logLevel is applied once, not per-frame
+						Overlay::SaveSettings();
+						logs::info("Settings reset to defaults");
+					}
+					ImGui::EndTabItem();
+				}
+				if (ImGui::BeginTabItem("Diagnostics")) {
+					RenderDiagnosticsSection(state);
+					ImGui::EndTabItem();
+				}
+				ImGui::EndTabBar();
 			}
 
 			ImGui::End();
