@@ -29,9 +29,30 @@ add_requires("toml++") -- helper's own settings file
 add_requires("directxtk") -- SimpleMath, used for matrix helpers in VRUtils
 add_requires("catch2") -- unit tests (ImGuiVRHelperTests target only)
 
+-- Optional Tracy profiler instrumentation. Off by default so the shipped build
+-- pays nothing — zones compile to no-ops (see src/internal/Profiler.h). Enable
+-- to capture VR overlay frame cost with: xmake f --tracy=y && xmake
+option("tracy")
+set_default(false)
+set_description("Enable Tracy profiler instrumentation")
+option_end()
+
+-- Local package repo: pins Tracy to the exact upstream commit Community Shaders
+-- uses (xmake-repo only ships released tags <= v0.12.2), so the profiler wire
+-- protocol matches CS's tooling. See xmake-pkgs/packages/t/tracy.
+add_repositories("vrhelper-pkgs xmake-pkgs")
+
+if has_config("tracy") then
+    add_requires("tracy 0.13.3")
+    add_defines("IMGUI_VR_HELPER_TRACY", "TRACY_ENABLE")
+end
+
 target("ImGuiVRHelper")
 add_deps("commonlibsse-ng")
 add_packages("openvr", "imgui", "nlohmann_json", "toml++", "directxtk")
+if has_config("tracy") then
+    add_packages("tracy")
+end
 
 set_basename("imgui-vr-helper")
 

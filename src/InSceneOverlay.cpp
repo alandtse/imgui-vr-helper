@@ -19,6 +19,7 @@
 #include "OverlayTinter.h"
 #include "internal/Detour.h"
 #include "internal/HUDGeometry.h"
+#include "internal/Profiler.h"
 #include "internal/VRUtils.h"
 
 #include <RE/B/BSOpenVR.h>
@@ -607,6 +608,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		const Overlay::Settings& s,
 		const std::vector<HelperImpl::HUDClientSnapshot>& hudClients)
 	{
+		ZoneScopedN("InScene::HUDPass");
 		const float hudDepth = std::max(0.3f, s.hudDepth);  // sanity floor
 		const float coverage = std::clamp(s.hudCoverage, 0.5f, 1.0f);
 
@@ -644,6 +646,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 	void RenderRebindPass(ID3D11DeviceContext* ctx, const EyeMatrices& matrices,
 		const Overlay::Settings& s)
 	{
+		ZoneScopedN("InScene::RebindPass");
 		auto* tex = HelperImpl::GetSingleton().GetActiveRebindTexture();
 		if (!tex)
 			return;
@@ -671,6 +674,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		const EyeMatrices& matrices, const Overlay::Settings& s,
 		const Overlay::State& overlayState, ID3D11ShaderResourceView* panelSRV)
 	{
+		ZoneScopedN("InScene::PanelPass");
 		// HMD-attached.
 		if (s.attachMode == Overlay::AttachMode::HMDOnly ||
 			s.attachMode == Overlay::AttachMode::Both) {
@@ -734,6 +738,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 	void RenderForEye(vr::EVREye eye, ID3D11Texture2D* targetTexture,
 		const vr::VRTextureBounds_t* bounds)
 	{
+		ZoneScopedN("InScene::RenderForEye");
 		if (!targetTexture)
 			return;
 

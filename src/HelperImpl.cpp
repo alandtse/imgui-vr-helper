@@ -19,6 +19,7 @@
 #include "SettingsUI.h"
 #include "ToastHUD.h"
 #include "WandPointing.h"
+#include "internal/Profiler.h"
 #include "internal/VRUtils.h"
 
 #include <RE/B/BSOpenVRControllerDevice.h>
@@ -1270,6 +1271,7 @@ namespace ImGuiVRHelper
 
 	void HelperImpl::DispatchFrame(float dt)
 	{
+		ZoneScopedN("Helper::DispatchFrame");
 		++m_frameCounter;  // HUD-idle skipping compares GetPanel access against this
 		UpdateWandPointer();
 
