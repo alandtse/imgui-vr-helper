@@ -158,6 +158,8 @@ namespace ImGuiVRHelper::SettingsUI
 				if (ImGui::Combo("Attach mode", &attachIndex, attachLabels, IM_ARRAYSIZE(attachLabels))) {
 					s.attachMode = static_cast<Overlay::AttachMode>(attachIndex);
 				}
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("Where the overlay anchors: to the headset, a controller, both, or none.");
 
 				const char* methodLabels[] = { "HMD-relative", "Fixed in world" };
 				int methodIndex = static_cast<int>(s.positioningMethod);
@@ -168,9 +170,13 @@ namespace ImGuiVRHelper::SettingsUI
 				if (ImGui::Combo("Positioning method", &methodIndex, methodLabels, IM_ARRAYSIZE(methodLabels))) {
 					s.positioningMethod = static_cast<Overlay::PositioningMethod>(methodIndex);
 				}
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("HMD-relative follows your head; Fixed places it in the room and stays put.");
 
-				ImGui::SliderFloat("Scale (m wide)", &s.menuScale,
-					Overlay::Config::kMinMenuScale, Overlay::Config::kMaxMenuScale, "%.2f");
+				ImGui::SliderFloat("Panel size", &s.menuScale,
+					Overlay::Config::kMinMenuScale, Overlay::Config::kMaxMenuScale, "%.2fx");
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("Relative size of the overlay panel.");
 
 				ImGui::Spacing();
 				ImGui::TextDisabled("Reposition in VR: hold grip on a controller and move your hand.");
@@ -213,6 +219,8 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::SliderFloat("Thumbstick deadzone", &s.mouseDeadzone, 0.0f, 1.0f, "%.2f");
 				ImGui::SliderFloat("Auto-reset distance",
 					&s.autoResetDistance, 0.0f, 5000.0f, "%.0f units");
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("Walk this far from a world-fixed overlay and it snaps back in\nfront of you. ~70 game units = 1 m. 0 = never.");
 
 				ImGui::Separator();
 				ImGui::TextDisabled("Two separate menus:");
@@ -278,6 +286,8 @@ namespace ImGuiVRHelper::SettingsUI
 
 				ImGui::Spacing();
 				ImGui::TextDisabled("SteamVR dashboard panel currently shows:");
+				ImGui::TextDisabled("    (the dashboard plane — to pick the in-world overlay, use");
+				ImGui::TextDisabled("     \"Active overlay\" at the top of this window)");
 				namespace API = ImGuiVRHelperPluginAPI;
 				if (ImGui::BeginCombo("##DashboardPicker", preview.c_str())) {
 					if (ImGui::Selectable("(self) ImGuiVRHelper", activePicker == 0)) {
@@ -729,7 +739,8 @@ namespace ImGuiVRHelper::SettingsUI
 			const int ss = std::clamp(s.hudSupersample, 1, Overlay::Config::kMaxHUDSupersample);
 			const double panelMB =
 				static_cast<double>(s.baseWidth) * s.baseHeight * ss * ss * 4.0 / (1024.0 * 1024.0);
-			ImGui::TextDisabled("    View-filling panel: %d x %d each (~%.0f MB)", s.baseWidth * ss, s.baseHeight * ss, panelMB);
+			ImGui::TextDisabled("    %d x %d, ~%.0f MB VRAM each (HUD, settings, banners each allocate one)",
+				s.baseWidth * ss, s.baseHeight * ss, panelMB);
 			ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.1f, 1.0f),
 				"    [restart required] base resolution + supersample apply after a Skyrim restart.");
 
@@ -1004,7 +1015,6 @@ namespace ImGuiVRHelper::SettingsUI
 					RenderPositioningSection(s);
 					ImGui::Separator();
 					RenderDisplaySection(s);
-					RenderOverlayOrderSection();
 					ImGui::EndTabItem();
 				}
 				if (ImGui::BeginTabItem("Controls")) {
@@ -1014,6 +1024,8 @@ namespace ImGuiVRHelper::SettingsUI
 				}
 				if (ImGui::BeginTabItem("Clients")) {
 					RenderClientsSection();
+					ImGui::Separator();
+					RenderOverlayOrderSection();  // "which mods, in what order" lives with the roster
 					ImGui::EndTabItem();
 				}
 				if (ImGui::BeginTabItem("Diagnostics")) {
@@ -1029,8 +1041,8 @@ namespace ImGuiVRHelper::SettingsUI
 			if (ImGui::Button("Reset all settings to defaults"))
 				ImGui::OpenPopup("Reset all settings?");
 			if (ImGui::BeginPopupModal("Reset all settings?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-				ImGui::TextUnformatted("This clears your key bindings, overlay order,");
-				ImGui::TextUnformatted("and display settings. This cannot be undone.");
+				ImGui::TextUnformatted("Resets ALL helper settings to defaults — placement,");
+				ImGui::TextUnformatted("controls, key bindings, overlay order, and display.");
 				ImGui::Spacing();
 				if (ImGui::Button("Reset everything")) {
 					s = Overlay::Settings{};
