@@ -31,6 +31,14 @@ namespace ImGuiVRHelper::Overlay
 		inline constexpr int kOverlayHeight = 1080;
 		inline constexpr float kOverlayAspect = static_cast<float>(kOverlayHeight) / static_cast<float>(kOverlayWidth);
 
+		// Default supersample for view-filling panels (see Settings::hudSupersample).
+		// A HUD layer fills most of the FOV (see hudCoverage), so a 1x texture
+		// stretched that wide reads as pixelated; 2x keeps text sharp. Clients learn
+		// the real panel size from GetPanel and scale their framebuffer to match
+		// (see StatusHUD's DisplayFramebufferScale).
+		inline constexpr int kHUDSupersample = 2;
+		inline constexpr int kMaxHUDSupersample = 3;  // VRAM ceiling; clamps the setting
+
 		inline constexpr float kDefaultMenuScale = 1.0f;
 		inline constexpr float kMinMenuScale = 0.1f;
 		inline constexpr float kMaxMenuScale = 5.0f;
@@ -169,6 +177,26 @@ namespace ImGuiVRHelper::Overlay
 		/// to edge (may clip at the lens mask on some HMDs); 0.92 leaves a
 		/// small comfort margin. Clamped to [0.5, 1.0].
 		float hudCoverage = 0.92f;
+
+		/// Base resolution of every overlay panel texture, before HUD
+		/// supersampling. Higher = sharper but more VRAM; pick to suit the
+		/// headset/monitor. Common presets are offered in the settings UI
+		/// (1920x1080 / 2560x1440 / 3840x2160). Applied when panels allocate,
+		/// so a change takes effect on restart. Defaults to kOverlayWidth/Height.
+		int baseWidth = Config::kOverlayWidth;
+		int baseHeight = Config::kOverlayHeight;
+
+		/// Supersample multiplier for panels that fill the view: HUD layers, the
+		/// settings panel and the toasts/welcome. Their texture is
+		/// baseWidth*hudSupersample wide so wide-FOV content stays crisp instead
+		/// of pixelated. 1 = off. Clamped to [1, 3]. Applied at allocation
+		/// (restart). Defaults to kHUDSupersample.
+		int hudSupersample = Config::kHUDSupersample;
+
+		/// Vertical placement of the toasts/welcome banner, as a fraction of the
+		/// panel height (0 = top edge, 1 = bottom). The banner is pivoted by its
+		/// top-center. Clamped to [0, 1]. Default 0.18 (near the top).
+		float toastTopFraction = 0.18f;
 	};
 
 	// ---- Runtime state --------------------------------------------------

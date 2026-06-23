@@ -211,6 +211,12 @@ namespace ImGuiVRHelper
 		/// or texture creation failed. Must be called with m_mutex held.
 		bool EnsureClientTextureLocked(struct ClientRecord& rec);
 
+		// Pixel size of a client's panel texture: the configured base resolution
+		// (Settings::baseWidth/Height), supersampled (Settings::hudSupersample)
+		// for view-filling panels — HUD-mode layers and the self/settings panel,
+		// which carries the toasts. Other (focusable, 1:1) panels render at base.
+		void PanelPixelSize(const struct ClientRecord& rec, unsigned int& width, unsigned int& height) const;
+
 		/// client_id assigned to the helper itself for its settings UI.
 		/// 0 until EnsureSelfClient runs. Reserved combo IDs and the
 		/// helper's panel texture are owned by this slot.

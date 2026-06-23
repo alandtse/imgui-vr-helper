@@ -72,6 +72,10 @@ namespace ImGuiVRHelper::Overlay
 			s.showHUDDemo = tomlGet<bool>(t, "showHUDDemo", s.showHUDDemo);
 			s.hudDepth = tomlGet<float>(t, "hudDepth", s.hudDepth);
 			s.hudCoverage = tomlGet<float>(t, "hudCoverage", s.hudCoverage);
+			s.baseWidth = static_cast<int>(tomlGet<int64_t>(t, "baseWidth", s.baseWidth));
+			s.baseHeight = static_cast<int>(tomlGet<int64_t>(t, "baseHeight", s.baseHeight));
+			s.hudSupersample = static_cast<int>(tomlGet<int64_t>(t, "hudSupersample", s.hudSupersample));
+			s.toastTopFraction = tomlGet<float>(t, "toastTopFraction", s.toastTopFraction);
 
 			// Open/close combos: arrays of packed (device << 16 | key) ints. A
 			// missing key keeps the default; an empty array means unbound.
@@ -157,7 +161,16 @@ namespace ImGuiVRHelper::Overlay
 				<< "# at the lens mask); 0.92 leaves a comfort margin. Don't set hudDepth\n"
 				<< "# below ~0.5m — most VR lenses can't focus closer than that.\n"
 				<< "hudDepth = " << s.hudDepth << "  # meters\n"
-				<< "hudCoverage = " << s.hudCoverage << "  # 0.5-1.0 fraction of the view\n";
+				<< "hudCoverage = " << s.hudCoverage << "  # 0.5-1.0 fraction of the view\n"
+				<< "# Overlay panel texture resolution + supersampling (applied at panel\n"
+				<< "# allocation, so restart to take effect). baseWidth/Height is the logical\n"
+				<< "# panel size; hudSupersample multiplies it for view-filling panels (HUD\n"
+				<< "# layers, settings, toasts) to keep them sharp. toastTopFraction is the\n"
+				<< "# toasts' vertical placement (0 = top, 1 = bottom).\n"
+				<< "baseWidth = " << s.baseWidth << "\n"
+				<< "baseHeight = " << s.baseHeight << "\n"
+				<< "hudSupersample = " << s.hudSupersample << "  # 1-3\n"
+				<< "toastTopFraction = " << s.toastTopFraction << "  # 0-1\n";
 
 			auto combosToToml = [](const std::vector<ImGuiVRHelperPluginAPI::InputCombo>& v) {
 				std::string r = "[";

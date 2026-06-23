@@ -42,6 +42,10 @@ namespace
 		ImGuiVRHelper::Overlay::SaveSettings();
 	}
 
+	// Registration name of the helper's own settings/toast client. Shared so the
+	// panel-sizing supersample check stays in sync with EnsureSelfClient.
+	constexpr const char* kSelfClientName = "ImGuiVRHelper.Settings";
+
 	/// Returns true iff every key in the combo is currently held on the
 	/// expected device. Mirrors SCS's CheckCombo lambda: reads the live
 	/// per-controller state from Overlay::State, indexed by RE button key
@@ -181,6 +185,20 @@ namespace ImGuiVRHelper
 		}
 	}
 
+	void HelperImpl::PanelPixelSize(const ClientRecord& rec, unsigned int& width, unsigned int& height) const
+	{
+		namespace API = ImGuiVRHelperPluginAPI;
+		const auto& s = Overlay::State::GetSingleton().settings;
+		const int baseW = s.baseWidth > 0 ? s.baseWidth : Overlay::Config::kOverlayWidth;
+		const int baseH = s.baseHeight > 0 ? s.baseHeight : Overlay::Config::kOverlayHeight;
+		// The self/settings panel isn't HUD-mode (it's focusable), but it fills the
+		// view and carries the toasts, so it's supersampled too.
+		const bool fillsView = (rec.flags & API::kClientFlag_HUDMode) || rec.name == kSelfClientName;
+		const int ss = fillsView ? std::clamp(s.hudSupersample, 1, Overlay::Config::kMaxHUDSupersample) : 1;
+		width = static_cast<unsigned int>(baseW * ss);
+		height = static_cast<unsigned int>(baseH * ss);
+	}
+
 	bool HelperImpl::EnsureClientTextureLocked(ClientRecord& rec)
 	{
 		if (rec.texture && rec.rtv) {
@@ -194,9 +212,12 @@ namespace ImGuiVRHelper
 			return false;
 		}
 
+		unsigned int pw = 0, ph = 0;
+		PanelPixelSize(rec, pw, ph);
+
 		D3D11_TEXTURE2D_DESC desc{};
-		desc.Width = static_cast<UINT>(Overlay::Config::kOverlayWidth);
-		desc.Height = static_cast<UINT>(Overlay::Config::kOverlayHeight);
+		desc.Width = static_cast<UINT>(pw);
+		desc.Height = static_cast<UINT>(ph);
 		desc.MipLevels = 1;
 		desc.ArraySize = 1;
 		desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -262,8 +283,12 @@ namespace ImGuiVRHelper
 		// (idle HUD layers are skipped to save the always-on composite cost).
 		it->second.lastPanelFrame = m_frameCounter;
 
-		out->width = static_cast<uint32_t>(Overlay::Config::kOverlayWidth);
-		out->height = static_cast<uint32_t>(Overlay::Config::kOverlayHeight);
+		// Report the real (base × supersample) panel size so view-filling clients
+		// can scale their framebuffer to match — see EnsureClientTextureLocked.
+		unsigned int pw = 0, ph = 0;
+		PanelPixelSize(it->second, pw, ph);
+		out->width = pw;
+		out->height = ph;
 		out->rtv = it->second.rtv.get();
 		return true;
 	}
@@ -616,7 +641,7 @@ namespace ImGuiVRHelper
 		// SettingsUI::Render block), so it trivially honors the
 		// focus-render contract.
 		m_self_client_id = RegisterClient(
-			"ImGuiVRHelper.Settings",
+			kSelfClientName,
 			nullptr,
 			+[](const ImGuiVRHelperPluginAPI::Frame*, void*) { /* no-op */ },
 			nullptr,

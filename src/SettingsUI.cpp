@@ -863,6 +863,48 @@ namespace ImGuiVRHelper::SettingsUI
 
 				ImGui::Spacing();
 				ImGui::Separator();
+				ImGui::TextDisabled("Panel resolution & sharpness");
+
+				// Base panel resolution — common monitor presets. The texture is
+				// this size (HUD/settings/toast panels are then supersampled). Higher
+				// = sharper, more VRAM. Allocated at startup, so restart to apply.
+				struct ResPreset
+				{
+					const char* label;
+					int w;
+					int h;
+				};
+				static const ResPreset kResPresets[] = {
+					{ "1920 x 1080", 1920, 1080 },
+					{ "2560 x 1440", 2560, 1440 },
+					{ "3840 x 2160", 3840, 2160 },
+				};
+				int curRes = -1;
+				for (int i = 0; i < IM_ARRAYSIZE(kResPresets); ++i)
+					if (kResPresets[i].w == s.baseWidth && kResPresets[i].h == s.baseHeight) {
+						curRes = i;
+						break;
+					}
+				const char* resPreview = curRes >= 0 ? kResPresets[curRes].label : "Custom";
+				if (ImGui::BeginCombo("Base resolution", resPreview)) {
+					for (int i = 0; i < IM_ARRAYSIZE(kResPresets); ++i) {
+						if (ImGui::Selectable(kResPresets[i].label, i == curRes)) {
+							s.baseWidth = kResPresets[i].w;
+							s.baseHeight = kResPresets[i].h;
+						}
+					}
+					ImGui::EndCombo();
+				}
+				ImGui::SliderInt("HUD supersample", &s.hudSupersample, 1, Overlay::Config::kMaxHUDSupersample, "%dx");
+				ImGui::TextDisabled("    Sharpens view-filling panels (HUD, settings, toasts).");
+				ImGui::TextDisabled("    Base resolution + supersample apply on restart.");
+
+				ImGui::Spacing();
+				ImGui::SliderFloat("Toast position", &s.toastTopFraction, 0.0f, 1.0f, "%.2f");
+				ImGui::TextDisabled("    Vertical placement of welcome/swap banners (0=top, 1=bottom).");
+
+				ImGui::Spacing();
+				ImGui::Separator();
 				ImGui::TextDisabled("HUD layers (debug) — always-on, drawn in registration order");
 				{
 					namespace API = ImGuiVRHelperPluginAPI;
@@ -978,8 +1020,20 @@ namespace ImGuiVRHelper::SettingsUI
 		ImGuiIO& io = ImGui::GetIO();
 		io.IniFilename = nullptr;  // disable imgui.ini auto-save
 		io.LogFilename = nullptr;
-		io.DisplaySize = ImVec2(static_cast<float>(Overlay::Config::kOverlayWidth),
-			static_cast<float>(Overlay::Config::kOverlayHeight));
+		// Logical size = configured base resolution; DisplayFramebufferScale drives
+		// the supersample so the settings panel (and the toasts on it) stay crisp
+		// on the wide quad. Mirrors the StatusHUD/ToastHUD high-DPI setup. Applied
+		// once here — base/supersample changes take effect on restart.
+		{
+			const auto& s = Overlay::State::GetSingleton().settings;
+			const float baseW = s.baseWidth > 0 ? static_cast<float>(s.baseWidth) :
+			                                      static_cast<float>(Overlay::Config::kOverlayWidth);
+			const float baseH = s.baseHeight > 0 ? static_cast<float>(s.baseHeight) :
+			                                       static_cast<float>(Overlay::Config::kOverlayHeight);
+			const float ss = static_cast<float>(std::clamp(s.hudSupersample, 1, Overlay::Config::kMaxHUDSupersample));
+			io.DisplaySize = ImVec2(baseW, baseH);
+			io.DisplayFramebufferScale = ImVec2(ss, ss);
+		}
 		io.BackendFlags |= ImGuiBackendFlags_HasMouseCursors;
 		io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 

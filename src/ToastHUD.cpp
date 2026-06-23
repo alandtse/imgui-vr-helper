@@ -9,6 +9,8 @@
 #include "Overlay.h"
 #include "Theme.h"
 
+#include <algorithm>
+
 namespace ImGuiVRHelper::ToastHUD
 {
 	namespace
@@ -37,7 +39,16 @@ namespace ImGuiVRHelper::ToastHUD
 				ImGuiIO& io = ImGui::GetIO();
 				io.IniFilename = nullptr;
 				io.LogFilename = nullptr;
-				io.DisplaySize = ImVec2(kPanelWidth, kPanelHeight);
+				// Logical size = base resolution; DisplayFramebufferScale drives the
+				// supersample so the banner is crisp on the wide HUD quad (same
+				// high-DPI setup as StatusHUD). The self panel this renders into is
+				// supersampled to match (see HelperImpl::PanelPixelSize).
+				const auto& st = Overlay::State::GetSingleton().settings;
+				const float baseW = st.baseWidth > 0 ? static_cast<float>(st.baseWidth) : kPanelWidth;
+				const float baseH = st.baseHeight > 0 ? static_cast<float>(st.baseHeight) : kPanelHeight;
+				const float ss = static_cast<float>(std::clamp(st.hudSupersample, 1, Overlay::Config::kMaxHUDSupersample));
+				io.DisplaySize = ImVec2(baseW, baseH);
+				io.DisplayFramebufferScale = ImVec2(ss, ss);
 				Theme::Apply(ImGui::GetStyle());  // match the Community Shaders look
 				ImGui::GetStyle().ScaleAllSizes(2.0f);
 				io.FontGlobalScale = 1.5f;
@@ -56,8 +67,7 @@ namespace ImGuiVRHelper::ToastHUD
 		}
 	}
 
-	void Render(ID3D11RenderTargetView* rtv, const std::string& text, float alpha,
-		float topFraction, float fontScale)
+	void Render(ID3D11RenderTargetView* rtv, const std::string& text, float alpha, float fontScale)
 	{
 		if (!rtv || text.empty())
 			return;
@@ -77,7 +87,9 @@ namespace ImGuiVRHelper::ToastHUD
 		ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);  // fades text + background together
 
 		// Pivot the window by its top-center so the banner stays centered
-		// regardless of name length.
+		// regardless of name length. Vertical placement is user-configurable.
+		const float topFraction =
+			std::clamp(Overlay::State::GetSingleton().settings.toastTopFraction, 0.0f, 1.0f);
 		ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * topFraction),
 			ImGuiCond_Always, ImVec2(0.5f, 0.0f));
 		ImGui::SetNextWindowBgAlpha(0.65f);
@@ -157,7 +169,9 @@ namespace ImGuiVRHelper::ToastHUD
 
 		alpha = alpha < 0.0f ? 0.0f : (alpha > 1.0f ? 1.0f : alpha);
 		ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
-		ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.18f),
+		const float welcomeTop =
+			std::clamp(Overlay::State::GetSingleton().settings.toastTopFraction, 0.0f, 1.0f);
+		ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * welcomeTop),
 			ImGuiCond_Always, ImVec2(0.5f, 0.0f));
 		ImGui::SetNextWindowBgAlpha(0.65f);
 		constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |

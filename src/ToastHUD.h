@@ -21,11 +21,10 @@ namespace ImGuiVRHelper::ToastHUD
 	/// Render the banner with `text` top-center into the HUD-mode panel `rtv` at
 	/// `alpha` in [0,1] (for fade-out). Lazily creates the context + DX11 backend.
 	/// No-op if `rtv` is null, `text` is empty, or D3D isn't ready.
-	/// topFraction = banner top edge as a fraction of panel height (lower = more
-	/// toward center); fontScale = per-window font scale (on top of the context's
-	/// global scale). Defaults match the swap toast; the welcome passes its own.
+	/// Vertical placement comes from Settings::toastTopFraction (configurable);
+	/// fontScale = per-window font scale (on top of the context's global scale).
 	void Render(ID3D11RenderTargetView* rtv, const std::string& text, float alpha,
-		float topFraction = 0.10f, float fontScale = 1.8f);
+		float fontScale = 1.8f);
 
 	/// Render the startup welcome banner into `rtv` at `alpha`: a title line plus
 	/// "Open menu:" followed by `openKeys` color-coded per controller (matching
