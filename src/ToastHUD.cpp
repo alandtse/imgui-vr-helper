@@ -6,6 +6,7 @@
 #include "ToastHUD.h"
 
 #include "Globals.h"
+#include "Input.h"
 #include "Overlay.h"
 #include "PluginVersion.h"
 #include "Theme.h"
@@ -138,27 +139,6 @@ namespace ImGuiVRHelper::ToastHUD
 		if (!EnsureInitialized())
 			return;
 
-		auto keyName = [](uint32_t k) -> const char* {
-			switch (k) {
-			case 1:
-				return "B/Y";
-			case 2:
-				return "Grip";
-			case 7:
-				return "A/X";
-			case 32:
-				return "Stick";
-			case 33:
-				return "Trigger";
-			case 34:
-				return "Grip";
-			case 35:
-				return "Touchpad";
-			default:
-				return "?";
-			}
-		};
-
 		// Which controller the key is on. The color alone is opaque to a first-time
 		// user, so name it explicitly (matches the settings controller-map legend).
 		auto deviceName = [](ImGuiVRHelperPluginAPI::InputDeviceType d) -> const char* {
@@ -211,7 +191,7 @@ namespace ImGuiVRHelper::ToastHUD
 						ImGui::SameLine();
 					}
 					ImGui::TextColored(Theme::DeviceColor(openKeys[i].GetDevice()), "%s (%s)",
-						keyName(openKeys[i].GetKey()), deviceName(openKeys[i].GetDevice()));
+						Input::ButtonName(openKeys[i].GetKey()), deviceName(openKeys[i].GetDevice()));
 				}
 			}
 			if (pauseHint)

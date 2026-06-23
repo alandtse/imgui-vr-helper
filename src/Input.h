@@ -71,4 +71,9 @@ namespace ImGuiVRHelper::Input
 	/// from hidden to visible overlay so the first visible frame doesn't
 	/// look like a flood of edge events.
 	void ResetEdgeState();
+
+	/// Human-readable name for an RE::BSOpenVRControllerDevice::Keys code
+	/// (Trigger / Grip / A-X / B-Y / ...); "?" for an unmapped code. Shared by
+	/// the welcome banner and the settings controller map so they can't drift.
+	const char* ButtonName(uint32_t keyCode);
 }

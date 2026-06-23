@@ -34,6 +34,30 @@ namespace ImGuiVRHelper::Input
 	namespace API = ImGuiVRHelperPluginAPI;
 	using Keys = RE::BSOpenVRControllerDevice::Keys;
 
+	const char* ButtonName(uint32_t keyCode)
+	{
+		switch (keyCode) {
+		case static_cast<uint32_t>(Keys::kTrigger):
+			return "Trigger";
+		case static_cast<uint32_t>(Keys::kGrip):
+			return "Grip";
+		case static_cast<uint32_t>(Keys::kGripAlt):
+			return "GripAlt";
+		case static_cast<uint32_t>(Keys::kJoystickTrigger):
+			return "Stick Click";
+		case static_cast<uint32_t>(Keys::kTouchpadClick):
+			return "Touchpad";
+		case static_cast<uint32_t>(Keys::kTouchpadAlt):
+			return "Touchpad Alt";
+		case static_cast<uint32_t>(Keys::kBY):
+			return "B/Y";
+		case static_cast<uint32_t>(Keys::kXA):
+			return "A/X";
+		default:
+			return "?";
+		}
+	}
+
 	namespace
 	{
 		// ---- State diff for edge detection ------------------------------

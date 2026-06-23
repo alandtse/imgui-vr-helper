@@ -522,32 +522,6 @@ namespace ImGuiVRHelper::SettingsUI
 			}
 		}
 
-		// Human-readable name for an RE controller key code (diagnostics log).
-		const char* DbgButtonName(uint32_t keyCode)
-		{
-			using K = RE::BSOpenVRControllerDevice::Keys;
-			switch (keyCode) {
-			case static_cast<uint32_t>(K::kTrigger):
-				return "Trigger";
-			case static_cast<uint32_t>(K::kGrip):
-				return "Grip";
-			case static_cast<uint32_t>(K::kGripAlt):
-				return "GripAlt";
-			case static_cast<uint32_t>(K::kJoystickTrigger):
-				return "Stick Click";
-			case static_cast<uint32_t>(K::kTouchpadClick):
-				return "Touchpad";
-			case static_cast<uint32_t>(K::kTouchpadAlt):
-				return "Touchpad Alt";
-			case static_cast<uint32_t>(K::kBY):
-				return "B/Y";
-			case static_cast<uint32_t>(K::kXA):
-				return "A/X";
-			default:
-				return "?";
-			}
-		}
-
 		// Controller map: every registered combo across all clients, grouped by
 		// client, each key color-coded by its controller (Theme::DeviceColor) and
 		// clashes flagged. View-only for now; rebinding is the next step.
@@ -577,7 +551,7 @@ namespace ImGuiVRHelper::SettingsUI
 						ImGui::SameLine(0.0f, 0.0f);
 					}
 					ImGui::TextColored(Theme::DeviceColor(c.keys[i].GetDevice()), "%s",
-						DbgButtonName(c.keys[i].GetKey()));
+						Input::ButtonName(c.keys[i].GetKey()));
 				}
 				if (c.conflict) {
 					ImGui::SameLine();
@@ -926,7 +900,7 @@ namespace ImGuiVRHelper::SettingsUI
 						ImGui::TableSetColumnIndex(3);
 						ImGui::TextUnformatted(e.pressed ? "yes" : "no");
 						ImGui::TableSetColumnIndex(4);
-						ImGui::TextUnformatted(e.isThumbstick ? "Thumbstick" : DbgButtonName(e.keyCode));
+						ImGui::TextUnformatted(e.isThumbstick ? "Thumbstick" : Input::ButtonName(e.keyCode));
 					}
 					ImGui::EndTable();
 				}
