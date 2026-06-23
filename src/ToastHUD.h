@@ -10,6 +10,9 @@
 #pragma once
 
 #include <string>
+#include <vector>
+
+#include "ImGuiVRHelperInput.h"  // InputCombo
 
 struct ID3D11RenderTargetView;
 
@@ -23,6 +26,12 @@ namespace ImGuiVRHelper::ToastHUD
 	/// global scale). Defaults match the swap toast; the welcome passes its own.
 	void Render(ID3D11RenderTargetView* rtv, const std::string& text, float alpha,
 		float topFraction = 0.10f, float fontScale = 1.8f);
+
+	/// Render the startup welcome banner into `rtv` at `alpha`: a title line plus
+	/// "Open menu:" followed by `openKeys` color-coded per controller (matching
+	/// the controller map), then the Shift+F4 hint. Lazily creates the context.
+	void RenderWelcome(ID3D11RenderTargetView* rtv, float alpha,
+		const std::vector<ImGuiVRHelperPluginAPI::InputCombo>& openKeys);
 
 	/// Clear the panel to transparent (toast expired) so the HUD pass stops
 	/// compositing the last frame's pixels.

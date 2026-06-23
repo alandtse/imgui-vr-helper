@@ -41,44 +41,6 @@ namespace
 		ImGuiVRHelper::Overlay::SaveSettings();
 	}
 
-	// One-line, user-facing description of a combo for the welcome banner
-	// ("A/X + B/Y", "both Grip").
-	std::string FormatCombo(const std::vector<ImGuiVRHelperPluginAPI::InputCombo>& keys)
-	{
-		namespace API = ImGuiVRHelperPluginAPI;
-		auto keyName = [](uint32_t k) -> const char* {
-			switch (k) {
-			case 1:
-				return "B/Y";
-			case 2:
-				return "Grip";
-			case 7:
-				return "A/X";
-			case 32:
-				return "Stick";
-			case 33:
-				return "Trigger";
-			case 34:
-				return "Grip";
-			case 35:
-				return "Touchpad";
-			default:
-				return "?";
-			}
-		};
-		if (keys.empty())
-			return "(unbound)";
-		std::string r;
-		for (std::size_t i = 0; i < keys.size(); ++i) {
-			if (i)
-				r += " + ";
-			if (keys[i].GetDevice() == API::InputDeviceType::Both)
-				r += "both ";
-			r += keyName(keys[i].GetKey());
-		}
-		return r;
-	}
-
 	/// Returns true iff every key in the combo is currently held on the
 	/// expected device. Mirrors SCS's CheckCombo lambda: reads the live
 	/// per-controller state from Overlay::State, indexed by RE button key
@@ -920,7 +882,13 @@ namespace ImGuiVRHelper
 			}
 		}
 		if (m_close_menu_combo != 0 && ComboFired(m_close_menu_combo)) {
-			if (m_focused_client != 0) {
+			if (m_self_client_id != 0 && m_focused_client == m_self_client_id) {
+				// The helper's own settings UI is gated on visibility, not focus —
+				// releasing focus alone would be re-grabbed by the reconciler
+				// below. Hide it; the reconciler then releases focus and persists.
+				SettingsUI::SetVisible(false);
+				logs::info("Close-menu combo: hiding helper settings UI");
+			} else if (m_focused_client != 0) {
 				logs::info("Close-menu combo: releasing overlay {}", m_focused_client);
 				ReleaseFocus(m_focused_client);
 			}
@@ -1254,16 +1222,9 @@ namespace ImGuiVRHelper
 						const float alpha = m_welcomeRemaining >= kWelcomeFadeSeconds ?
 						                        1.0f :
 						                        m_welcomeRemaining / kWelcomeFadeSeconds;
-						// Built from the live open combo so it documents exactly how
-						// to open the menu (like CS's welcome did).
-						const std::string welcomeText =
-							"ImGuiVRHelper ready\n"
-							"Open menu: " +
-							FormatCombo(overlayState.settings.openMenuKeys) +
-							"    Settings: Shift+F4";
-						// Lower + smaller than the swap toast: it's a multi-line
-						// info banner, not a quick name flash.
-						ToastHUD::Render(handle.rtv, welcomeText, alpha, 0.18f, 1.2f);
+						// Color-coded per-controller open combo so the banner shows
+						// exactly how to open the menu (like CS's welcome did).
+						ToastHUD::RenderWelcome(handle.rtv, alpha, overlayState.settings.openMenuKeys);
 					} else {
 						ToastHUD::ClearToTransparent(handle.rtv);
 					}

@@ -117,6 +117,97 @@ namespace ImGuiVRHelper::ToastHUD
 			ImGui::SetCurrentContext(prev);
 	}
 
+	void RenderWelcome(ID3D11RenderTargetView* rtv, float alpha,
+		const std::vector<ImGuiVRHelperPluginAPI::InputCombo>& openKeys)
+	{
+		if (!rtv)
+			return;
+		if (!EnsureInitialized())
+			return;
+
+		auto keyName = [](uint32_t k) -> const char* {
+			switch (k) {
+			case 1:
+				return "B/Y";
+			case 2:
+				return "Grip";
+			case 7:
+				return "A/X";
+			case 32:
+				return "Stick";
+			case 33:
+				return "Trigger";
+			case 34:
+				return "Grip";
+			case 35:
+				return "Touchpad";
+			default:
+				return "?";
+			}
+		};
+
+		ImGuiContext* prev = ImGui::GetCurrentContext();
+		ImGui::SetCurrentContext(g_ctx);
+
+		ImGuiIO& io = ImGui::GetIO();
+		io.DeltaTime = 1.0f / 60.0f;
+
+		ImGui_ImplDX11_NewFrame();
+		ImGui::NewFrame();
+
+		alpha = alpha < 0.0f ? 0.0f : (alpha > 1.0f ? 1.0f : alpha);
+		ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+		ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.18f),
+			ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+		ImGui::SetNextWindowBgAlpha(0.65f);
+		constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
+		                                   ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+		                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+		                                   ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs |
+		                                   ImGuiWindowFlags_AlwaysAutoResize;
+		if (ImGui::Begin("##Welcome", nullptr, flags)) {
+			ImGui::SetWindowFontScale(1.2f);
+			ImGui::TextUnformatted("ImGuiVRHelper ready");
+			ImGui::TextUnformatted("Open menu:");
+			if (openKeys.empty()) {
+				ImGui::SameLine();
+				ImGui::TextDisabled("(unbound)");
+			} else {
+				for (std::size_t i = 0; i < openKeys.size(); ++i) {
+					ImGui::SameLine();
+					if (i != 0) {
+						ImGui::TextDisabled("+");
+						ImGui::SameLine();
+					}
+					ImGui::TextColored(Theme::DeviceColor(openKeys[i].GetDevice()), "%s",
+						keyName(openKeys[i].GetKey()));
+				}
+			}
+			ImGui::TextDisabled("Settings: Shift+F4");
+		}
+		ImGui::End();
+		ImGui::PopStyleVar();
+
+		ImGui::Render();
+
+		auto* ctx = Globals::GetD3D().context;
+		ID3D11RenderTargetView* oldRTV = nullptr;
+		ID3D11DepthStencilView* oldDSV = nullptr;
+		ctx->OMGetRenderTargets(1, &oldRTV, &oldDSV);
+		const float clear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		ctx->OMSetRenderTargets(1, &rtv, nullptr);
+		ctx->ClearRenderTargetView(rtv, clear);
+		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+		ctx->OMSetRenderTargets(1, &oldRTV, oldDSV);
+		if (oldRTV)
+			oldRTV->Release();
+		if (oldDSV)
+			oldDSV->Release();
+
+		if (prev != g_ctx)
+			ImGui::SetCurrentContext(prev);
+	}
+
 	void ClearToTransparent(ID3D11RenderTargetView* rtv)
 	{
 		if (!rtv || !Globals::IsReady())
