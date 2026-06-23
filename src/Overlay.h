@@ -124,6 +124,12 @@ namespace ImGuiVRHelper::Overlay
 			ImGuiVRHelperPluginAPI::InputCombo::Both(2),
 		};
 
+		/// Preferred order of mod overlays (by client name) for the overlay cycle
+		/// and the open combo's "first mod" pick (top = opened first). Clients not
+		/// listed fall to the end in registration order. Empty = registration
+		/// order. Set from the helper's "Overlay order" UI.
+		std::vector<std::string> overlayOrder;
+
 		// Thumbstick deadzone (also used for drag-depth control). Bumped
 		// from 0.1 to 0.2 — most VR controllers have hardware drift in
 		// the 0.05-0.15 range, and 0.1 left the cursor noticeably

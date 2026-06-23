@@ -91,6 +91,16 @@ namespace ImGuiVRHelper::Overlay
 			};
 			readCombos("openMenuKeys", s.openMenuKeys);
 			readCombos("closeMenuKeys", s.closeMenuKeys);
+
+			// Overlay display order (client names). Missing key keeps the default
+			// (empty = registration order).
+			if (auto arr = t["overlayOrder"].as_array()) {
+				s.overlayOrder.clear();
+				for (const auto& el : *arr) {
+					if (auto v = el.value<std::string>())
+						s.overlayOrder.push_back(*v);
+				}
+			}
 		}
 
 		// Build TOML by hand so we can include section headers and
@@ -162,6 +172,15 @@ namespace ImGuiVRHelper::Overlay
 				<< "# Packed values (device << 16 | key); rebind in-headset rather than by hand.\n"
 				<< "openMenuKeys = " << combosToToml(s.openMenuKeys) << "\n"
 				<< "closeMenuKeys = " << combosToToml(s.closeMenuKeys) << "\n";
+
+			out << "\n# Overlay display order (client names; top = opened first).\n"
+				<< "overlayOrder = [";
+			for (std::size_t i = 0; i < s.overlayOrder.size(); ++i) {
+				if (i)
+					out << ", ";
+				out << "\"" << s.overlayOrder[i] << "\"";
+			}
+			out << "]\n";
 			return out.str();
 		}
 

@@ -132,6 +132,12 @@ namespace ImGuiVRHelper
 		/// shortcut.
 		void CycleOverlay(int direction);
 
+		/// Ordered cyclable overlays — the helper's own UI first, then every
+		/// non-HUD client in the user's saved order — as (client_id, display
+		/// name). Backs CycleOverlay, the swap-toast counter, the open combo's
+		/// first-mod pick, and the "Overlay order" UI.
+		std::vector<std::pair<uint32_t, std::string>> BuildOverlayOrder();
+
 		/// Debug: force-hide a HUD-mode client from compositing so a developer
 		/// can isolate which layer draws what. No-op for unknown ids.
 		void SetHudForceDisabled(uint32_t client_id, bool disabled);
@@ -272,10 +278,6 @@ namespace ImGuiVRHelper
 		/// dispatch CycleOverlay. Runs every frame; no-ops while the wand is on
 		/// the panel so it doesn't fight menu interaction.
 		void ProcessOverlayCycleInput();
-		/// Ordered cyclable overlays — the helper's own UI first, then every
-		/// non-HUD client — as (client_id, display name). Backs CycleOverlay and
-		/// the swap-toast position counter.
-		std::vector<std::pair<uint32_t, std::string>> BuildOverlayOrder();
 		/// Snapshot clients under the lock, render the self UI, then run each
 		/// client's on_frame. Returns the focused client id used this frame.
 		uint32_t DispatchToClients(const ImGuiVRHelperPluginAPI::Frame& baseFrame, float dt);

@@ -978,18 +978,38 @@ namespace ImGuiVRHelper
 	std::vector<std::pair<uint32_t, std::string>> HelperImpl::BuildOverlayOrder()
 	{
 		// Helper's own UI first, then every non-HUD client (HUD overlays are
-		// always-on, not switchable). Shared by cycling and the toast counter.
+		// always-on, not switchable). Clients follow the user's saved order
+		// (Settings::overlayOrder, by name); unlisted clients fall to the end in
+		// registration-id order. Backs cycling, the toast counter, and the open
+		// combo's first-mod pick.
 		std::vector<std::pair<uint32_t, std::string>> order;
 		std::scoped_lock lk{ m_mutex };
 		if (m_self_client_id != 0)
 			order.emplace_back(m_self_client_id, "ImGuiVRHelper");
+
+		std::vector<std::pair<uint32_t, std::string>> clients;
 		for (const auto& [id, rec] : m_clients) {
 			if (id == m_self_client_id)
 				continue;
 			if (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_HUDMode)
 				continue;
-			order.emplace_back(id, rec.name);
+			clients.emplace_back(id, rec.name);
 		}
+
+		const auto& pref = Overlay::State::GetSingleton().settings.overlayOrder;
+		auto rank = [&pref](const std::string& name) -> std::size_t {
+			const auto it = std::find(pref.begin(), pref.end(), name);
+			return it == pref.end() ? pref.size() : static_cast<std::size_t>(it - pref.begin());
+		};
+		std::sort(clients.begin(), clients.end(), [&](const auto& a, const auto& b) {
+			const std::size_t ra = rank(a.second);
+			const std::size_t rb = rank(b.second);
+			if (ra != rb)
+				return ra < rb;
+			return a.first < b.first;  // stable fallback: registration id
+		});
+		for (auto& c : clients)
+			order.push_back(std::move(c));
 		return order;
 	}
 

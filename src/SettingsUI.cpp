@@ -586,6 +586,56 @@ namespace ImGuiVRHelper::SettingsUI
 			ImGui::TextColored(Theme::DeviceColor(API::InputDeviceType::Both), "Both");
 		}
 
+		// Order mod overlays for the open combo's "first mod" pick and the cycle.
+		// The helper's own UI isn't reorderable — it has its own Shift+F4 toggle
+		// and always leads the cycle.
+		void RenderOverlayOrderSection()
+		{
+			if (!ImGui::CollapsingHeader("Overlay order"))
+				return;
+			auto& impl = HelperImpl::GetSingleton();
+			const uint32_t selfId = impl.GetSelfClientId();
+			std::vector<std::pair<uint32_t, std::string>> mods;
+			for (auto& entry : impl.BuildOverlayOrder()) {
+				if (entry.first != selfId)
+					mods.push_back(entry);
+			}
+			if (mods.empty()) {
+				ImGui::TextDisabled("    No mod overlays registered.");
+				return;
+			}
+			ImGui::TextDisabled("    Top = opened first by the open combo; also the cycle order.");
+			int moveFrom = -1, moveTo = -1;
+			for (int i = 0; i < static_cast<int>(mods.size()); ++i) {
+				ImGui::PushID(i);
+				ImGui::Text("%d. %s", i + 1, mods[i].second.c_str());
+				ImGui::SameLine(240.0f);
+				ImGui::BeginDisabled(i == 0);
+				if (ImGui::ArrowButton("##up", ImGuiDir_Up)) {
+					moveFrom = i;
+					moveTo = i - 1;
+				}
+				ImGui::EndDisabled();
+				ImGui::SameLine();
+				ImGui::BeginDisabled(i == static_cast<int>(mods.size()) - 1);
+				if (ImGui::ArrowButton("##down", ImGuiDir_Down)) {
+					moveFrom = i;
+					moveTo = i + 1;
+				}
+				ImGui::EndDisabled();
+				ImGui::PopID();
+			}
+			if (moveFrom >= 0) {
+				std::swap(mods[moveFrom], mods[moveTo]);
+				std::vector<std::string> names;
+				names.reserve(mods.size());
+				for (auto& m : mods)
+					names.push_back(m.second);
+				Overlay::State::GetSingleton().settings.overlayOrder = std::move(names);
+				Overlay::SaveSettings();
+			}
+		}
+
 		// Visual thumbstick state: a crosshair box with a dot at (x, y) plus a
 		// numeric readout. Ported from Community Shaders' DrawThumbstickColumn.
 		void DrawThumbstickPad(const char* label, const RE::VRControllerState& cs, RE::ControllerRole role)
@@ -875,6 +925,7 @@ namespace ImGuiVRHelper::SettingsUI
 					RenderPositioningSection(s);
 					RenderInteractionSection(s);
 					RenderControllerMapSection();
+					RenderOverlayOrderSection();
 					RenderClientsSection();
 
 					ImGui::Separator();
