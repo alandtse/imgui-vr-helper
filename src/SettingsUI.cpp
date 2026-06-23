@@ -12,6 +12,7 @@
 #include "Input.h"
 #include "OpenVRDetection.h"
 #include "Overlay.h"
+#include "PluginVersion.h"
 #include "Theme.h"
 #include "WandPointing.h"
 
@@ -897,7 +898,8 @@ namespace ImGuiVRHelper::SettingsUI
 				}
 				ImGui::SliderInt("HUD supersample", &s.hudSupersample, 1, Overlay::Config::kMaxHUDSupersample, "%dx");
 				ImGui::TextDisabled("    Sharpens view-filling panels (HUD, settings, toasts).");
-				ImGui::TextDisabled("    Base resolution + supersample apply on restart.");
+				ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.1f, 1.0f),
+					"    [restart required] base resolution + supersample apply after a Skyrim restart.");
 
 				ImGui::Spacing();
 				ImGui::SliderFloat("Toast position", &s.toastTopFraction, 0.0f, 1.0f, "%.2f");
@@ -940,7 +942,9 @@ namespace ImGuiVRHelper::SettingsUI
 			auto& s = state.settings;
 
 			ImGui::SetNextWindowSize(ImVec2(700, 600), ImGuiCond_FirstUseEver);
-			if (!ImGui::Begin("ImGuiVRHelper Settings", &g_visible)) {
+			// Title shows the version; "###" keeps a stable window ID across versions.
+			if (!ImGui::Begin("ImGuiVRHelper Settings  v" IMGUI_VR_HELPER_VERSION_STRING "###ImGuiVRHelperSettings",
+					&g_visible)) {
 				ImGui::End();
 				return;
 			}
@@ -992,13 +996,26 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::EndTabBar();
 			}
 
-			// Footer: reset stays reachable from any tab.
+			// Footer: reset stays reachable from any tab. Confirm first — a stray
+			// wand click here would otherwise wipe key bindings and overlay order.
 			ImGui::Separator();
-			if (ImGui::Button("Reset all settings to defaults")) {
-				s = Overlay::Settings{};
-				Overlay::ApplyLogLevel();  // logLevel is applied once, not per-frame
-				Overlay::SaveSettings();
-				logs::info("Settings reset to defaults");
+			if (ImGui::Button("Reset all settings to defaults"))
+				ImGui::OpenPopup("Reset all settings?");
+			if (ImGui::BeginPopupModal("Reset all settings?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+				ImGui::TextUnformatted("This clears your key bindings, overlay order,");
+				ImGui::TextUnformatted("and display settings. This cannot be undone.");
+				ImGui::Spacing();
+				if (ImGui::Button("Reset everything")) {
+					s = Overlay::Settings{};
+					Overlay::ApplyLogLevel();  // logLevel is applied once, not per-frame
+					Overlay::SaveSettings();
+					logs::info("Settings reset to defaults");
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("Cancel"))
+					ImGui::CloseCurrentPopup();
+				ImGui::EndPopup();
 			}
 
 			ImGui::End();

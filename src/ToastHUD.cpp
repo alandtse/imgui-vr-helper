@@ -7,6 +7,7 @@
 
 #include "Globals.h"
 #include "Overlay.h"
+#include "PluginVersion.h"
 #include "Theme.h"
 
 #include <algorithm>
@@ -158,6 +159,22 @@ namespace ImGuiVRHelper::ToastHUD
 			}
 		};
 
+		// Which controller the key is on. The color alone is opaque to a first-time
+		// user, so name it explicitly (matches the settings controller-map legend).
+		auto deviceName = [](ImGuiVRHelperPluginAPI::InputDeviceType d) -> const char* {
+			using DT = ImGuiVRHelperPluginAPI::InputDeviceType;
+			switch (d) {
+			case DT::Primary:
+				return "Primary";
+			case DT::Secondary:
+				return "Secondary";
+			case DT::Both:
+				return "Both";
+			default:
+				return "";
+			}
+		};
+
 		ImGuiContext* prev = ImGui::GetCurrentContext();
 		ImGui::SetCurrentContext(g_ctx);
 
@@ -181,7 +198,7 @@ namespace ImGuiVRHelper::ToastHUD
 		                                   ImGuiWindowFlags_AlwaysAutoResize;
 		if (ImGui::Begin("##Welcome", nullptr, flags)) {
 			ImGui::SetWindowFontScale(1.2f);
-			ImGui::TextUnformatted("ImGuiVRHelper ready");
+			ImGui::TextUnformatted("ImGuiVRHelper v" IMGUI_VR_HELPER_VERSION_STRING " ready");
 			ImGui::TextUnformatted("Open menu:");
 			if (openKeys.empty()) {
 				ImGui::SameLine();
@@ -193,8 +210,8 @@ namespace ImGuiVRHelper::ToastHUD
 						ImGui::TextDisabled("+");
 						ImGui::SameLine();
 					}
-					ImGui::TextColored(Theme::DeviceColor(openKeys[i].GetDevice()), "%s",
-						keyName(openKeys[i].GetKey()));
+					ImGui::TextColored(Theme::DeviceColor(openKeys[i].GetDevice()), "%s (%s)",
+						keyName(openKeys[i].GetKey()), deviceName(openKeys[i].GetDevice()));
 				}
 			}
 			if (pauseHint)
