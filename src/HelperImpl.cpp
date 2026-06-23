@@ -620,6 +620,36 @@ namespace ImGuiVRHelper
 			n, m_self_toggle_combo);
 	}
 
+	void HelperImpl::RebindOpenMenu(const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n)
+	{
+		if (!keys || n == 0 || m_self_client_id == 0)
+			return;
+		{
+			std::scoped_lock lk{ m_mutex };
+			m_combos.erase(m_open_menu_combo);
+		}
+		// Re-register (resets the matcher's was_matched state) keeping the persist
+		// callback, then mirror into Settings — RegisterCombo doesn't fire on_rebind.
+		m_open_menu_combo = RegisterCombo(m_self_client_id, keys, n, 3.0f, "Open menu", PersistOpenMenuKeys, nullptr);
+		Overlay::State::GetSingleton().settings.openMenuKeys.assign(keys, keys + n);
+		Overlay::SaveSettings();
+		logs::info("Rebound open-menu combo to {} keys (combo_id={})", n, m_open_menu_combo);
+	}
+
+	void HelperImpl::RebindCloseMenu(const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n)
+	{
+		if (!keys || n == 0 || m_self_client_id == 0)
+			return;
+		{
+			std::scoped_lock lk{ m_mutex };
+			m_combos.erase(m_close_menu_combo);
+		}
+		m_close_menu_combo = RegisterCombo(m_self_client_id, keys, n, 3.0f, "Close menu", PersistCloseMenuKeys, nullptr);
+		Overlay::State::GetSingleton().settings.closeMenuKeys.assign(keys, keys + n);
+		Overlay::SaveSettings();
+		logs::info("Rebound close-menu combo to {} keys (combo_id={})", n, m_close_menu_combo);
+	}
+
 	void HelperImpl::EnsureSelfClient()
 	{
 		if (m_self_client_id != 0)

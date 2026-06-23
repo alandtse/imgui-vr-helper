@@ -215,12 +215,32 @@ namespace ImGuiVRHelper::SettingsUI
 					&s.autoResetDistance, 0.0f, 5000.0f, "%.0f units");
 
 				ImGui::Separator();
-				ImGui::TextDisabled("Toggle this panel: Shift+F4 (default). Bind a controller combo below.");
-				if (ImGui::Button("Rebind toggle key")) {
+				ImGui::TextDisabled("Two separate menus:");
+
+				ImGui::BulletText("This settings panel");
+				ImGui::TextDisabled("    Opens with Shift+F4, or a controller combo:");
+				if (ImGui::Button("Rebind settings combo")) {
 					auto& impl = HelperImpl::GetSingleton();
-					ComboRecording::Begin(impl.GetSelfClientId(), "ImGuiVRHelper toggle", +[](const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n, void* /*user*/) {
-							if (n == 0) return;  // user cancelled or timed out empty
+					ComboRecording::Begin(impl.GetSelfClientId(), "ImGuiVRHelper toggle", +[](const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n, void*) {
+							if (n == 0) return;  // cancelled / timed out empty
 							HelperImpl::GetSingleton().RebindSelfToggle(keys, n); }, nullptr, 5.0f);
+				}
+
+				ImGui::Spacing();
+				ImGui::BulletText("Open / switch a mod overlay");
+				ImGui::TextDisabled("    Brings up the active mod's menu (the launcher up top picks which).");
+				if (ImGui::Button("Rebind open combo")) {
+					auto& impl = HelperImpl::GetSingleton();
+					ComboRecording::Begin(impl.GetSelfClientId(), "Open mod overlay", +[](const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n, void*) {
+							if (n == 0) return;
+							HelperImpl::GetSingleton().RebindOpenMenu(keys, n); }, nullptr, 5.0f);
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("Rebind close combo")) {
+					auto& impl = HelperImpl::GetSingleton();
+					ComboRecording::Begin(impl.GetSelfClientId(), "Close mod overlay", +[](const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n, void*) {
+							if (n == 0) return;
+							HelperImpl::GetSingleton().RebindCloseMenu(keys, n); }, nullptr, 5.0f);
 				}
 			}
 		}

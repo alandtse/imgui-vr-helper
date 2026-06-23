@@ -167,6 +167,12 @@ namespace ImGuiVRHelper
 		/// completes. No-op if `n` == 0.
 		void RebindSelfToggle(const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n);
 
+		/// Replace the helper-owned open- / close-menu combos (the chords that
+		/// bring up / dismiss the active mod overlay) with `keys`. Updates the
+		/// live combo and persists to Settings. No-op if `n` == 0.
+		void RebindOpenMenu(const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n);
+		void RebindCloseMenu(const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n);
+
 		/// Called from the PollInputDevices thunk on a keyboard-toggle
 		/// key-down. Equivalent to firing the controller toggle combo —
 		/// flips the helper's settings-UI visibility and adjusts focus.
