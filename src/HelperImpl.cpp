@@ -843,9 +843,9 @@ namespace ImGuiVRHelper
 				logs::info("Client {} took focus; self-UI auto-closed (yielded)", m_focused_client);
 			}
 
-			// Recording no longer forces self-focus: the rebind capture renders as
-			// an on-top overlay over whatever client is focused, so focus stays
-			// with the client (or the helper menu) that started the rebind.
+			// Only the visible settings UI claims self-focus. The rebind capture
+			// renders as an on-top overlay over the focused client, so focus stays
+			// with whoever (a client, or the helper menu) started the rebind.
 			const bool selfActive = SettingsUI::IsVisible();
 			if (selfActive) {
 				if (m_focused_client != m_self_client_id) {

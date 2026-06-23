@@ -1005,10 +1005,9 @@ namespace ImGuiVRHelper::SettingsUI
 	{
 		if (!g_ctx)
 			return false;
-		// Render whenever the settings window is up (toggled or dashboard-forced).
+		// Render only when the settings window is up (toggled or dashboard-forced).
 		// The rebind capture overlay renders independently — ComboRecording owns
-		// its own context + panel and composites over the focused client — so it
-		// no longer forces this UI to render.
+		// its own context + panel and composites over the focused client.
 		if (!g_visible && !g_forceVisible)
 			return false;
 
