@@ -226,7 +226,7 @@ namespace ImGuiVRHelper::SettingsUI
 
 		void RenderClientsSection()
 		{
-			if (ImGui::CollapsingHeader("Registered Clients")) {
+			{  // own tab now; no wrapping collapsing header
 				auto clients = HelperImpl::GetSingleton().SnapshotClients();
 				ImGui::Text("Active clients: %zu", clients.size());
 
@@ -665,7 +665,7 @@ namespace ImGuiVRHelper::SettingsUI
 		void RenderDiagnosticsSection(Overlay::State& state)
 		{
 			auto& s = state.settings;
-			if (ImGui::CollapsingHeader("Diagnostics")) {
+			{  // own tab now; no wrapping collapsing header
 				// OpenVR runtime — detected once at startup (VRDetection::Detect),
 				// cached for display here.
 				const auto& vrInfo = VRDetection::LastResult();
@@ -924,24 +924,23 @@ namespace ImGuiVRHelper::SettingsUI
 			RenderActiveOverlaySection();  // primary action, on top
 			ImGui::Separator();
 
-			// Tabs keep the live, per-frame Diagnostics readouts off the Settings
-			// page so their constantly-changing height doesn't scroll the
-			// settings up and down while you're watching controller input.
+			// Grouped tabs: each holds one topic so a tab never wraps its whole
+			// body in a redundant collapsing header, and the live per-frame
+			// Diagnostics readouts stay off the settings pages (their changing
+			// height would otherwise scroll the controls up and down).
 			if (ImGui::BeginTabBar("##HelperTabs")) {
-				if (ImGui::BeginTabItem("Settings")) {
+				if (ImGui::BeginTabItem("Overlay")) {
 					RenderPositioningSection(s);
+					RenderOverlayOrderSection();
+					ImGui::EndTabItem();
+				}
+				if (ImGui::BeginTabItem("Controls")) {
 					RenderInteractionSection(s);
 					RenderControllerMapSection();
-					RenderOverlayOrderSection();
+					ImGui::EndTabItem();
+				}
+				if (ImGui::BeginTabItem("Clients")) {
 					RenderClientsSection();
-
-					ImGui::Separator();
-					if (ImGui::Button("Reset all settings to defaults")) {
-						s = Overlay::Settings{};
-						Overlay::ApplyLogLevel();  // logLevel is applied once, not per-frame
-						Overlay::SaveSettings();
-						logs::info("Settings reset to defaults");
-					}
 					ImGui::EndTabItem();
 				}
 				if (ImGui::BeginTabItem("Diagnostics")) {
@@ -949,6 +948,15 @@ namespace ImGuiVRHelper::SettingsUI
 					ImGui::EndTabItem();
 				}
 				ImGui::EndTabBar();
+			}
+
+			// Footer: reset stays reachable from any tab.
+			ImGui::Separator();
+			if (ImGui::Button("Reset all settings to defaults")) {
+				s = Overlay::Settings{};
+				Overlay::ApplyLogLevel();  // logLevel is applied once, not per-frame
+				Overlay::SaveSettings();
+				logs::info("Settings reset to defaults");
 			}
 
 			ImGui::End();
