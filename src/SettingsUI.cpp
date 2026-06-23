@@ -663,6 +663,59 @@ namespace ImGuiVRHelper::SettingsUI
 			ImGui::Text("X:% .2f Y:% .2f", x, y);
 		}
 
+		// Visual quality / placement — first-class settings, so on the Overlay tab
+		// (not buried in Diagnostics). Base resolution + supersample apply at panel
+		// allocation, hence the restart note; depth/coverage/toast are live.
+		void RenderDisplaySection(Overlay::Settings& s)
+		{
+			ImGui::TextDisabled("HUD geometry");
+			ImGui::SliderFloat("HUD depth (m)", &s.hudDepth, 0.5f, 3.0f, "%.2f");
+			ImGui::SliderFloat("HUD coverage", &s.hudCoverage, 0.5f, 1.0f, "%.2f");
+			ImGui::TextDisabled("    Fraction of the view the HUD fills; 1.0 may clip at the lens.");
+
+			ImGui::Spacing();
+			ImGui::Separator();
+			ImGui::TextDisabled("Sharpness");
+
+			// Common monitor presets; "Custom" shows if the TOML holds another size.
+			struct ResPreset
+			{
+				const char* label;
+				int w;
+				int h;
+			};
+			static const ResPreset kResPresets[] = {
+				{ "1920 x 1080", 1920, 1080 },
+				{ "2560 x 1440", 2560, 1440 },
+				{ "3840 x 2160", 3840, 2160 },
+			};
+			int curRes = -1;
+			for (int i = 0; i < IM_ARRAYSIZE(kResPresets); ++i)
+				if (kResPresets[i].w == s.baseWidth && kResPresets[i].h == s.baseHeight) {
+					curRes = i;
+					break;
+				}
+			const char* resPreview = curRes >= 0 ? kResPresets[curRes].label : "Custom";
+			if (ImGui::BeginCombo("Base resolution", resPreview)) {
+				for (int i = 0; i < IM_ARRAYSIZE(kResPresets); ++i) {
+					if (ImGui::Selectable(kResPresets[i].label, i == curRes)) {
+						s.baseWidth = kResPresets[i].w;
+						s.baseHeight = kResPresets[i].h;
+					}
+				}
+				ImGui::EndCombo();
+			}
+			ImGui::SliderInt("HUD supersample", &s.hudSupersample, 1, Overlay::Config::kMaxHUDSupersample, "%dx");
+			ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.1f, 1.0f),
+				"    [restart required] base resolution + supersample apply after a Skyrim restart.");
+
+			ImGui::Spacing();
+			ImGui::Separator();
+			ImGui::TextDisabled("Banners");
+			ImGui::SliderFloat("Toast position", &s.toastTopFraction, 0.0f, 1.0f, "%.2f");
+			ImGui::TextDisabled("    Vertical placement of welcome/swap banners (0=top, 1=bottom).");
+		}
+
 		void RenderDiagnosticsSection(Overlay::State& state)
 		{
 			auto& s = state.settings;
@@ -855,58 +908,6 @@ namespace ImGuiVRHelper::SettingsUI
 
 				ImGui::Spacing();
 				ImGui::Separator();
-				ImGui::TextDisabled("HUD-mode geometry (all kClientFlag_HUDMode clients)");
-				ImGui::SliderFloat("HUD depth (m)", &s.hudDepth, 0.5f, 3.0f, "%.2f");
-				ImGui::SliderFloat("HUD coverage", &s.hudCoverage, 0.5f, 1.0f, "%.2f");
-				ImGui::TextDisabled("    Coverage = fraction of the view the HUD fills.");
-				ImGui::TextDisabled("    1.0 = edge-to-edge (may clip at lens mask); 0.92 = margin.");
-				ImGui::TextDisabled("    If panel edges are clipped by the lens, lower FOV.");
-
-				ImGui::Spacing();
-				ImGui::Separator();
-				ImGui::TextDisabled("Panel resolution & sharpness");
-
-				// Base panel resolution — common monitor presets. The texture is
-				// this size (HUD/settings/toast panels are then supersampled). Higher
-				// = sharper, more VRAM. Allocated at startup, so restart to apply.
-				struct ResPreset
-				{
-					const char* label;
-					int w;
-					int h;
-				};
-				static const ResPreset kResPresets[] = {
-					{ "1920 x 1080", 1920, 1080 },
-					{ "2560 x 1440", 2560, 1440 },
-					{ "3840 x 2160", 3840, 2160 },
-				};
-				int curRes = -1;
-				for (int i = 0; i < IM_ARRAYSIZE(kResPresets); ++i)
-					if (kResPresets[i].w == s.baseWidth && kResPresets[i].h == s.baseHeight) {
-						curRes = i;
-						break;
-					}
-				const char* resPreview = curRes >= 0 ? kResPresets[curRes].label : "Custom";
-				if (ImGui::BeginCombo("Base resolution", resPreview)) {
-					for (int i = 0; i < IM_ARRAYSIZE(kResPresets); ++i) {
-						if (ImGui::Selectable(kResPresets[i].label, i == curRes)) {
-							s.baseWidth = kResPresets[i].w;
-							s.baseHeight = kResPresets[i].h;
-						}
-					}
-					ImGui::EndCombo();
-				}
-				ImGui::SliderInt("HUD supersample", &s.hudSupersample, 1, Overlay::Config::kMaxHUDSupersample, "%dx");
-				ImGui::TextDisabled("    Sharpens view-filling panels (HUD, settings, toasts).");
-				ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.1f, 1.0f),
-					"    [restart required] base resolution + supersample apply after a Skyrim restart.");
-
-				ImGui::Spacing();
-				ImGui::SliderFloat("Toast position", &s.toastTopFraction, 0.0f, 1.0f, "%.2f");
-				ImGui::TextDisabled("    Vertical placement of welcome/swap banners (0=top, 1=bottom).");
-
-				ImGui::Spacing();
-				ImGui::Separator();
 				ImGui::TextDisabled("HUD layers (debug) — always-on, drawn in registration order");
 				{
 					namespace API = ImGuiVRHelperPluginAPI;
@@ -977,6 +978,8 @@ namespace ImGuiVRHelper::SettingsUI
 			if (ImGui::BeginTabBar("##HelperTabs")) {
 				if (ImGui::BeginTabItem("Overlay")) {
 					RenderPositioningSection(s);
+					ImGui::Separator();
+					RenderDisplaySection(s);
 					RenderOverlayOrderSection();
 					ImGui::EndTabItem();
 				}
