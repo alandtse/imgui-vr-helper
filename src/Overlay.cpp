@@ -7,6 +7,7 @@
 
 #include <toml++/toml.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <sstream>
 
@@ -76,6 +77,11 @@ namespace ImGuiVRHelper::Overlay
 			s.baseHeight = static_cast<int>(tomlGet<int64_t>(t, "baseHeight", s.baseHeight));
 			s.hudSupersample = static_cast<int>(tomlGet<int64_t>(t, "hudSupersample", s.hudSupersample));
 			s.toastTopFraction = tomlGet<float>(t, "toastTopFraction", s.toastTopFraction);
+			// Guard against a hand-edited TOML allocating an enormous panel (each is
+			// baseW*baseH*supersample^2*4 bytes) and OOMing the GPU at startup.
+			s.baseWidth = std::clamp(s.baseWidth, 640, 7680);
+			s.baseHeight = std::clamp(s.baseHeight, 480, 4320);
+			s.hudSupersample = std::clamp(s.hudSupersample, 1, Config::kMaxHUDSupersample);
 
 			// Open/close combos: arrays of packed (device << 16 | key) ints. A
 			// missing key keeps the default; an empty array means unbound.

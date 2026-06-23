@@ -210,7 +210,7 @@ namespace ImGuiVRHelper::SettingsUI
 					ImGui::SetTooltip("Hold grip and move your hand to reposition the overlay;\nthumbstick up/down moves it farther/closer.");
 				ImGui::Checkbox("Only open overlays while the game is paused", &s.onlyOpenWhilePaused);
 				ImGui::Checkbox("Show welcome banner on startup", &s.showWelcome);
-				ImGui::SliderFloat("Mouse deadzone", &s.mouseDeadzone, 0.0f, 1.0f, "%.2f");
+				ImGui::SliderFloat("Thumbstick deadzone", &s.mouseDeadzone, 0.0f, 1.0f, "%.2f");
 				ImGui::SliderFloat("Auto-reset distance",
 					&s.autoResetDistance, 0.0f, 5000.0f, "%.0f units");
 
@@ -726,6 +726,10 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::EndCombo();
 			}
 			ImGui::SliderInt("HUD supersample", &s.hudSupersample, 1, Overlay::Config::kMaxHUDSupersample, "%dx");
+			const int ss = std::clamp(s.hudSupersample, 1, Overlay::Config::kMaxHUDSupersample);
+			const double panelMB =
+				static_cast<double>(s.baseWidth) * s.baseHeight * ss * ss * 4.0 / (1024.0 * 1024.0);
+			ImGui::TextDisabled("    View-filling panel: %d x %d each (~%.0f MB)", s.baseWidth * ss, s.baseHeight * ss, panelMB);
 			ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.1f, 1.0f),
 				"    [restart required] base resolution + supersample apply after a Skyrim restart.");
 
