@@ -934,6 +934,12 @@ namespace ImGuiVRHelper
 				if (const uint32_t target = PickOpenTarget(); target != 0) {
 					RequestFocus(target);
 					logs::info("Open-menu combo: focusing overlay {}", target);
+				} else if (m_self_client_id != 0) {
+					// No mod overlay to open — fall back to the helper's own settings
+					// so a controller-only user can always reach the menu (and the
+					// overlay launcher) without a keyboard.
+					SettingsUI::SetVisible(true);
+					logs::info("Open-menu combo: no overlay; opening helper settings");
 				}
 			}
 		}

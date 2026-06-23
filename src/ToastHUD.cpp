@@ -216,7 +216,8 @@ namespace ImGuiVRHelper::ToastHUD
 			}
 			if (pauseHint)
 				ImGui::TextDisabled("Opens while the game is paused (in a menu).");
-			ImGui::TextDisabled("Settings: Shift+F4");
+			ImGui::TextDisabled("Settings: Shift+F4 (or the open combo with no mod open).");
+			ImGui::TextDisabled("Switch mods: Settings -> Active overlay.");
 		}
 		ImGui::End();
 		ImGui::PopStyleVar();
