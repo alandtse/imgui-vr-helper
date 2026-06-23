@@ -213,6 +213,21 @@ namespace ImGuiVRHelper
 		/// Combo IDs the helper registers for its own toggle hotkey.
 		ImGuiVRHelperPluginAPI::ComboId m_self_toggle_combo = 0;
 
+		/// Helper-owned combos for opening / closing the active overlay (the
+		/// menu activation taken over from clients). Keys persist in
+		/// Overlay::Settings; rebinds route through their on_rebind.
+		ImGuiVRHelperPluginAPI::ComboId m_open_menu_combo = 0;
+		ImGuiVRHelperPluginAPI::ComboId m_close_menu_combo = 0;
+
+		/// Last client overlay that held focus (the helper's own settings UI is
+		/// excluded — it has its own toggle). The open combo reopens this; 0
+		/// falls back to the first mod overlay.
+		uint32_t m_lastOpenedOverlay = 0;
+
+		/// Resolve what the open combo should focus: the last-opened client
+		/// overlay if still registered, else the first non-helper overlay.
+		uint32_t PickOpenTarget();
+
 		// Previous stick-click state per hand, for edge-detecting the off-panel
 		// overlay-cycle shortcut (left = prev, right = next).
 		bool m_prevLeftStickClick = false;

@@ -110,6 +110,20 @@ namespace ImGuiVRHelper::Overlay
 		/// overlays). Auto-dismisses after ~30s or when you enter the game.
 		bool showWelcome = true;
 
+		/// Controller combos the helper owns for opening / closing the active
+		/// overlay. Open focuses the last-opened overlay (or the first mod
+		/// overlay on a cold start); close releases focus. Defaults match
+		/// Community Shaders' original VR menu binds so muscle memory carries
+		/// over. Rebindable from the controller map; persisted as packed values.
+		/// OpenVR key codes: X/A = 7, B/Y = 1, grip = 2.
+		std::vector<ImGuiVRHelperPluginAPI::InputCombo> openMenuKeys = {
+			ImGuiVRHelperPluginAPI::InputCombo::Secondary(7),
+			ImGuiVRHelperPluginAPI::InputCombo::Secondary(1),
+		};
+		std::vector<ImGuiVRHelperPluginAPI::InputCombo> closeMenuKeys = {
+			ImGuiVRHelperPluginAPI::InputCombo::Both(2),
+		};
+
 		// Thumbstick deadzone (also used for drag-depth control). Bumped
 		// from 0.1 to 0.2 — most VR controllers have hardware drift in
 		// the 0.05-0.15 range, and 0.1 left the cursor noticeably

@@ -72,6 +72,25 @@ namespace ImGuiVRHelper::Overlay
 			s.showHUDDemo = tomlGet<bool>(t, "showHUDDemo", s.showHUDDemo);
 			s.hudDepth = tomlGet<float>(t, "hudDepth", s.hudDepth);
 			s.hudCoverage = tomlGet<float>(t, "hudCoverage", s.hudCoverage);
+
+			// Open/close combos: arrays of packed (device << 16 | key) ints. A
+			// missing key keeps the default; an empty array means unbound.
+			auto readCombos = [&t](std::string_view key,
+								  std::vector<ImGuiVRHelperPluginAPI::InputCombo>& out) {
+				if (auto arr = t[key].as_array()) {
+					out.clear();
+					for (const auto& el : *arr) {
+						if (auto v = el.value<int64_t>()) {
+							const uint32_t packed = static_cast<uint32_t>(*v);
+							out.emplace_back(
+								static_cast<ImGuiVRHelperPluginAPI::InputDeviceType>(packed >> 16),
+								packed & 0xFFFFu);
+						}
+					}
+				}
+			};
+			readCombos("openMenuKeys", s.openMenuKeys);
+			readCombos("closeMenuKeys", s.closeMenuKeys);
 		}
 
 		// Build TOML by hand so we can include section headers and
@@ -129,6 +148,20 @@ namespace ImGuiVRHelper::Overlay
 				<< "# below ~0.5m — most VR lenses can't focus closer than that.\n"
 				<< "hudDepth = " << s.hudDepth << "  # meters\n"
 				<< "hudCoverage = " << s.hudCoverage << "  # 0.5-1.0 fraction of the view\n";
+
+			auto combosToToml = [](const std::vector<ImGuiVRHelperPluginAPI::InputCombo>& v) {
+				std::string r = "[";
+				for (std::size_t i = 0; i < v.size(); ++i) {
+					if (i)
+						r += ", ";
+					r += std::to_string(v[i].Packed());
+				}
+				return r + "]";
+			};
+			out << "\n# Controller combos for opening / closing the active overlay.\n"
+				<< "# Packed values (device << 16 | key); rebind in-headset rather than by hand.\n"
+				<< "openMenuKeys = " << combosToToml(s.openMenuKeys) << "\n"
+				<< "closeMenuKeys = " << combosToToml(s.closeMenuKeys) << "\n";
 			return out.str();
 		}
 

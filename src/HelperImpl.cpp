@@ -28,6 +28,57 @@
 
 namespace
 {
+	// on_rebind for the helper-owned open/close combos: persist the new chord to
+	// settings so a rebind survives a restart.
+	void PersistOpenMenuKeys(const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n, void*)
+	{
+		ImGuiVRHelper::Overlay::State::GetSingleton().settings.openMenuKeys.assign(keys, keys + n);
+		ImGuiVRHelper::Overlay::SaveSettings();
+	}
+	void PersistCloseMenuKeys(const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n, void*)
+	{
+		ImGuiVRHelper::Overlay::State::GetSingleton().settings.closeMenuKeys.assign(keys, keys + n);
+		ImGuiVRHelper::Overlay::SaveSettings();
+	}
+
+	// One-line, user-facing description of a combo for the welcome banner
+	// ("A/X + B/Y", "both Grip").
+	std::string FormatCombo(const std::vector<ImGuiVRHelperPluginAPI::InputCombo>& keys)
+	{
+		namespace API = ImGuiVRHelperPluginAPI;
+		auto keyName = [](uint32_t k) -> const char* {
+			switch (k) {
+			case 1:
+				return "B/Y";
+			case 2:
+				return "Grip";
+			case 7:
+				return "A/X";
+			case 32:
+				return "Stick";
+			case 33:
+				return "Trigger";
+			case 34:
+				return "Grip";
+			case 35:
+				return "Touchpad";
+			default:
+				return "?";
+			}
+		};
+		if (keys.empty())
+			return "(unbound)";
+		std::string r;
+		for (std::size_t i = 0; i < keys.size(); ++i) {
+			if (i)
+				r += " + ";
+			if (keys[i].GetDevice() == API::InputDeviceType::Both)
+				r += "both ";
+			r += keyName(keys[i].GetKey());
+		}
+		return r;
+	}
+
 	/// Returns true iff every key in the combo is currently held on the
 	/// expected device. Mirrors SCS's CheckCombo lambda: reads the live
 	/// per-controller state from Overlay::State, indexed by RE button key
@@ -649,6 +700,20 @@ namespace ImGuiVRHelper
 			nullptr,
 			ImGuiVRHelperPluginAPI::kClientFlag_HUDMode);
 
+		// Take over open/close of the active overlay: the helper owns these
+		// combos (registered on the self-client) so the welcome banner can
+		// document them and activation is consistent across clients. Keys load
+		// from settings; rebinds persist via their on_rebind.
+		{
+			const auto& s = Overlay::State::GetSingleton().settings;
+			if (!s.openMenuKeys.empty())
+				m_open_menu_combo = RegisterCombo(m_self_client_id, s.openMenuKeys.data(),
+					s.openMenuKeys.size(), 0.0f, "Open menu", &PersistOpenMenuKeys, nullptr);
+			if (!s.closeMenuKeys.empty())
+				m_close_menu_combo = RegisterCombo(m_self_client_id, s.closeMenuKeys.data(),
+					s.closeMenuKeys.size(), 0.0f, "Close menu", &PersistCloseMenuKeys, nullptr);
+		}
+
 		// No default controller toggle combo. SCS already binds many of
 		// the obvious face/grip combinations for its own menu, and every
 		// auto-default we've tried has bumped into a SCS or main-menu
@@ -684,6 +749,10 @@ namespace ImGuiVRHelper
 		std::scoped_lock lk{ m_mutex };
 		if (m_clients.contains(client_id)) {
 			m_focused_client = client_id;
+			// Remember the last client overlay so the open combo can reopen it.
+			// The helper's own settings UI has its own toggle, so it's excluded.
+			if (client_id != m_self_client_id)
+				m_lastOpenedOverlay = client_id;
 		}
 	}
 
@@ -693,6 +762,21 @@ namespace ImGuiVRHelper
 		if (m_focused_client == client_id) {
 			m_focused_client = 0;
 		}
+	}
+
+	uint32_t HelperImpl::PickOpenTarget()
+	{
+		{
+			std::scoped_lock lk{ m_mutex };
+			if (m_lastOpenedOverlay != 0 && m_clients.contains(m_lastOpenedOverlay))
+				return m_lastOpenedOverlay;
+		}
+		// Cold start / stale last-opened: first non-helper overlay in cycle order.
+		for (const auto& [id, name] : BuildOverlayOrder()) {
+			if (id != m_self_client_id)
+				return id;
+		}
+		return 0;
 	}
 
 	void HelperImpl::TriggerHaptic(uint32_t /*client_id*/, uint32_t haptic_token,
@@ -819,6 +903,26 @@ namespace ImGuiVRHelper
 					SettingsUI::IsVisible() ? "VISIBLE" : "hidden");
 			} else {
 				logs::info("Controller toggle combo ignored: game not paused");
+			}
+		}
+
+		// Helper-owned open/close of the active overlay (activation taken over
+		// from clients). Open focuses the last-opened overlay (or the first mod
+		// overlay) when nothing is up — pause-gated like the toggle; close
+		// releases focus. Switching between open overlays is the cycle shortcut's
+		// job, so open is a no-op while one is already focused.
+		if (m_open_menu_combo != 0 && ComboFired(m_open_menu_combo)) {
+			if (m_focused_client == 0 && OverlayOpenAllowed(0)) {
+				if (const uint32_t target = PickOpenTarget(); target != 0) {
+					RequestFocus(target);
+					logs::info("Open-menu combo: focusing overlay {}", target);
+				}
+			}
+		}
+		if (m_close_menu_combo != 0 && ComboFired(m_close_menu_combo)) {
+			if (m_focused_client != 0) {
+				logs::info("Close-menu combo: releasing overlay {}", m_focused_client);
+				ReleaseFocus(m_focused_client);
 			}
 		}
 
@@ -1110,9 +1214,6 @@ namespace ImGuiVRHelper
 		// the toast HUD renderer, into its own always-on HUD-mode panel.
 		constexpr float kWelcomeDurationSeconds = 30.0f;
 		constexpr float kWelcomeFadeSeconds = 1.0f;
-		static constexpr const char* kWelcomeBannerText =
-			"ImGuiVRHelper ready\n"
-			"Open settings: Shift+F4    Cycle overlays: stick-click (aim off the panel)";
 		if (!overlayState.settings.showWelcome || m_enteredGame)
 			m_welcomeDismissed = true;
 		if (!m_welcomeDismissed) {
@@ -1133,9 +1234,16 @@ namespace ImGuiVRHelper
 						const float alpha = m_welcomeRemaining >= kWelcomeFadeSeconds ?
 						                        1.0f :
 						                        m_welcomeRemaining / kWelcomeFadeSeconds;
+						// Built from the live open combo so it documents exactly how
+						// to open the menu (like CS's welcome did).
+						const std::string welcomeText =
+							"ImGuiVRHelper ready\n"
+							"Open menu: " +
+							FormatCombo(overlayState.settings.openMenuKeys) +
+							"    Settings: Shift+F4";
 						// Lower + smaller than the swap toast: it's a multi-line
 						// info banner, not a quick name flash.
-						ToastHUD::Render(handle.rtv, kWelcomeBannerText, alpha, 0.18f, 1.2f);
+						ToastHUD::Render(handle.rtv, welcomeText, alpha, 0.18f, 1.2f);
 					} else {
 						ToastHUD::ClearToTransparent(handle.rtv);
 					}
