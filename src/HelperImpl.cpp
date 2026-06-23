@@ -1216,7 +1216,7 @@ namespace ImGuiVRHelper
 			ImGuiVRHelperPluginAPI::PanelHandle handle{};
 			if (GetPanel(m_hud_demo_client_id, &handle) && handle.rtv) {
 				if (demoOn) {
-					HUDDemo::Render(handle.rtv);
+					HUDDemo::Render(handle.rtv, handle.width, handle.height);
 				} else {
 					HUDDemo::ClearToTransparent(handle.rtv);
 				}

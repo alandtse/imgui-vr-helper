@@ -43,7 +43,6 @@ namespace ImGuiVRHelper::HUDDemo
 			ImGuiIO& io = ImGui::GetIO();
 			io.IniFilename = nullptr;  // demo doesn't persist any state
 			io.LogFilename = nullptr;
-			io.DisplaySize = ImVec2(kPanelWidth, kPanelHeight);
 			ImGui::GetStyle().ScaleAllSizes(2.0f);
 			io.FontGlobalScale = 1.5f;
 		}
@@ -62,7 +61,7 @@ namespace ImGuiVRHelper::HUDDemo
 		return true;
 	}
 
-	void Render(ID3D11RenderTargetView* rtv)
+	void Render(ID3D11RenderTargetView* rtv, unsigned int panelWidth, unsigned int panelHeight)
 	{
 		if (!rtv)
 			return;
@@ -74,6 +73,17 @@ namespace ImGuiVRHelper::HUDDemo
 
 		ImGuiIO& io = ImGui::GetIO();
 		io.DeltaTime = 1.0f / 60.0f;  // demo content is static; dt only matters for animation
+
+		// Grid is laid out in the logical base resolution; DisplayFramebufferScale
+		// stretches it to fill the (possibly supersampled) panel — same high-DPI
+		// setup as the other HUD layers, so the grid spans the whole view.
+		const auto& s = Overlay::State::GetSingleton().settings;
+		const float baseW = s.baseWidth > 0 ? static_cast<float>(s.baseWidth) : kPanelWidth;
+		const float baseH = s.baseHeight > 0 ? static_cast<float>(s.baseHeight) : kPanelHeight;
+		io.DisplaySize = ImVec2(baseW, baseH);
+		if (panelWidth && panelHeight && baseW > 0.0f && baseH > 0.0f)
+			io.DisplayFramebufferScale =
+				ImVec2(static_cast<float>(panelWidth) / baseW, static_cast<float>(panelHeight) / baseH);
 
 		ImGui_ImplDX11_NewFrame();
 		ImGui::NewFrame();
@@ -142,7 +152,8 @@ namespace ImGuiVRHelper::HUDDemo
 		dl->AddLine(ImVec2(ctr.x - 40, ctr.y), ImVec2(ctr.x + 40, ctr.y), colCenter, 2.0f);
 		dl->AddLine(ImVec2(ctr.x, ctr.y - 40), ImVec2(ctr.x, ctr.y + 40), colCenter, 2.0f);
 		dl->AddCircleFilled(ctr, 6.0f, colCenter);
-		dl->AddText(ImVec2(ctr.x + 12, ctr.y - 24), colCenter, "(960, 540)");
+		std::snprintf(label, sizeof(label), "(%d, %d)", static_cast<int>(ctr.x), static_cast<int>(ctr.y));
+		dl->AddText(ImVec2(ctr.x + 12, ctr.y - 24), colCenter, label);
 
 		// Resolution + scale info window in the upper-left, kept small
 		// so it doesn't dominate the calibration view. NoBackground +

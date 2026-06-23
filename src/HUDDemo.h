@@ -21,11 +21,11 @@ namespace ImGuiVRHelper::HUDDemo
 	/// Returns false if D3D isn't ready yet. Idempotent.
 	bool EnsureInitialized();
 
-	/// Render the demo content into `rtv` and clear the rest to
-	/// transparent. Must be called when Settings::showHUDDemo is on
-	/// (HelperImpl::DispatchFrame's job to gate). Saves and restores
-	/// the current ImGui context + the bound D3D11 RTV.
-	void Render(ID3D11RenderTargetView* rtv);
+	/// Render the demo content into `rtv` (the panel's real pixel size is
+	/// `panelWidth`x`panelHeight`, which may be supersampled). Must be called
+	/// when Settings::showHUDDemo is on (HelperImpl::DispatchFrame's job to
+	/// gate). Saves and restores the current ImGui context + the bound RTV.
+	void Render(ID3D11RenderTargetView* rtv, unsigned int panelWidth, unsigned int panelHeight);
 
 	/// Falling-edge cleanup: clear `rtv` to transparent {0,0,0,0} so
 	/// the previous frame's demo pixels don't keep getting composited
