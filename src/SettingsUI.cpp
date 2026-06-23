@@ -562,6 +562,14 @@ namespace ImGuiVRHelper::SettingsUI
 							HelperImpl::GetSingleton().RebindCombo(
 								static_cast<API::ComboId>(reinterpret_cast<uintptr_t>(user)), keys, n); }, reinterpret_cast<void*>(static_cast<uintptr_t>(c.combo_id)), 5.0f);
 				}
+				// Clear (unbind). Reset isn't offered here — the helper doesn't
+				// know a client's factory defaults; clients expose Reset via their
+				// own bindings table (the SDK's DrawBindingsTable).
+				if (!c.keys.empty()) {
+					ImGui::SameLine();
+					if (ImGui::SmallButton("Clear"))
+						HelperImpl::GetSingleton().RebindCombo(c.combo_id, nullptr, 0);
+				}
 				ImGui::PopID();
 			}
 			ImGui::Spacing();

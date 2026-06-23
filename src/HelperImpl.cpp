@@ -328,7 +328,10 @@ namespace ImGuiVRHelper
 	void HelperImpl::RebindCombo(ImGuiVRHelperPluginAPI::ComboId combo,
 		const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n)
 	{
-		if (!keys || n == 0 || n > 8)
+		// n == 0 clears the binding (unbind) — keys may be null. A non-empty
+		// rebind needs valid keys and a sane chord length. The matcher already
+		// treats an empty key set as never-fires, so a cleared combo is inert.
+		if (n > 8 || (n > 0 && !keys))
 			return;
 		ImGuiVRHelperPluginAPI::ComboRebindFn cb = nullptr;
 		void* user = nullptr;
