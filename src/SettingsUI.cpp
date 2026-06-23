@@ -15,6 +15,7 @@
 #include "Theme.h"
 #include "WandPointing.h"
 
+#include <RE/B/BSOpenVR.h>
 #include <algorithm>
 #include <chrono>
 #include <dxgi.h>
@@ -670,10 +671,19 @@ namespace ImGuiVRHelper::SettingsUI
 				const auto& vrInfo = VRDetection::LastResult();
 				ImGui::TextDisabled("OpenVR runtime");
 				if (vrInfo.isAvailable) {
-					if (vrInfo.isCompatible)
+					// Interface availability is queried live from the game's
+					// BSOpenVR: the startup probe runs at kPostPostLoad, before VR
+					// is up, so it always reported "missing". Fetching the cached
+					// interface pointers is render-thread-safe — only calling into
+					// them off the input thread is not. IVROverlay is omitted: it's
+					// context-bound and unused by the in-scene/HUD path.
+					auto* openvr = RE::BSOpenVR::GetSingleton();
+					const bool sysOk = openvr && RE::BSOpenVR::GetIVRSystem() != nullptr;
+					const bool compOk = openvr && RE::BSOpenVR::GetIVRCompositor() != nullptr;
+					if (sysOk && compOk)
 						ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Active & compatible");
 					else
-						ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f), "Active but incompatible");
+						ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f), "Detected; interfaces not ready");
 					ImGui::Text("Runtime: %s", VRDetection::RuntimeTypeToString(vrInfo.runtimeType));
 					if (!vrInfo.dllPath.empty())
 						ImGui::Text("DLL: %s", vrInfo.dllPath.c_str());
@@ -681,11 +691,8 @@ namespace ImGuiVRHelper::SettingsUI
 						vrInfo.version.c_str(), static_cast<unsigned long long>(vrInfo.fileSize));
 					if (!vrInfo.modificationTime.empty())
 						ImGui::Text("Modified: %s", vrInfo.modificationTime.c_str());
-					ImGui::Text("Interfaces:  System %s   Overlay %s   Compositor %s",
-						vrInfo.hasSystemInterface ? "OK" : "missing",
-						vrInfo.hasOverlayInterface ? "OK" : "missing",
-						vrInfo.hasCompositorInterface ? "OK" : "missing");
-					ImGui::Text("Interface probing: %s", vrInfo.probingSucceeded ? "passed" : "failed");
+					ImGui::Text("Interfaces:  System %s   Compositor %s",
+						sysOk ? "OK" : "missing", compOk ? "OK" : "missing");
 				} else {
 					ImGui::TextDisabled("OpenVR not available");
 				}
