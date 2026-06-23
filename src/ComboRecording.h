@@ -2,11 +2,13 @@
 // Copyright (c) 2025 ImGuiVRHelper contributors. See COPYING and EXCEPTIONS.md.
 //
 // Combo recording: implements the public StartComboRecording API. While
-// recording is active, the helper presents a modal "press buttons now"
-// overlay (rendered via SettingsUI's ImGui context) and accumulates the
-// next set of pressed VR buttons into an InputCombo sequence. When the
-// user releases all buttons, the callback fires with the captured combo.
-// Timeout fires the callback with an empty result.
+// recording is active, the helper presents a distinct "rebind" capture
+// overlay — rendered in its own ImGui context into a dedicated panel and
+// composited as a layer ON TOP of the focused client (so the client's menu
+// stays put behind it, rather than swapping focus to the helper) — and
+// accumulates the next set of pressed VR buttons into an InputCombo
+// sequence. When the user releases all buttons, the callback fires with the
+// captured combo. Timeout fires the callback with an empty result.
 
 #pragma once
 
@@ -14,6 +16,8 @@
 
 #include <cstddef>
 #include <cstdint>
+
+struct ID3D11RenderTargetView;
 
 namespace ImGuiVRHelper::ComboRecording
 {
@@ -38,8 +42,13 @@ namespace ImGuiVRHelper::ComboRecording
 	/// timeout). Call from DispatchFrame before client OnFrame loop.
 	void Tick(float dt);
 
-	/// Draw the modal recording overlay using the current ImGui context.
-	/// Caller must SetCurrentContext + NewFrame first; this just emits
-	/// ImGui draw calls into that context's frame.
-	void RenderModal();
+	/// Render the rebind capture overlay into `rtv` using a dedicated,
+	/// non-interactive ImGui context (own font atlas + DX11 backend, like
+	/// ToastHUD). The helper composites this panel on top of the focused
+	/// client. No-op if not active. Call once per frame while IsActive().
+	void RenderToPanel(ID3D11RenderTargetView* rtv);
+
+	/// Clear `rtv` to transparent — call once on the active→inactive edge so
+	/// the last captured frame stops compositing.
+	void ClearToTransparent(ID3D11RenderTargetView* rtv);
 }

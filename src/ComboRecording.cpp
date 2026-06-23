@@ -5,7 +5,9 @@
 
 #include "ComboRecording.h"
 
+#include "Globals.h"
 #include "Overlay.h"
+#include "Theme.h"
 
 #include <RE/B/BSOpenVRControllerDevice.h>
 
@@ -19,6 +21,48 @@ namespace ImGuiVRHelper::ComboRecording
 	{
 		namespace API = ImGuiVRHelperPluginAPI;
 		using Keys = RE::BSOpenVRControllerDevice::Keys;
+
+		// Dedicated, non-interactive ImGui context (own font atlas + DX11 backend,
+		// per-context in imgui 1.92) so the capture overlay never touches the menu
+		// contexts. Mirrors ToastHUD — the helper composites this panel on top of
+		// the focused client in a dedicated pass.
+		ImGuiContext* g_renderCtx = nullptr;
+		bool g_dx11Inited = false;
+
+		constexpr float kPanelWidth = static_cast<float>(Overlay::Config::kOverlayWidth);
+		constexpr float kPanelHeight = static_cast<float>(Overlay::Config::kOverlayHeight);
+
+		bool EnsureRenderInitialized()
+		{
+			if (g_renderCtx && g_dx11Inited)
+				return true;
+			if (!Globals::IsReady())
+				return false;
+
+			if (!g_renderCtx) {
+				IMGUI_CHECKVERSION();
+				g_renderCtx = ImGui::CreateContext();
+				ImGui::SetCurrentContext(g_renderCtx);
+				ImGuiIO& io = ImGui::GetIO();
+				io.IniFilename = nullptr;
+				io.LogFilename = nullptr;
+				io.DisplaySize = ImVec2(kPanelWidth, kPanelHeight);
+				Theme::Apply(ImGui::GetStyle());
+				ImGui::GetStyle().ScaleAllSizes(2.0f);
+				io.FontGlobalScale = 1.5f;
+			}
+
+			if (!g_dx11Inited) {
+				ImGui::SetCurrentContext(g_renderCtx);
+				auto& d3d = Globals::GetD3D();
+				if (!ImGui_ImplDX11_Init(d3d.device, d3d.context)) {
+					logs::error("ComboRecording: ImGui_ImplDX11_Init failed");
+					return false;
+				}
+				g_dx11Inited = true;
+			}
+			return true;
+		}
 
 		struct State
 		{
@@ -234,27 +278,29 @@ namespace ImGuiVRHelper::ComboRecording
 		}
 	}
 
-	void RenderModal()
+	// Emit the dialog contents into the current frame of the dedicated context.
+	static void DrawDialog()
 	{
-		if (!g_state.active)
-			return;
+		ImGuiIO& io = ImGui::GetIO();
 
-		const auto& io = ImGui::GetIO();
-		const ImVec2 center(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
-		ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+		// Dim the whole panel behind the dialog (composited over the focused
+		// client, so this reads as a standard modal scrim).
+		ImGui::GetBackgroundDrawList()->AddRectFilled(
+			ImVec2(0, 0), io.DisplaySize, IM_COL32(0, 0, 0, 150));
+
+		const ImVec4 accent(1.0f, 0.78f, 0.20f, 1.0f);  // gold
+		ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+			ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 		ImGui::SetNextWindowSize(ImVec2(640, 0), ImGuiCond_Always);
-
-		// Distinct rebind dialog: gold accent border + heading so it can't be
-		// mistaken for the normal settings menu when it takes over the panel.
-		const ImVec4 accent(1.0f, 0.78f, 0.20f, 1.0f);
 		ImGui::PushStyleColor(ImGuiCol_Border, accent);
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 3.0f);
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24, 20));
 
-		ImGui::OpenPopup("##ComboRecordingModal");
-		if (ImGui::BeginPopupModal("##ComboRecordingModal", nullptr,
-				ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-					ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize)) {
+		constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
+		                                   ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+		                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav |
+		                                   ImGuiWindowFlags_NoInputs;
+		if (ImGui::Begin("##RebindCapture", nullptr, flags)) {
 			ImGui::PushStyleColor(ImGuiCol_Text, accent);
 			ImGui::SetWindowFontScale(1.6f);
 			ImGui::TextUnformatted("REBIND");
@@ -268,7 +314,7 @@ namespace ImGuiVRHelper::ComboRecording
 			ImGui::Separator();
 			ImGui::Spacing();
 
-			ImGui::TextWrapped("Hold the new button combo on your controller, then release to confirm.");
+			ImGui::TextWrapped("Hold the new button combo, then release to confirm. Press nothing to keep the current binding.");
 			ImGui::Spacing();
 
 			// Countdown bar.
@@ -300,21 +346,52 @@ namespace ImGuiVRHelper::ComboRecording
 				}
 			}
 			ImGui::SetWindowFontScale(1.0f);
-
-			ImGui::Spacing();
-			ImGui::Separator();
-			if (ImGui::Button("Cancel", ImVec2(140, 40))) {
-				Finish(false);
-			}
-			ImGui::SameLine();
-			if (ImGui::Button("Accept", ImVec2(140, 40))) {
-				Finish(true);
-			}
-
-			ImGui::EndPopup();
 		}
+		ImGui::End();
 
 		ImGui::PopStyleVar(2);
 		ImGui::PopStyleColor(1);
+	}
+
+	void RenderToPanel(ID3D11RenderTargetView* rtv)
+	{
+		if (!g_state.active || !rtv)
+			return;
+		if (!EnsureRenderInitialized())
+			return;
+
+		ImGuiContext* prev = ImGui::GetCurrentContext();
+		ImGui::SetCurrentContext(g_renderCtx);
+
+		ImGui::GetIO().DeltaTime = 1.0f / 60.0f;  // animation-free; dt unused
+		ImGui_ImplDX11_NewFrame();
+		ImGui::NewFrame();
+		DrawDialog();
+		ImGui::Render();
+
+		auto* ctx = Globals::GetD3D().context;
+		ID3D11RenderTargetView* oldRTV = nullptr;
+		ID3D11DepthStencilView* oldDSV = nullptr;
+		ctx->OMGetRenderTargets(1, &oldRTV, &oldDSV);
+		const float clear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		ctx->OMSetRenderTargets(1, &rtv, nullptr);
+		ctx->ClearRenderTargetView(rtv, clear);
+		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+		ctx->OMSetRenderTargets(1, &oldRTV, oldDSV);
+		if (oldRTV)
+			oldRTV->Release();
+		if (oldDSV)
+			oldDSV->Release();
+
+		if (prev != g_renderCtx)
+			ImGui::SetCurrentContext(prev);
+	}
+
+	void ClearToTransparent(ID3D11RenderTargetView* rtv)
+	{
+		if (!rtv || !Globals::IsReady())
+			return;
+		const float clear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		Globals::GetD3D().context->ClearRenderTargetView(rtv, clear);
 	}
 }

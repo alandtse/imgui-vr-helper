@@ -997,10 +997,11 @@ namespace ImGuiVRHelper::SettingsUI
 	{
 		if (!g_ctx)
 			return false;
-		// Render whenever the settings window is up (toggled or
-		// dashboard-forced) or the combo recording modal is active.
-		// The modal can fire from any client at any time.
-		if (!g_visible && !g_forceVisible && !ComboRecording::IsActive())
+		// Render whenever the settings window is up (toggled or dashboard-forced).
+		// The rebind capture overlay renders independently — ComboRecording owns
+		// its own context + panel and composites over the focused client — so it
+		// no longer forces this UI to render.
+		if (!g_visible && !g_forceVisible)
 			return false;
 
 		ImGui::SetCurrentContext(g_ctx);
@@ -1204,7 +1205,6 @@ namespace ImGuiVRHelper::SettingsUI
 		if (g_visible || g_forceVisible) {
 			RenderWindow();
 		}
-		ComboRecording::RenderModal();
 		ImGui::Render();
 		return true;
 	}

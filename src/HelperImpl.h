@@ -66,6 +66,11 @@ namespace ImGuiVRHelper
 		/// compositing pass.
 		ID3D11Texture2D* GetClientPanelTexture(uint32_t client_id);
 
+		/// Texture for the combo-rebind capture overlay while a recording is
+		/// active (else nullptr). InSceneOverlay composites it in a dedicated
+		/// pass on top of the focused client so the capture reads as a modal.
+		ID3D11Texture2D* GetActiveRebindTexture();
+
 		/// Snapshot of all currently-registered HUD-mode clients
 		/// (kClientFlag_HUDMode set in their flags), returned as
 		/// (client_id, panel_texture) pairs. Both fields filled — the
@@ -227,6 +232,13 @@ namespace ImGuiVRHelper
 		std::string m_toastText;
 		float m_toastRemaining = 0.0f;     ///< seconds left on the toast; counts down by dt
 		uint32_t m_lastFocusForToast = 0;  ///< last focused id, to detect swaps
+
+		/// Panel for the combo-rebind capture overlay. Registered HUD-mode so
+		/// it's excluded from cycling, but skipped by SnapshotHUDClients — it
+		/// renders in its own InSceneOverlay pass ON TOP of the focused client
+		/// (not the head-locked HUD pass), so the client's menu stays behind it.
+		uint32_t m_rebind_client_id = 0;
+		bool m_rebindWasActive = false;  ///< for the active→inactive clear-once
 
 		// Startup welcome banner (HUD-mode). Shows once at launch, then
 		// dismisses after a timeout, on entering the game, or if disabled.

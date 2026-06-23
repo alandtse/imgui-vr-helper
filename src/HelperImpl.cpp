@@ -398,6 +398,13 @@ namespace ImGuiVRHelper
 		return it->second.texture.get();
 	}
 
+	ID3D11Texture2D* HelperImpl::GetActiveRebindTexture()
+	{
+		if (m_rebind_client_id == 0 || !ComboRecording::IsActive())
+			return nullptr;
+		return GetClientPanelTexture(m_rebind_client_id);
+	}
+
 	void HelperImpl::SetHudForceDisabled(uint32_t client_id, bool disabled)
 	{
 		std::scoped_lock lk{ m_mutex };
@@ -502,6 +509,8 @@ namespace ImGuiVRHelper
 		for (auto& [id, rec] : m_clients) {
 			if ((rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_HUDMode) == 0)
 				continue;
+			if (id == m_rebind_client_id)
+				continue;  // rebind overlay draws in its own on-top pass, not the HUD pass
 			if (rec.hudForceDisabled)
 				continue;  // debug: layer hidden to isolate others
 			if (rec.lastPanelFrame == 0 || (m_frameCounter - rec.lastPanelFrame) > kHudIdleFrames)
@@ -621,6 +630,17 @@ namespace ImGuiVRHelper
 		// HUD-mode client for the startup welcome banner (see m_welcome*).
 		m_welcome_client_id = RegisterClient(
 			"ImGuiVRHelper.Welcome",
+			nullptr,
+			+[](const ImGuiVRHelperPluginAPI::Frame*, void*) { /* no-op */ },
+			nullptr,
+			ImGuiVRHelperPluginAPI::kClientFlag_HUDMode);
+
+		// Panel for the combo-rebind capture overlay. HUD-mode keeps it out of
+		// the cycle order; SnapshotHUDClients skips it so it isn't drawn in the
+		// head-locked HUD pass — InSceneOverlay composites it on top of the
+		// focused client instead (so the capture reads as a modal over the menu).
+		m_rebind_client_id = RegisterClient(
+			"ImGuiVRHelper.Rebind",
 			nullptr,
 			+[](const ImGuiVRHelperPluginAPI::Frame*, void*) { /* no-op */ },
 			nullptr,
@@ -820,7 +840,10 @@ namespace ImGuiVRHelper
 				logs::info("Client {} took focus; self-UI auto-closed (yielded)", m_focused_client);
 			}
 
-			const bool selfActive = SettingsUI::IsVisible() || ComboRecording::IsActive();
+			// Recording no longer forces self-focus: the rebind capture renders as
+			// an on-top overlay over whatever client is focused, so focus stays
+			// with the client (or the helper menu) that started the rebind.
+			const bool selfActive = SettingsUI::IsVisible();
 			if (selfActive) {
 				if (m_focused_client != m_self_client_id) {
 					RequestFocus(m_self_client_id);
@@ -970,6 +993,11 @@ namespace ImGuiVRHelper
 			}
 		}
 
+		// While capturing a rebind, the overlay is modal: swallow controller
+		// input from clients so the focused client doesn't also act on the
+		// combo the user is pressing to record it.
+		const bool recording = ComboRecording::IsActive();
+
 		for (const auto& sn : snapshot) {
 			ImGuiVRHelperPluginAPI::Frame perClient = baseFrame;
 			if (sn.id == focused) {
@@ -979,6 +1007,14 @@ namespace ImGuiVRHelper
 				}
 			} else {
 				perClient.flags &= ~((1u << 0) | (1u << 2));
+			}
+
+			if (recording) {
+				for (auto* h : { &perClient.left, &perClient.right }) {
+					h->buttons_held = h->buttons_pressed = h->buttons_released = h->buttons_touched = 0;
+					h->trigger = h->grip = 0.0f;
+					h->stick_x = h->stick_y = h->pad_x = h->pad_y = 0.0f;
+				}
 			}
 
 			if (sn.on_frame) {
@@ -1103,6 +1139,24 @@ namespace ImGuiVRHelper
 				}
 			}
 			m_welcomeWasShown = show;
+		}
+
+		// Combo-rebind capture overlay. Render into its panel while a recording
+		// is active so InSceneOverlay can composite it on top of the focused
+		// client; clear once on the active→inactive edge so it stops drawing.
+		if (m_rebind_client_id != 0) {
+			const bool active = ComboRecording::IsActive();
+			if (active || m_rebindWasActive) {
+				ImGuiVRHelperPluginAPI::PanelHandle handle{};
+				if (GetPanel(m_rebind_client_id, &handle) && handle.rtv) {
+					if (active) {
+						ComboRecording::RenderToPanel(handle.rtv);
+					} else {
+						ComboRecording::ClearToTransparent(handle.rtv);
+					}
+				}
+			}
+			m_rebindWasActive = active;
 		}
 
 		// Keep overlayVisible in sync so OverlayDrag::CanPerform sees it next frame.

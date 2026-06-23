@@ -633,6 +633,38 @@ float4 main(PS_INPUT input) : SV_TARGET
 		}
 	}
 
+	// Reserved HUD-SRV cache key for the single rebind-capture texture (it's
+	// not in the HUD client list, so it needs its own slot).
+	constexpr uint32_t kRebindSRVKey = 0xFFFFFFFEu;
+
+	// Rebind pass: the combo-capture overlay, drawn as a head-locked panel like
+	// the HUD pass but AFTER the focused panel pass so it composites ON TOP of
+	// the focused client (depth test is off → draw order decides). No-op unless
+	// a recording is active.
+	void RenderRebindPass(ID3D11DeviceContext* ctx, const EyeMatrices& matrices,
+		const Overlay::Settings& s)
+	{
+		auto* tex = HelperImpl::GetSingleton().GetActiveRebindTexture();
+		if (!tex)
+			return;
+		auto* srv = GetOrCreateHUDSRV(kRebindSRVKey, tex);
+		if (!srv)
+			return;
+
+		const float hudDepth = std::max(0.3f, s.hudDepth);
+		const float coverage = std::clamp(s.hudCoverage, 0.5f, 1.0f);
+		float projL[4], projR[4];
+		Util::CachedProjectionRaw(vr::Eye_Left, projL[0], projL[1], projL[2], projL[3]);
+		Util::CachedProjectionRaw(vr::Eye_Right, projR[0], projR[1], projR[2], projR[3]);
+		const HUDQuad q = ComputeHUDQuad(projL, projR, hudDepth, coverage);
+
+		const Matrix model = Matrix::CreateScale(q.width, q.height, 1.0f) *
+		                     Matrix::CreateTranslation(0.0f, q.centerY, -hudDepth);
+		ConstantBufferData cb;
+		cb.wvp = (model * matrices.vpHeadSpace).Transpose();
+		DrawQuad(ctx, cb, srv);
+	}
+
 	// Panel pass: the focused panel-mode client as a 3D quad, attached to the
 	// HMD and/or the controller per the user's attachMode.
 	void RenderPanelPass(ID3D11DeviceContext* ctx, vr::EVREye eye,
@@ -804,6 +836,9 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		if (wantPanelPass)
 			RenderPanelPass(ctx, eye, matrices, s, overlayState, panelSRV);
+
+		// Drawn last so the rebind capture composites on top of the focused menu.
+		RenderRebindPass(ctx, matrices, s);
 
 		backup.Restore(ctx);
 	}
