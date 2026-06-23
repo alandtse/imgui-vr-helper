@@ -118,7 +118,7 @@ namespace ImGuiVRHelper::ToastHUD
 	}
 
 	void RenderWelcome(ID3D11RenderTargetView* rtv, float alpha,
-		const std::vector<ImGuiVRHelperPluginAPI::InputCombo>& openKeys)
+		const std::vector<ImGuiVRHelperPluginAPI::InputCombo>& openKeys, bool pauseHint)
 	{
 		if (!rtv)
 			return;
@@ -183,6 +183,8 @@ namespace ImGuiVRHelper::ToastHUD
 						keyName(openKeys[i].GetKey()));
 				}
 			}
+			if (pauseHint)
+				ImGui::TextDisabled("Opens while the game is paused (in a menu).");
 			ImGui::TextDisabled("Settings: Shift+F4");
 		}
 		ImGui::End();

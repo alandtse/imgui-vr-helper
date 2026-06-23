@@ -29,9 +29,10 @@ namespace ImGuiVRHelper::ToastHUD
 
 	/// Render the startup welcome banner into `rtv` at `alpha`: a title line plus
 	/// "Open menu:" followed by `openKeys` color-coded per controller (matching
-	/// the controller map), then the Shift+F4 hint. Lazily creates the context.
+	/// the controller map), then the Shift+F4 hint. When `pauseHint` is set, also
+	/// notes the menu only opens while the game is paused. Lazily creates context.
 	void RenderWelcome(ID3D11RenderTargetView* rtv, float alpha,
-		const std::vector<ImGuiVRHelperPluginAPI::InputCombo>& openKeys);
+		const std::vector<ImGuiVRHelperPluginAPI::InputCombo>& openKeys, bool pauseHint);
 
 	/// Clear the panel to transparent (toast expired) so the HUD pass stops
 	/// compositing the last frame's pixels.

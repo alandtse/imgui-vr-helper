@@ -1088,10 +1088,18 @@ namespace ImGuiVRHelper
 			}
 		}
 
-		// While capturing a rebind, the overlay is modal: swallow controller
-		// input from clients so the focused client doesn't also act on the
-		// combo the user is pressing to record it.
+		// While capturing a rebind, the overlay is modal: swallow controller input
+		// from clients so the focused client doesn't act on the combo the user is
+		// pressing. Keep masking after capture ends until every button releases —
+		// otherwise keys still held from the capture leak in as menu clicks.
 		const bool recording = ComboRecording::IsActive();
+		if (m_prevRecording && !recording)
+			m_inputSettling = true;
+		m_prevRecording = recording;
+		if (m_inputSettling &&
+			(baseFrame.left.buttons_held | baseFrame.right.buttons_held) == 0)
+			m_inputSettling = false;
+		const bool maskInput = recording || m_inputSettling;
 
 		for (const auto& sn : snapshot) {
 			ImGuiVRHelperPluginAPI::Frame perClient = baseFrame;
@@ -1104,7 +1112,7 @@ namespace ImGuiVRHelper
 				perClient.flags &= ~((1u << 0) | (1u << 2));
 			}
 
-			if (recording) {
+			if (maskInput) {
 				for (auto* h : { &perClient.left, &perClient.right }) {
 					h->buttons_held = h->buttons_pressed = h->buttons_released = h->buttons_touched = 0;
 					h->trigger = h->grip = 0.0f;
@@ -1223,8 +1231,10 @@ namespace ImGuiVRHelper
 						                        1.0f :
 						                        m_welcomeRemaining / kWelcomeFadeSeconds;
 						// Color-coded per-controller open combo so the banner shows
-						// exactly how to open the menu (like CS's welcome did).
-						ToastHUD::RenderWelcome(handle.rtv, alpha, overlayState.settings.openMenuKeys);
+						// exactly how to open the menu (like CS's welcome did), plus
+						// the pause-to-open hint when that gate is on.
+						ToastHUD::RenderWelcome(handle.rtv, alpha, overlayState.settings.openMenuKeys,
+							overlayState.settings.onlyOpenWhilePaused);
 					} else {
 						ToastHUD::ClearToTransparent(handle.rtv);
 					}

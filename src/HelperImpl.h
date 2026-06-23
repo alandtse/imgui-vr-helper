@@ -261,6 +261,11 @@ namespace ImGuiVRHelper
 		uint32_t m_rebind_client_id = 0;
 		bool m_rebindWasActive = false;  ///< for the active→inactive clear-once
 
+		// After a rebind capture ends, mask client input until all buttons clear
+		// so the keys held during capture don't leak into the focused menu.
+		bool m_prevRecording = false;
+		bool m_inputSettling = false;
+
 		// Startup welcome banner (HUD-mode). Shows once at launch, then
 		// dismisses after a timeout, on entering the game, or if disabled.
 		uint32_t m_welcome_client_id = 0;
