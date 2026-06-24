@@ -9,16 +9,15 @@
 // existing ImGui menu then looks like:
 //
 //   ImGuiVRHelperPluginAPI::Client g_vr;
-//   // at SKSE kPostPostLoad (fires after every plugin's kPostLoad, so the
-//   // helper's listener is registered regardless of load order):
+//   // From YOUR SKSE kPostPostLoad handler (the helper's listener is up by then,
+//   // regardless of load order — mods own their own SKSE lifecycle):
 //   g_vr.Connect("MyMod", versionStr, ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus);
 //   g_vr.AddCombo("Open menu", myOpenKeys, [](auto* k, auto n){ /* persist */ });
 //   // each render frame:
 //   if (g_vr.Fired(openCombo)) menuOpen = true;
-//   g_vr.ReconcileFocus(menuOpen);  // syncs menuOpen <-> helper focus both ways
-//   g_vr.PumpInput(menuOpen);
-//   // build your ImGui frame + ImGui::Render(), then:
-//   g_vr.RenderToPanel(myD3DContext);
+//   g_vr.Update(menuOpen);  // ReconcileFocus + PumpInput (focus sync + wand input)
+//   // build your ImGui frame + ImGui::Render(), then ONE output call:
+//   g_vr.RenderFrame();     // VR -> flat panel; flat screen -> your normal draw
 //
 // For an always-on HUD layer, the whole context lifecycle is one call:
 //   g_vr.RenderHud(device, ctx, displaySize, []{ /* your ImGui draws */ });
@@ -384,13 +383,21 @@ namespace ImGuiVRHelperPluginAPI
 		/// else ImGui_ImplDX11_RenderDrawData();`. Hooking at Present (the desktop
 		/// swapchain/mirror) instead is harmless, since the mirror isn't shown in
 		/// the headset.
-		void RenderToPanel(ID3D11DeviceContext* ctx)
+		void RenderToPanel(ID3D11DeviceContext* ctx = nullptr)
 		{
-			if (!IsConnected() || !ctx)
+			if (!IsConnected())
 				return;
 
 			PanelHandle panel{};
 			if (!m_helper->GetPanel(m_id, &panel) || panel.rtv == nullptr)
+				return;
+
+			// ctx is optional: default to the process immediate context (the one
+			// ImGui_ImplDX11 was initialized with), derived from the panel RTV's
+			// device. Pass an explicit ctx only for a deferred-context renderer.
+			if (!ctx)
+				ctx = ResolveImmediateContext(panel);
+			if (!ctx)
 				return;
 
 			ImDrawData* drawData = ImGui::GetDrawData();
@@ -404,6 +411,32 @@ namespace ImGuiVRHelperPluginAPI
 				ctx->ClearRenderTargetView(panel.rtv, clear);
 				m_panelWasShowing = false;
 			}
+		}
+
+		/// Your single per-frame output call — the drop-in replacement for a bare
+		/// `ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData())`. Call after
+		/// ImGui::Render(). When connected (VR), renders ONLY to the flat panel; on
+		/// flat screen / helper absent, runs your normal in-game draw into whatever
+		/// RT your hook has bound. Use this and you never write the VR/desktop branch
+		/// yourself — so you can't accidentally paint a second, curved-HUD copy of
+		/// your menu (see RenderToPanel). `ctx` is optional (see RenderToPanel).
+		void RenderFrame(ID3D11DeviceContext* ctx = nullptr)
+		{
+			if (IsConnected())
+				RenderToPanel(ctx);
+			else
+				ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+		}
+
+		/// Per-frame convenience: ReconcileFocus + PumpInput in one call. Pass your
+		/// menu-open flag by reference; on return it reflects the resolved shown
+		/// state (the helper's open/close/cycle combos can flip it) and the wand has
+		/// been pumped into ImGui. Returns the shown state. Call before NewFrame.
+		bool Update(bool& menuOpen, float scrollDeadzone = 0.15f)
+		{
+			ReconcileFocus(menuOpen);
+			PumpInput(menuOpen, scrollDeadzone);
+			return menuOpen;
 		}
 
 		/// One-call interactive menu for a VR mod that brings its own ImGui context
@@ -728,8 +761,32 @@ namespace ImGuiVRHelperPluginAPI
 				prevDSV->Release();
 		}
 
+		// Derive (and cache) the process immediate device context from the panel
+		// RTV's device. There is one ID3D11Device in the game, so this is the same
+		// context ImGui_ImplDX11 was initialized with. GetImmediateContext returns
+		// an AddRef'd pointer, but the device owns its immediate context for its
+		// whole life, so we drop our ref and keep the raw pointer.
+		ID3D11DeviceContext* ResolveImmediateContext(const PanelHandle& panel)
+		{
+			if (m_cachedContext)
+				return m_cachedContext;
+			ID3D11RenderTargetView* rtv = panel.rtv;
+			if (!rtv)
+				return nullptr;
+			ID3D11Device* device = nullptr;
+			rtv->GetDevice(&device);
+			if (!device)
+				return nullptr;
+			device->GetImmediateContext(&m_cachedContext);
+			if (m_cachedContext)
+				m_cachedContext->Release();  // device retains ownership
+			device->Release();
+			return m_cachedContext;
+		}
+
 		IImGuiVRHelperInterface001* m_helper = nullptr;
 		uint32_t m_id = 0;
+		ID3D11DeviceContext* m_cachedContext = nullptr;  // ctx resolved lazily, device-owned
 		bool m_requestsRender = false;
 
 		// OnFrame snapshot (frame thread → render thread).

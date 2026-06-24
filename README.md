@@ -108,20 +108,23 @@ mispositioned — a second, mangled copy floating next to the correct flat panel
 This is the core reason the helper exists: a flat-screen ImGui mod's instinct
 ("draw into the game's UI") is exactly what looks broken in VR.
 
-Gate your final draw on the connection:
+Use the one-call output — it hides that branch for you:
 
 ```cpp
 ImGui::Render();
-if (g_vr.IsConnected()) {
-    g_vr.RenderToPanel(myD3DContext);   // VR: flat panel is the sole output
-} else {
-    ImGui_ImplDX11_RenderDrawData(...); // flat screen / helper absent
-}
+g_vr.RenderFrame();   // connected (VR) -> flat panel only; else -> your normal draw
 ```
 
-Hooking at `IDXGISwapChain::Present` (the desktop swapchain/mirror) instead of the
-game's menu render is also safe, since the mirror window isn't shown in the headset
-— that's how Community Shaders avoids the issue.
+`RenderFrame()` is the drop-in replacement for a bare
+`ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData())`. (The device context is
+optional — the SDK derives it from the panel; pass one only for a deferred-context
+renderer.) Pair it with `Update(menuOpen)` once per frame, which folds
+`ReconcileFocus` + `PumpInput` (focus sync + wand input) into one call.
+
+> Note: if you hook at `IDXGISwapChain::Present` (the desktop swapchain/mirror)
+> rather than the game's menu render, your in-game draw lands on the mirror — which
+> isn't shown in the headset — so you can keep doing both your normal draw _and_ > `RenderToPanel()`. That's how Community Shaders integrates. `RenderFrame()` is for
+> the common case where your draw would otherwise land in the headset.
 
 ## Credits
 
