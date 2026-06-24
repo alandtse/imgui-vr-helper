@@ -33,10 +33,6 @@ namespace ImGuiVRHelper::ToastHUD
 	void RenderWelcome(ID3D11RenderTargetView* rtv, float alpha,
 		const std::vector<ImGuiVRHelperPluginAPI::InputCombo>& openKeys, bool pauseHint);
 
-	/// Clear the panel to transparent (toast expired) so the HUD pass stops
-	/// compositing the last frame's pixels.
-	void ClearToTransparent(ID3D11RenderTargetView* rtv);
-
 	/// Destroy the context + DX11 backend. Safe if never initialized.
 	void Shutdown();
 }

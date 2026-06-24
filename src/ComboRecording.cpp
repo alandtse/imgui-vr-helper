@@ -6,6 +6,9 @@
 #include "ComboRecording.h"
 
 #include "Globals.h"
+#include "HudContext.h"
+#include "HudRender.h"
+#include "Input.h"
 #include "Overlay.h"
 #include "Theme.h"
 
@@ -27,41 +30,15 @@ namespace ImGuiVRHelper::ComboRecording
 		// contexts. Mirrors ToastHUD — the helper composites this panel on top of
 		// the focused client in a dedicated pass.
 		ImGuiContext* g_renderCtx = nullptr;
-		bool g_dx11Inited = false;
-
-		constexpr float kPanelWidth = static_cast<float>(Overlay::Config::kOverlayWidth);
-		constexpr float kPanelHeight = static_cast<float>(Overlay::Config::kOverlayHeight);
 
 		bool EnsureRenderInitialized()
 		{
-			if (g_renderCtx && g_dx11Inited)
+			if (g_renderCtx)
 				return true;
 			if (!Globals::IsReady())
 				return false;
-
-			if (!g_renderCtx) {
-				IMGUI_CHECKVERSION();
-				g_renderCtx = ImGui::CreateContext();
-				ImGui::SetCurrentContext(g_renderCtx);
-				ImGuiIO& io = ImGui::GetIO();
-				io.IniFilename = nullptr;
-				io.LogFilename = nullptr;
-				io.DisplaySize = ImVec2(kPanelWidth, kPanelHeight);
-				Theme::Apply(ImGui::GetStyle());
-				ImGui::GetStyle().ScaleAllSizes(2.0f);
-				io.FontGlobalScale = 1.5f;
-			}
-
-			if (!g_dx11Inited) {
-				ImGui::SetCurrentContext(g_renderCtx);
-				auto& d3d = Globals::GetD3D();
-				if (!ImGui_ImplDX11_Init(d3d.device, d3d.context)) {
-					logs::error("ComboRecording: ImGui_ImplDX11_Init failed");
-					return false;
-				}
-				g_dx11Inited = true;
-			}
-			return true;
+			g_renderCtx = CreateHudContext("ComboRecording");
+			return g_renderCtx != nullptr;
 		}
 
 		struct State
@@ -78,32 +55,6 @@ namespace ImGuiVRHelper::ComboRecording
 		};
 
 		State g_state;
-
-		// Same key-set the matcher uses — buttons that map to wire-stable
-		// Button enum values via Input.cpp's kButtonMappings.
-		constexpr uint32_t kCandidateKeys[] = {
-			Keys::kBY,
-			Keys::kGrip,
-			Keys::kGripAlt,
-			Keys::kXA,
-			Keys::kJoystickTrigger,
-			Keys::kTrigger,
-			Keys::kTouchpadClick,
-			Keys::kTouchpadAlt,
-		};
-
-		// Fold controller-specific alternates onto their canonical key so a single
-		// physical button records once. Oculus/Quest report grip as kGripAlt
-		// (Axis2) while the matcher also tracks kGrip — without this a single grip
-		// captures as "Grip + Grip". Same for the touchpad alternate.
-		constexpr uint32_t Canonical(uint32_t key)
-		{
-			if (key == Keys::kGripAlt)
-				return Keys::kGrip;
-			if (key == Keys::kTouchpadAlt)
-				return Keys::kTouchpadClick;
-			return key;
-		}
 
 		bool ContainsCombo(const std::vector<API::InputCombo>& v, const API::InputCombo& c)
 		{
@@ -125,59 +76,6 @@ namespace ImGuiVRHelper::ComboRecording
 			}
 		}
 
-		const char* KeyName(uint32_t key)
-		{
-			switch (key) {
-			case Keys::kBY:
-				return "B/Y";
-			case Keys::kGrip:
-				return "Grip";
-			case Keys::kGripAlt:
-				return "Grip(alt)";
-			case Keys::kXA:
-				return "X/A";
-			case Keys::kJoystickTrigger:
-				return "Stick click";
-			case Keys::kTrigger:
-				return "Trigger";
-			case Keys::kTouchpadClick:
-				return "Touchpad";
-			case Keys::kTouchpadAlt:
-				return "Touchpad(alt)";
-			default:
-				return "?";
-			}
-		}
-
-		const char* DeviceName(API::InputDeviceType d)
-		{
-			switch (d) {
-			case API::InputDeviceType::Primary:
-				return "Primary";
-			case API::InputDeviceType::Secondary:
-				return "Secondary";
-			case API::InputDeviceType::Both:
-				return "Both";
-			default:
-				return "?";
-			}
-		}
-
-		// Per-controller color encoding, matching the controller-map UI / client
-		// SDK (Primary = yellow, Secondary = blue, Both = green).
-		ImVec4 DeviceColor(API::InputDeviceType d)
-		{
-			switch (d) {
-			case API::InputDeviceType::Primary:
-				return ImVec4(1.0f, 1.0f, 0.0f, 1.0f);
-			case API::InputDeviceType::Secondary:
-				return ImVec4(0.0f, 0.5f, 1.0f, 1.0f);
-			case API::InputDeviceType::Both:
-				return ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
-			default:
-				return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
-			}
-		}
 	}  // namespace
 
 	void Begin(uint32_t client_id, const char* label, API::ComboRecordedFn on_done,
@@ -228,7 +126,10 @@ namespace ImGuiVRHelper::ComboRecording
 
 		bool anyHeld = false;
 
-		for (const uint32_t key : kCandidateKeys) {
+		for (const auto& info : Input::ButtonTable()) {
+			if (!info.candidate)
+				continue;
+			const uint32_t key = info.reKey;
 			const bool pHeld = pri[key].isPressed;
 			const bool sHeld = sec[key].isPressed;
 
@@ -236,7 +137,7 @@ namespace ImGuiVRHelper::ComboRecording
 
 			// Record under the canonical key so a grip/touchpad alternate folds
 			// onto its primary code (no "Grip + Grip" for one physical press).
-			const uint32_t ckey = Canonical(key);
+			const uint32_t ckey = Input::Canonical(key);
 
 			// "Both" combo: both controllers held simultaneously — record
 			// once and skip per-side recording for this key.
@@ -341,8 +242,8 @@ namespace ImGuiVRHelper::ComboRecording
 						ImGui::TextDisabled("+");
 						ImGui::SameLine(0.0f, 6.0f);
 					}
-					ImGui::TextColored(DeviceColor(c.GetDevice()), "%s %s",
-						DeviceName(c.GetDevice()), KeyName(c.GetKey()));
+					ImGui::TextColored(Theme::DeviceColor(c.GetDevice()), "%s %s",
+						Theme::DeviceName(c.GetDevice()), Input::ButtonName(c.GetKey()));
 				}
 			}
 			ImGui::SetWindowFontScale(1.0f);
@@ -369,29 +270,9 @@ namespace ImGuiVRHelper::ComboRecording
 		DrawDialog();
 		ImGui::Render();
 
-		auto* ctx = Globals::GetD3D().context;
-		ID3D11RenderTargetView* oldRTV = nullptr;
-		ID3D11DepthStencilView* oldDSV = nullptr;
-		ctx->OMGetRenderTargets(1, &oldRTV, &oldDSV);
-		const float clear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-		ctx->OMSetRenderTargets(1, &rtv, nullptr);
-		ctx->ClearRenderTargetView(rtv, clear);
-		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-		ctx->OMSetRenderTargets(1, &oldRTV, oldDSV);
-		if (oldRTV)
-			oldRTV->Release();
-		if (oldDSV)
-			oldDSV->Release();
+		RenderDrawDataToRtv(rtv);
 
 		if (prev != g_renderCtx)
 			ImGui::SetCurrentContext(prev);
-	}
-
-	void ClearToTransparent(ID3D11RenderTargetView* rtv)
-	{
-		if (!rtv || !Globals::IsReady())
-			return;
-		const float clear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-		Globals::GetD3D().context->ClearRenderTargetView(rtv, clear);
 	}
 }

@@ -9,6 +9,8 @@
 #include "Dashboard.h"
 #include "Globals.h"
 #include "HelperImpl.h"
+#include "HudContext.h"
+#include "HudDisplay.h"
 #include "Input.h"
 #include "OpenVRDetection.h"
 #include "Overlay.h"
@@ -710,11 +712,13 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::EndCombo();
 			}
 			ImGui::SliderInt("HUD supersample", &s.hudSupersample, 1, Overlay::Config::kMaxHUDSupersample, "%dx");
-			const int ss = std::clamp(s.hudSupersample, 1, Overlay::Config::kMaxHUDSupersample);
+			int baseW, baseH;
+			ResolveBaseDims(baseW, baseH);
+			const int ss = HudSupersample();
 			const double panelMB =
-				static_cast<double>(s.baseWidth) * s.baseHeight * ss * ss * 4.0 / (1024.0 * 1024.0);
+				static_cast<double>(baseW) * baseH * ss * ss * 4.0 / (1024.0 * 1024.0);
 			ImGui::TextDisabled("    %d x %d, ~%.0f MB VRAM each (HUD, settings, banners each allocate one)",
-				s.baseWidth * ss, s.baseHeight * ss, panelMB);
+				baseW * ss, baseH * ss, panelMB);
 			ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.1f, 1.0f),
 				"    [restart required] base resolution + supersample apply after a Skyrim restart.");
 
@@ -795,22 +799,6 @@ namespace ImGuiVRHelper::SettingsUI
 				                           .count();
 
 				{
-					using K = RE::BSOpenVRControllerDevice::Keys;
-					struct DbgButton
-					{
-						const char* label;
-						uint32_t key;
-					};
-					static const DbgButton kDbgButtons[] = {
-						{ "Trigger", static_cast<uint32_t>(K::kTrigger) },
-						{ "Grip", static_cast<uint32_t>(K::kGrip) },
-						{ "GripAlt", static_cast<uint32_t>(K::kGripAlt) },
-						{ "Stick Click", static_cast<uint32_t>(K::kJoystickTrigger) },
-						{ "Touchpad", static_cast<uint32_t>(K::kTouchpadClick) },
-						{ "B/Y", static_cast<uint32_t>(K::kBY) },
-						{ "A/X", static_cast<uint32_t>(K::kXA) },
-					};
-
 					const ImU32 pressedBg = ImGui::GetColorU32(ImVec4(0.20f, 0.45f, 0.30f, 0.55f));
 					if (ImGui::BeginTable("##vrButtonState", 5,
 							ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
@@ -831,14 +819,16 @@ namespace ImGuiVRHelper::SettingsUI
 								ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, pressedBg);
 							ImGui::Text("%.2f", b.GetCurrentHeldTime(nowSecs));
 						};
-						for (const auto& db : kDbgButtons) {
-							const RE::ButtonState& pri = state.primaryControllerState[db.key];
-							const RE::ButtonState& sec = state.secondaryControllerState[db.key];
+						for (const auto& db : Input::ButtonTable()) {
+							if (!db.diagnostics)
+								continue;
+							const RE::ButtonState& pri = state.primaryControllerState[db.reKey];
+							const RE::ButtonState& sec = state.secondaryControllerState[db.reKey];
 							const RE::ButtonState& a = leftHanded ? pri : sec;
 							const RE::ButtonState& b = leftHanded ? sec : pri;
 							ImGui::TableNextRow();
 							ImGui::TableSetColumnIndex(0);
-							ImGui::TextUnformatted(db.label);
+							ImGui::TextUnformatted(db.name);
 							ImGui::TableSetColumnIndex(1);
 							stateCell(a);
 							ImGui::TableSetColumnIndex(2);
@@ -1042,44 +1032,17 @@ namespace ImGuiVRHelper::SettingsUI
 		if (!Globals::IsReady())
 			return false;
 
-		auto& d3d = Globals::GetD3D();
-		IMGUI_CHECKVERSION();
-		g_ctx = ImGui::CreateContext();
-		ImGui::SetCurrentContext(g_ctx);
+		g_ctx = CreateHudContext("SettingsUI");
+		if (!g_ctx)
+			return false;
 
+		// Unlike the non-interactive HUD layers, the settings panel takes desktop
+		// mouse + keyboard, so enable cursors + keyboard nav on its context.
 		ImGuiIO& io = ImGui::GetIO();
-		io.IniFilename = nullptr;  // disable imgui.ini auto-save
-		io.LogFilename = nullptr;
-		// Logical size = configured base resolution; DisplayFramebufferScale drives
-		// the supersample so the settings panel (and the toasts on it) stay crisp
-		// on the wide quad. Mirrors the StatusHUD/ToastHUD high-DPI setup. Applied
-		// once here — base/supersample changes take effect on restart.
-		{
-			const auto& s = Overlay::State::GetSingleton().settings;
-			const float baseW = s.baseWidth > 0 ? static_cast<float>(s.baseWidth) :
-			                                      static_cast<float>(Overlay::Config::kOverlayWidth);
-			const float baseH = s.baseHeight > 0 ? static_cast<float>(s.baseHeight) :
-			                                       static_cast<float>(Overlay::Config::kOverlayHeight);
-			const float ss = static_cast<float>(std::clamp(s.hudSupersample, 1, Overlay::Config::kMaxHUDSupersample));
-			io.DisplaySize = ImVec2(baseW, baseH);
-			io.DisplayFramebufferScale = ImVec2(ss, ss);
-		}
 		io.BackendFlags |= ImGuiBackendFlags_HasMouseCursors;
 		io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-		// Match the Community Shaders color scheme.
-		Theme::Apply(ImGui::GetStyle());
-
-		// Mouse-cursor scaling so a 1920x1080 panel looks reasonable in VR.
-		ImGui::GetStyle().ScaleAllSizes(2.0f);
-		io.FontGlobalScale = 1.5f;
-
-		if (!ImGui_ImplDX11_Init(d3d.device, d3d.context)) {
-			logs::error("SettingsUI::Init: ImGui_ImplDX11_Init failed");
-			ImGui::DestroyContext(g_ctx);
-			g_ctx = nullptr;
-			return false;
-		}
+		auto& d3d = Globals::GetD3D();
 
 		// Win32 input backend. Hooks the swapchain window's WndProc so
 		// the user's desktop mouse + keyboard reach this ImGui context

@@ -11,6 +11,8 @@
 #include "Globals.h"
 #include "HUDDemo.h"
 #include "HelperImpl.h"
+#include "HudDisplay.h"
+#include "HudRender.h"
 #include "Input.h"
 #include "Overlay.h"
 #include "OverlayDrag.h"
@@ -187,13 +189,12 @@ namespace ImGuiVRHelper
 	void HelperImpl::PanelPixelSize(const ClientRecord& rec, unsigned int& width, unsigned int& height) const
 	{
 		namespace API = ImGuiVRHelperPluginAPI;
-		const auto& s = Overlay::State::GetSingleton().settings;
-		const int baseW = s.baseWidth > 0 ? s.baseWidth : Overlay::Config::kOverlayWidth;
-		const int baseH = s.baseHeight > 0 ? s.baseHeight : Overlay::Config::kOverlayHeight;
+		int baseW, baseH;
+		ResolveBaseDims(baseW, baseH);
 		// The self/settings panel isn't HUD-mode (it's focusable), but it fills the
 		// view and carries the toasts, so it's supersampled too.
 		const bool fillsView = (rec.flags & API::kClientFlag_HUDMode) || rec.name == kSelfClientName;
-		const int ss = fillsView ? std::clamp(s.hudSupersample, 1, Overlay::Config::kMaxHUDSupersample) : 1;
+		const int ss = fillsView ? HudSupersample() : 1;
 		width = static_cast<unsigned int>(baseW * ss);
 		height = static_cast<unsigned int>(baseH * ss);
 	}
@@ -1223,7 +1224,7 @@ namespace ImGuiVRHelper
 				if (demoOn) {
 					HUDDemo::Render(handle.rtv, handle.width, handle.height);
 				} else {
-					HUDDemo::ClearToTransparent(handle.rtv);
+					ClearRtvTransparent(handle.rtv);
 				}
 			}
 		}
@@ -1261,7 +1262,7 @@ namespace ImGuiVRHelper
 					                        m_toastRemaining / kToastFadeSeconds;
 					ToastHUD::Render(handle.rtv, m_toastText, alpha);
 				} else {
-					ToastHUD::ClearToTransparent(handle.rtv);  // expired → clear once
+					ClearRtvTransparent(handle.rtv);  // expired → clear once
 				}
 			}
 		}
@@ -1297,7 +1298,7 @@ namespace ImGuiVRHelper
 						ToastHUD::RenderWelcome(handle.rtv, alpha, overlayState.settings.openMenuKeys,
 							overlayState.settings.onlyOpenWhilePaused);
 					} else {
-						ToastHUD::ClearToTransparent(handle.rtv);
+						ClearRtvTransparent(handle.rtv);
 					}
 				}
 			}
@@ -1315,7 +1316,7 @@ namespace ImGuiVRHelper
 					if (active) {
 						ComboRecording::RenderToPanel(handle.rtv);
 					} else {
-						ComboRecording::ClearToTransparent(handle.rtv);
+						ClearRtvTransparent(handle.rtv);
 					}
 				}
 			}

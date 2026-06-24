@@ -27,12 +27,6 @@ namespace ImGuiVRHelper::HUDDemo
 	/// gate). Saves and restores the current ImGui context + the bound RTV.
 	void Render(ID3D11RenderTargetView* rtv, unsigned int panelWidth, unsigned int panelHeight);
 
-	/// Falling-edge cleanup: clear `rtv` to transparent {0,0,0,0} so
-	/// the previous frame's demo pixels don't keep getting composited
-	/// after the user toggles the demo off. Cheap; just a single
-	/// ClearRenderTargetView call.
-	void ClearToTransparent(ID3D11RenderTargetView* rtv);
-
 	/// Tear down ImGui context + DX11 backend. Currently never called;
 	/// the demo's resources persist for the helper's lifetime.
 	void Shutdown();

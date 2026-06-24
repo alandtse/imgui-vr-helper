@@ -6,6 +6,8 @@
 #include "ToastHUD.h"
 
 #include "Globals.h"
+#include "HudContext.h"
+#include "HudRender.h"
 #include "Input.h"
 #include "Overlay.h"
 #include "PluginVersion.h"
@@ -20,52 +22,15 @@ namespace ImGuiVRHelper::ToastHUD
 		// Dedicated, non-interactive ImGui context (own font atlas + DX11 backend,
 		// per-context in imgui 1.92) so it never touches the menu contexts.
 		ImGuiContext* g_ctx = nullptr;
-		bool g_dx11Inited = false;
-
-		// Matches the panel RTV the helper hands every client; the HUD pass
-		// composites this fullscreen onto each eye.
-		constexpr float kPanelWidth = static_cast<float>(Overlay::Config::kOverlayWidth);
-		constexpr float kPanelHeight = static_cast<float>(Overlay::Config::kOverlayHeight);
 
 		bool EnsureInitialized()
 		{
-			if (g_ctx && g_dx11Inited)
+			if (g_ctx)
 				return true;
 			if (!Globals::IsReady())
 				return false;
-
-			if (!g_ctx) {
-				IMGUI_CHECKVERSION();
-				g_ctx = ImGui::CreateContext();
-				ImGui::SetCurrentContext(g_ctx);
-				ImGuiIO& io = ImGui::GetIO();
-				io.IniFilename = nullptr;
-				io.LogFilename = nullptr;
-				// Logical size = base resolution; DisplayFramebufferScale drives the
-				// supersample so the banner is crisp on the wide HUD quad (same
-				// high-DPI setup as StatusHUD). The self panel this renders into is
-				// supersampled to match (see HelperImpl::PanelPixelSize).
-				const auto& st = Overlay::State::GetSingleton().settings;
-				const float baseW = st.baseWidth > 0 ? static_cast<float>(st.baseWidth) : kPanelWidth;
-				const float baseH = st.baseHeight > 0 ? static_cast<float>(st.baseHeight) : kPanelHeight;
-				const float ss = static_cast<float>(std::clamp(st.hudSupersample, 1, Overlay::Config::kMaxHUDSupersample));
-				io.DisplaySize = ImVec2(baseW, baseH);
-				io.DisplayFramebufferScale = ImVec2(ss, ss);
-				Theme::Apply(ImGui::GetStyle());  // match the Community Shaders look
-				ImGui::GetStyle().ScaleAllSizes(2.0f);
-				io.FontGlobalScale = 1.5f;
-			}
-
-			if (!g_dx11Inited) {
-				ImGui::SetCurrentContext(g_ctx);
-				auto& d3d = Globals::GetD3D();
-				if (!ImGui_ImplDX11_Init(d3d.device, d3d.context)) {
-					logs::error("ToastHUD: ImGui_ImplDX11_Init failed");
-					return false;
-				}
-				g_dx11Inited = true;
-			}
-			return true;
+			g_ctx = CreateHudContext("ToastHUD");
+			return g_ctx != nullptr;
 		}
 	}
 
@@ -109,23 +74,7 @@ namespace ImGuiVRHelper::ToastHUD
 
 		ImGui::Render();
 
-		// Render into the helper-owned panel RTV; save/restore the bound target so
-		// the surrounding compositing chain isn't disturbed.
-		auto* ctx = Globals::GetD3D().context;
-		ID3D11RenderTargetView* oldRTV = nullptr;
-		ID3D11DepthStencilView* oldDSV = nullptr;
-		ctx->OMGetRenderTargets(1, &oldRTV, &oldDSV);
-
-		const float clear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-		ctx->OMSetRenderTargets(1, &rtv, nullptr);
-		ctx->ClearRenderTargetView(rtv, clear);
-		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-
-		ctx->OMSetRenderTargets(1, &oldRTV, oldDSV);
-		if (oldRTV)
-			oldRTV->Release();
-		if (oldDSV)
-			oldDSV->Release();
+		RenderDrawDataToRtv(rtv);
 
 		if (prev != g_ctx)
 			ImGui::SetCurrentContext(prev);
@@ -138,22 +87,6 @@ namespace ImGuiVRHelper::ToastHUD
 			return;
 		if (!EnsureInitialized())
 			return;
-
-		// Which controller the key is on. The color alone is opaque to a first-time
-		// user, so name it explicitly (matches the settings controller-map legend).
-		auto deviceName = [](ImGuiVRHelperPluginAPI::InputDeviceType d) -> const char* {
-			using DT = ImGuiVRHelperPluginAPI::InputDeviceType;
-			switch (d) {
-			case DT::Primary:
-				return "Primary";
-			case DT::Secondary:
-				return "Secondary";
-			case DT::Both:
-				return "Both";
-			default:
-				return "";
-			}
-		};
 
 		ImGuiContext* prev = ImGui::GetCurrentContext();
 		ImGui::SetCurrentContext(g_ctx);
@@ -191,7 +124,7 @@ namespace ImGuiVRHelper::ToastHUD
 						ImGui::SameLine();
 					}
 					ImGui::TextColored(Theme::DeviceColor(openKeys[i].GetDevice()), "%s (%s)",
-						Input::ButtonName(openKeys[i].GetKey()), deviceName(openKeys[i].GetDevice()));
+						Input::ButtonName(openKeys[i].GetKey()), Theme::DeviceName(openKeys[i].GetDevice()));
 				}
 			}
 			if (pauseHint)
@@ -203,41 +136,17 @@ namespace ImGuiVRHelper::ToastHUD
 		ImGui::PopStyleVar();
 
 		ImGui::Render();
-
-		auto* ctx = Globals::GetD3D().context;
-		ID3D11RenderTargetView* oldRTV = nullptr;
-		ID3D11DepthStencilView* oldDSV = nullptr;
-		ctx->OMGetRenderTargets(1, &oldRTV, &oldDSV);
-		const float clear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-		ctx->OMSetRenderTargets(1, &rtv, nullptr);
-		ctx->ClearRenderTargetView(rtv, clear);
-		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-		ctx->OMSetRenderTargets(1, &oldRTV, oldDSV);
-		if (oldRTV)
-			oldRTV->Release();
-		if (oldDSV)
-			oldDSV->Release();
+		RenderDrawDataToRtv(rtv);
 
 		if (prev != g_ctx)
 			ImGui::SetCurrentContext(prev);
 	}
 
-	void ClearToTransparent(ID3D11RenderTargetView* rtv)
-	{
-		if (!rtv || !Globals::IsReady())
-			return;
-		const float clear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-		Globals::GetD3D().context->ClearRenderTargetView(rtv, clear);
-	}
-
 	void Shutdown()
 	{
-		if (g_dx11Inited && g_ctx) {
+		if (g_ctx) {
 			ImGui::SetCurrentContext(g_ctx);
 			ImGui_ImplDX11_Shutdown();
-			g_dx11Inited = false;
-		}
-		if (g_ctx) {
 			ImGui::DestroyContext(g_ctx);
 			g_ctx = nullptr;
 		}

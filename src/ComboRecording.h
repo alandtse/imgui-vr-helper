@@ -47,8 +47,4 @@ namespace ImGuiVRHelper::ComboRecording
 	/// ToastHUD). The helper composites this panel on top of the focused
 	/// client. No-op if not active. Call once per frame while IsActive().
 	void RenderToPanel(ID3D11RenderTargetView* rtv);
-
-	/// Clear `rtv` to transparent — call once on the active→inactive edge so
-	/// the last captured frame stops compositing.
-	void ClearToTransparent(ID3D11RenderTargetView* rtv);
 }
