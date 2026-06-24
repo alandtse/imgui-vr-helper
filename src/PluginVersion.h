@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-Modding-Exception
+// Copyright (c) 2025 ImGuiVRHelper contributors. See COPYING and EXCEPTIONS.md.
+
 #pragma once
 
 // Plugin version string, built from the compile-time version defines (set in

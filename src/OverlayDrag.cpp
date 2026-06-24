@@ -1,15 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-Modding-Exception
 // Copyright (c) 2025 ImGuiVRHelper contributors. See COPYING and EXCEPTIONS.md.
 //
-// Lifted from skyrim-community-shaders/src/Features/VR/OverlayDrag.cpp
-// with relicensing under GPL-3.0-or-later WITH the modding exception.
-//
-// Adapted: methods of the SCS VR class become free functions in
-// ImGuiVRHelper::OverlayDrag, operating on Overlay::State. globals::menu
-// reference replaced with Overlay::State::overlayVisible. Controller
-// state reads (primaryControllerState/secondaryControllerState) still
-// reference Overlay::State's placeholders — Input.cpp port will populate
-// those each frame.
+// Lifted from skyrim-community-shaders/src/Features/VR/OverlayDrag.cpp,
+// relicensed GPL-3.0-or-later WITH the modding exception. Adapted to free
+// functions in ImGuiVRHelper::OverlayDrag operating on Overlay::State.
 
 #include "pch.h"
 

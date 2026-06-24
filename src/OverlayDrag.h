@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-Modding-Exception
 // Copyright (c) 2025 ImGuiVRHelper contributors. See COPYING and EXCEPTIONS.md.
 //
-// Grip-to-drag overlay repositioning. Operates on Overlay::State and is
-// driven once per frame from the helper's Present detour (PR-2 cont.).
+// Grip-to-drag overlay repositioning. Operates on Overlay::State, driven once per
+// frame from the helper's Present detour.
 
 #pragma once
 

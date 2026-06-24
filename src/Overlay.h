@@ -5,9 +5,9 @@
 // intersection state, and the fixed-world transform fallback.
 //
 // This is the helper-side replacement for the overlay-related portions of
-// SCS's VR class (settings.VRMenu*, wandState, fixedWorldOverlayPosition,
-// Config::*). When more PR-2 ports land — overlay submission, drag,
-// in-scene fallback — they consume State::GetSingleton().
+// Community Shaders' VR class (settings.VRMenu*, wandState,
+// fixedWorldOverlayPosition, Config::*). Overlay submission, drag, and the
+// in-scene fallback all consume State::GetSingleton().
 
 #pragma once
 

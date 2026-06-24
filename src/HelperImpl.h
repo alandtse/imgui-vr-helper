@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-Modding-Exception
 // Copyright (c) 2025 ImGuiVRHelper contributors. See COPYING and EXCEPTIONS.md.
 //
-// Concrete implementation of ImGuiVRHelperPluginAPI::IImGuiVRHelperInterface001.
-//
-// All methods are stubs in the initial scaffold. Real implementations land
-// in subsequent PRs, lifted from
+// Concrete implementation of ImGuiVRHelperPluginAPI::IImGuiVRHelperInterface001:
+// the client registry, per-client panel textures, combo matching/recording,
+// focus arbitration, and per-frame dispatch. Portions are lifted from
 // skyrim-community-shaders/src/Features/VR/{Input,InSceneOverlay,
 // OverlayDrag,WandPointing,OpenVRDetection}.cpp.
 

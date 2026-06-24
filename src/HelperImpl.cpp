@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-Modding-Exception
 // Copyright (c) 2025 ImGuiVRHelper contributors. See COPYING and EXCEPTIONS.md.
 //
-// Stub implementations. Each method logs and returns a default value. Real
-// behavior arrives in subsequent PRs (overlay submission, controller
-// polling, combo matching, drag, wand pointing, in-scene fallback).
+// Implementation of IImGuiVRHelperInterface001: the client registry, per-client
+// panel textures, combo matching/recording, focus, and per-frame dispatch.
 
 #include "pch.h"
 

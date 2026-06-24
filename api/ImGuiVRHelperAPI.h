@@ -68,7 +68,7 @@ namespace ImGuiVRHelperPluginAPI
 		// ---- Lifecycle --------------------------------------------------
 
 		/// Register a client. Returns a non-zero client_id on success, 0 on
-		/// failure (e.g. helper not yet initialized, or name already taken).
+		/// failure (e.g. a null `name`, or HUD and Dashboard flags both set).
 		/// `name` and `version` are copied internally; pass `nullptr` for
 		/// `version` to omit it. `flags` is a bitmask of ClientFlags.
 		///
