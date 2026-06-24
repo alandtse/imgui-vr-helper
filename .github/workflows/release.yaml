@@ -108,7 +108,7 @@ jobs:
           cp README.md COPYING COPYING.LESSER EXCEPTIONS.md "$stage/"
           # LGPL-3.0 client API pack for mod developers: the headers + handshake stub
           # plus the CMake FetchContent target (the recommended way to consume it).
-          cp api/*.h api/*.cpp api/CMakeLists.txt api/COPYING.LESSER "$stage/Developer/"
+          cp api/*.h api/*.cpp api/CMakeLists.txt api/README.md api/COPYING api/COPYING.LESSER "$stage/Developer/"
           7z a -t7z -mx=9 "${stage}.7z" "$stage"
           echo "archive=${stage}.7z" >> "$GITHUB_OUTPUT"
           echo "Built ${stage}.7z:"
