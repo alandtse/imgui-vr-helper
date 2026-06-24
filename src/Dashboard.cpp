@@ -6,6 +6,7 @@
 #include "Dashboard.h"
 
 #include "HelperImpl.h"
+#include "HudDisplay.h"
 #include "Overlay.h"
 #include "SettingsUI.h"
 #include "internal/VRUtils.h"
@@ -215,10 +216,12 @@ namespace ImGuiVRHelper::Dashboard
 			iface->SetOverlayWidthInMeters(g_overlay, 2.5f);
 			iface->SetOverlayInputMethod(g_overlay, vr::VROverlayInputMethod_Mouse);
 
-			vr::HmdVector2_t mouseScale{
-				static_cast<float>(Overlay::Config::kOverlayWidth),
-				static_cast<float>(Overlay::Config::kOverlayHeight)
-			};
+			// Mouse coordinate space = the panel's logical (non-supersampled) size,
+			// matching the client's ImGui DisplaySize so the dashboard cursor lands
+			// correctly at any configured base resolution.
+			int baseW, baseH;
+			ResolveBaseDims(baseW, baseH);
+			vr::HmdVector2_t mouseScale{ static_cast<float>(baseW), static_cast<float>(baseH) };
 			iface->SetOverlayMouseScale(g_overlay, &mouseScale);
 
 			logs::info("Dashboard: registered SteamVR dashboard overlay key='{}' (handle={}) on clean interface",
