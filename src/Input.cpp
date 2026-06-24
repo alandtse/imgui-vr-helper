@@ -34,28 +34,37 @@ namespace ImGuiVRHelper::Input
 	namespace API = ImGuiVRHelperPluginAPI;
 	using Keys = RE::BSOpenVRControllerDevice::Keys;
 
+	std::span<const ButtonInfo> ButtonTable()
+	{
+		// reKey, wireButton, canonicalKey, name, candidate, diagnostics.
+		// Alternates (Oculus axis-2 grip/touchpad) fold onto their base key.
+		static constexpr ButtonInfo kButtons[] = {
+			{ Keys::kBY, API::Button::BY, Keys::kBY, "B/Y", true, true },
+			{ Keys::kGrip, API::Button::GripClick, Keys::kGrip, "Grip", true, true },
+			{ Keys::kGripAlt, API::Button::GripClick, Keys::kGrip, "GripAlt", true, true },
+			{ Keys::kXA, API::Button::AX, Keys::kXA, "A/X", true, true },
+			{ Keys::kJoystickTrigger, API::Button::StickClick, Keys::kJoystickTrigger, "Stick Click", true, true },
+			{ Keys::kTrigger, API::Button::TriggerClick, Keys::kTrigger, "Trigger", true, true },
+			{ Keys::kTouchpadClick, API::Button::PadClick, Keys::kTouchpadClick, "Touchpad", true, true },
+			{ Keys::kTouchpadAlt, API::Button::PadClick, Keys::kTouchpadClick, "Touchpad Alt", true, false },
+		};
+		return kButtons;
+	}
+
 	const char* ButtonName(uint32_t keyCode)
 	{
-		switch (keyCode) {
-		case static_cast<uint32_t>(Keys::kTrigger):
-			return "Trigger";
-		case static_cast<uint32_t>(Keys::kGrip):
-			return "Grip";
-		case static_cast<uint32_t>(Keys::kGripAlt):
-			return "GripAlt";
-		case static_cast<uint32_t>(Keys::kJoystickTrigger):
-			return "Stick Click";
-		case static_cast<uint32_t>(Keys::kTouchpadClick):
-			return "Touchpad";
-		case static_cast<uint32_t>(Keys::kTouchpadAlt):
-			return "Touchpad Alt";
-		case static_cast<uint32_t>(Keys::kBY):
-			return "B/Y";
-		case static_cast<uint32_t>(Keys::kXA):
-			return "A/X";
-		default:
-			return "?";
-		}
+		for (const auto& b : ButtonTable())
+			if (b.reKey == keyCode)
+				return b.name;
+		return "?";
+	}
+
+	uint32_t Canonical(uint32_t keyCode)
+	{
+		for (const auto& b : ButtonTable())
+			if (b.reKey == keyCode)
+				return b.canonicalKey;
+		return keyCode;
 	}
 
 	namespace
@@ -93,29 +102,10 @@ namespace ImGuiVRHelper::Input
 			}
 		}
 
-		// ---- RE Keys → wire Button enum ---------------------------------
-
-		struct ButtonMapping
-		{
-			uint32_t reKey;
-			API::Button wireButton;
-		};
-
-		constexpr ButtonMapping kButtonMappings[] = {
-			{ Keys::kBY, API::Button::BY },
-			{ Keys::kGrip, API::Button::GripClick },
-			{ Keys::kGripAlt, API::Button::GripClick },  // fold Oculus axis-2 grip into one bit
-			{ Keys::kXA, API::Button::AX },
-			{ Keys::kJoystickTrigger, API::Button::StickClick },
-			{ Keys::kTrigger, API::Button::TriggerClick },
-			{ Keys::kTouchpadClick, API::Button::PadClick },
-			{ Keys::kTouchpadAlt, API::Button::PadClick },
-		};
-
 		uint32_t ButtonsToWireMask(const RE::VRControllerState& state)
 		{
 			uint32_t mask = 0;
-			for (const auto& m : kButtonMappings) {
+			for (const auto& m : ButtonTable()) {
 				if (state[m.reKey].isPressed) {
 					mask |= 1u << static_cast<uint32_t>(m.wireButton);
 				}
@@ -132,7 +122,7 @@ namespace ImGuiVRHelper::Input
 
 		bool IsButtonKey(uint32_t keyCode)
 		{
-			for (const auto& m : kButtonMappings) {
+			for (const auto& m : ButtonTable()) {
 				if (m.reKey == keyCode)
 					return true;
 			}
@@ -262,7 +252,7 @@ namespace ImGuiVRHelper::Input
 			std::chrono::steady_clock::now().time_since_epoch())
 		                         .count();
 
-		for (const auto& m : kButtonMappings) {
+		for (const auto& m : ButtonTable()) {
 			if (keyCode == m.reKey) {
 				target[m.reKey].OnEvent(pressed, nowSecs);
 				break;

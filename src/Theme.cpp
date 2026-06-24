@@ -70,4 +70,19 @@ namespace ImGuiVRHelper::Theme
 			return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);  // white
 		}
 	}
+
+	const char* DeviceName(ImGuiVRHelperPluginAPI::InputDeviceType device)
+	{
+		using D = ImGuiVRHelperPluginAPI::InputDeviceType;
+		switch (device) {
+		case D::Primary:
+			return "Primary";
+		case D::Secondary:
+			return "Secondary";
+		case D::Both:
+			return "Both";
+		default:
+			return "?";
+		}
+	}
 }

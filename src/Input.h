@@ -22,6 +22,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include "ImGuiVRHelperTypes.h"
@@ -76,4 +77,27 @@ namespace ImGuiVRHelper::Input
 	/// (Trigger / Grip / A-X / B-Y / ...); "?" for an unmapped code. Shared by
 	/// the welcome banner and the settings controller map so they can't drift.
 	const char* ButtonName(uint32_t keyCode);
+
+	/// One VR controller button the helper understands. Single source of truth for
+	/// the wire-enum mapping, label, canonical fold (Oculus axis-2 alternates
+	/// collapse onto their base button), and which surfaces list it — so the combo
+	/// recorder, wire mapping, diagnostics table, and ButtonName can't drift apart.
+	struct ButtonInfo
+	{
+		uint32_t reKey;                             // RE::BSOpenVRControllerDevice::Keys value
+		ImGuiVRHelperPluginAPI::Button wireButton;  // wire-stable Button bit
+		uint32_t canonicalKey;                      // reKey, or the base key an alternate folds onto
+		const char* name;                           // human-readable label
+		bool candidate;                             // offered for combo recording
+		bool diagnostics;                           // listed in the controller diagnostics table
+	};
+
+	/// The buttons the helper maps, in canonical order. Iterate this instead of
+	/// hand-listing buttons so a new one is added in exactly one place.
+	std::span<const ButtonInfo> ButtonTable();
+
+	/// Fold a controller-specific alternate (Oculus grip/touchpad axis-2) onto its
+	/// base key so one physical press records once; returns the key unchanged when
+	/// it has no alternate.
+	uint32_t Canonical(uint32_t keyCode);
 }

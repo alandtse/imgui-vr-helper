@@ -22,4 +22,8 @@ namespace ImGuiVRHelper::Theme
 	/// Both = green, anything else white. Use it so a color consistently means
 	/// "this controller" across the diagnostics + mapping UI.
 	ImVec4 DeviceColor(ImGuiVRHelperPluginAPI::InputDeviceType device);
+
+	/// Per-controller name ("Primary"/"Secondary"/"Both"; "?" otherwise). Shared
+	/// so the welcome banner, rebind popup, and controller map can't drift.
+	const char* DeviceName(ImGuiVRHelperPluginAPI::InputDeviceType device);
 }
