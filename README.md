@@ -75,7 +75,10 @@ submodule and add `api/` to your include path:
 - `api/ImGuiVRHelperTypes.h`
 - `api/ImGuiVRHelperInput.h`
 
-In your `kPostLoad` SKSE message handler:
+In your `kPostPostLoad` SKSE message handler (`kPostPostLoad`, not `kPostLoad` —
+it fires after every plugin's `kPostLoad`, so the helper's messaging listener is
+registered regardless of load order; the handshake is also retryable if you call
+earlier):
 
 ```cpp
 #include "ImGuiVRHelperAPI.h"
@@ -84,7 +87,7 @@ namespace API = ImGuiVRHelperPluginAPI;
 
 API::IImGuiVRHelperInterface001* g_helper = nullptr;
 
-// kPostLoad
+// kPostPostLoad
 g_helper = API::GetImGuiVRHelperInterface001();
 if (!g_helper) {
     // Helper not installed — fall back to flatscreen-only behavior.
