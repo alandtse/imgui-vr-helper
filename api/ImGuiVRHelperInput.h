@@ -7,11 +7,6 @@
 // supports JSON serialization via nlohmann_json so clients can persist
 // user-bound combos in their own settings files.
 //
-// This file is derived in shape from Skyrim Community Shaders'
-// src/Utils/Input.h. The packed device-and-key encoding lets a vector of
-// combos be JSON-serialized either as a single integer (single bind, for
-// backward compatibility with simpler save formats) or as an array of
-// integers (multi-key combo).
 
 #pragma once
 
