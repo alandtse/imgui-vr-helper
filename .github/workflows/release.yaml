@@ -1,27 +1,29 @@
-# Release — INTENTIONALLY DISABLED until the mod has a Nexus modid.
+# Release pipeline (mirrors the sibling devbench repo): semantic-release reads the
+# Conventional Commit history, picks the next version, bumps `local version` in
+# xmake.lua, commits it back (with [skip ci]), tags vX.Y.Z, and publishes a draft
+# GitHub Release whose body is the curated changelog. Downstream jobs build at the
+# tag, attach the .7z mod archive, promote the release, and — on the source repo —
+# upload to Nexus with the same changelog.
 #
-# Right now this workflow only runs on manual dispatch and stops at "assemble the
-# mod archive + upload it as a run artifact." It does NOT publish a GitHub release
-# and does NOT touch Nexus. That keeps a one-click way to produce a packaged build
-# for local testing without committing to any public release surface.
+# TRIGGER IS INTENTIONALLY workflow_dispatch-ONLY until we're ready to publish. The
+# whole pipeline (and its UNEX_* secret references, for secret-provisioning tooling)
+# stays present, but nothing auto-releases — no [skip ci] needed. To arm auto-release
+# on every push to main, add back:
+#   push:
+#     branches: [main]
 #
-# TO ENABLE REAL RELEASES (once a Nexus modid exists): replace this whole file with
-# the sibling devbench repo's release.yaml — it runs the full semantic-release
-# pipeline (Conventional-Commit version bump → tag → GitHub Release → .7z asset →
-# Nexus upload) on every push to main. That requires:
-#   1. The `push: branches: [main]` trigger (currently omitted so nothing auto-fires).
-#   2. A nexus-upload.yaml (mirror devbench's) wired to the modid.
-#   3. Repo secrets UNEX_APIKEY / UNEX_NEXUSMODS_SESSION_COOKIE and, to upload for
-#      real rather than dry-run, repository variable NEXUS_AUTO_UPLOAD=true.
-# Until then the version lives in xmake.lua and there is deliberately no
-# semantic-release machinery wired up.
+# Nexus is dry-run by default: it only reports. Set repo variable
+# NEXUS_AUTO_UPLOAD=true (plus secrets UNEX_APIKEY / UNEX_NEXUSMODS_SESSION_COOKIE) to
+# upload for real. If there are no unreleased commits semantic-release no-ops and the
+# downstream jobs skip.
+#
+# First release note: with no prior tag, semantic-release starts at 1.0.0. To stay on
+# 0.x, push an initial tag (e.g. `git tag v0.1.0 && git push --tags`) before the first
+# release so it continues from there.
 name: Release
 
 on:
   workflow_dispatch:
-  # Re-enable when ready (mirror devbench's semantic-release pipeline):
-  # push:
-  #   branches: [main]
 
 concurrency:
   group: release-${{ github.ref }}
@@ -31,16 +33,62 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    uses: ./.github/workflows/_build.yaml
-
-  package:
-    name: Package archive (artifact only)
-    needs: build
+  semantic-release:
+    name: Semantic Release
     runs-on: ubuntu-latest
+    # Source repo only: forks have no release/Nexus credentials.
+    if: github.repository_owner == 'alandtse'
+    permissions:
+      contents: write # push the bump commit + tag, create the GitHub Release
+    outputs:
+      new_release_published: ${{ steps.semantic.outputs.new_release_published }}
+      new_release_version: ${{ steps.semantic.outputs.new_release_version }}
+      new_release_git_tag: ${{ steps.semantic.outputs.new_release_git_tag }}
+      new_release_notes: ${{ steps.semantic.outputs.new_release_notes }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Semantic Release
+        id: semantic
+        uses: cycjimmy/semantic-release-action@v6
+        with:
+          semantic_version: 24.2.6
+          extra_plugins: |
+            @semantic-release/git
+            @google/semantic-release-replace-plugin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    name: Build release binaries
+    needs: semantic-release
+    if: needs.semantic-release.outputs.new_release_published == 'true'
+    uses: ./.github/workflows/_build.yaml
+    with:
+      # Build the exact tagged commit so the compiled-in version matches the tag.
+      ref: ${{ needs.semantic-release.outputs.new_release_git_tag }}
+
+  package:
+    name: Package & publish
+    needs: [semantic-release, build]
+    if: needs.semantic-release.outputs.new_release_published == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # attach the .7z asset and promote the draft release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.semantic-release.outputs.new_release_git_tag }}
 
       - name: Download binaries
         uses: actions/download-artifact@v8
@@ -48,46 +96,48 @@ jobs:
           name: ${{ needs.build.outputs.artifact-name }}
           path: bin
 
-      - name: Resolve version
-        id: ver
-        run: |
-          base="$(grep -oP 'local version = "\K[0-9.]+' xmake.lua)"
-          version="v${base}-dev.${GITHUB_RUN_NUMBER}"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Resolved version=$version"
-
       - name: Assemble mod archive
+        id: pkg
         run: |
           set -euo pipefail
-          stage="imgui-vr-helper-${{ steps.ver.outputs.version }}"
+          tag="${{ needs.semantic-release.outputs.new_release_git_tag }}"
+          stage="imgui-vr-helper-${tag}"
           mkdir -p "$stage/SKSE/Plugins" "$stage/Developer"
           cp bin/imgui-vr-helper.dll bin/imgui-vr-helper.pdb "$stage/SKSE/Plugins/"
           # Docs + license for the in-mod folder.
           cp README.md COPYING COPYING.LESSER EXCEPTIONS.md "$stage/"
-          # LGPL-3.0 vendored API pack for client-mod developers (the same files
-          # SCS and other consumers copy into their tree).
-          cp api/*.h api/*.cpp api/COPYING.LESSER "$stage/Developer/"
+          # LGPL-3.0 client API pack for mod developers: the headers + handshake stub
+          # plus the CMake FetchContent target (the recommended way to consume it).
+          cp api/*.h api/*.cpp api/CMakeLists.txt api/COPYING.LESSER "$stage/Developer/"
           7z a -t7z -mx=9 "${stage}.7z" "$stage"
+          echo "archive=${stage}.7z" >> "$GITHUB_OUTPUT"
           echo "Built ${stage}.7z:"
           7z l "${stage}.7z"
 
-      - name: Upload archive artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: imgui-vr-helper-archive
-          path: imgui-vr-helper-*.7z
-          if-no-files-found: error
+      # semantic-release created the GitHub Release as a draft (changelog body).
+      # Attach the .7z, then promote to published — only now that the asset exists,
+      # so a failed build/package leaves a hidden draft instead of a download-less tag.
+      - name: Attach archive and publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.semantic-release.outputs.new_release_git_tag }}
+          ARCHIVE: ${{ steps.pkg.outputs.archive }}
+        run: |
+          gh release upload "$TAG" "$ARCHIVE" --clobber
+          gh release edit "$TAG" --draft=false
 
-  # DISABLED. Flip `if: false` to the version gate below once a Nexus modid exists
-  # and a real GitHub release is desired:
-  #   if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-  publish:
-    name: Publish GitHub release
-    needs: package
-    if: ${{ false }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Placeholder
-        run: echo "Publishing is disabled until a Nexus modid is assigned."
+  # Upload to Nexus, reusing semantic-release's curated notes as the changelog.
+  # Default is a dry-run (report only). Set repo variable NEXUS_AUTO_UPLOAD=true
+  # (plus the UNEX_* secrets) to upload for real on push-driven releases.
+  nexus:
+    name: Nexus upload
+    needs: [semantic-release, build, package]
+    if: needs.semantic-release.outputs.new_release_published == 'true'
+    uses: ./.github/workflows/nexus-upload.yaml
+    with:
+      tag: ${{ needs.semantic-release.outputs.new_release_git_tag }}
+      dry_run: ${{ vars.NEXUS_AUTO_UPLOAD == 'true' && 'false' || 'true' }}
+      changelog: ${{ needs.semantic-release.outputs.new_release_notes }}
+    secrets:
+      UNEX_NEXUSMODS_SESSION_COOKIE: ${{ secrets.UNEX_NEXUSMODS_SESSION_COOKIE }}
+      UNEX_APIKEY: ${{ secrets.UNEX_APIKEY }}
