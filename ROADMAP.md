@@ -1,12 +1,13 @@
 # imgui-vr-helper roadmap
 
-Status: **core working, pre-release** — a standalone SKSE plugin that lets ImGui-based mods become
+Status: **stable** — a standalone SKSE plugin that lets ImGui-based mods become
 VR-interactive without each mod rebuilding the overlay/input plumbing. Clients register over an
 SKSE-messaging handshake (`GetImGuiVRHelperInterface001`), render their ImGui frame into a
 helper-owned panel RTV, and the helper composites it as a free-floating 3D quad in front of the
 player (per-eye projection so the eyes converge) and — optionally — as a SteamVR Dashboard panel.
 
-Skyrim Community Shaders / Open Shaders is the first client (see its `ImGuiVRHelperClient`).
+Skyrim Community Shaders / Open Shaders is the first client (see its `VR` feature's helper methods);
+the SKSE Menu Framework is the second.
 
 ## Working today
 
@@ -28,12 +29,12 @@ Skyrim Community Shaders / Open Shaders is the first client (see its `ImGuiVRHel
 
 ## Near-term
 
-### Release wiring (blocked on a Nexus modid)
+### Release wiring (armed on manual dispatch)
 
-`release.yaml` is intentionally disabled — it builds + packages on manual dispatch but does not
-publish. When a modid exists: re-enable the tag trigger, add `nexus-upload.yaml` (mirror
-devbench's), flip the `publish` job's guard. The version lives in `xmake.lua`; there is no
-semantic-release.
+`release.yaml` runs the full semantic-release pipeline — version bump in `xmake.lua`, tag, GitHub
+Release, then `nexus-upload.yaml` (modid 183466) — but is `workflow_dispatch`-only so nothing
+auto-publishes yet. To arm auto-release on every push to main, add back the `push: branches:
+[main]` trigger; Nexus stays dry-run until repo variable `NEXUS_AUTO_UPLOAD=true`.
 
 ### Host-independent unit tests
 
@@ -43,9 +44,10 @@ registration, and the dashboard picker's active-client resolution. Gate CI on it
 
 ### vcpkg port for the API pack
 
-Today consumers vendor `api/*.{h,cpp}` by hand (SCS keeps a copy under
-`extern/imgui-vr-helper-api/`). A `cmake/ports/imgui-vr-helper-api` vcpkg port (mirror devbench's
-`devbench-api`) would let CMake-based clients consume the API surface without manual copies.
+CMake clients consume the API via `FetchContent` against `api/` (the `ImGuiVRHelper::api` INTERFACE
+target); Community Shaders and the SKSE Menu Framework both use it. A `cmake/ports/imgui-vr-helper-api`
+vcpkg port (mirror devbench's `devbench-api`) would additionally let vcpkg-based clients pull the
+API surface through their manifest.
 
 ## Later
 
@@ -53,4 +55,3 @@ Today consumers vendor `api/*.{h,cpp}` by hand (SCS keeps a copy under
   ImGui for VR," not new per-VR features. Revisit only if a concrete client needs it.
 - **SteamVR virtual keyboard** for text inputs on the dashboard path (`ShowKeyboardForOverlay`).
 - **Multiple concurrent dashboard clients** if the single-picker model proves limiting.
-- **Submodule the API pack into clients** instead of vendoring, once there's a remote to point at.

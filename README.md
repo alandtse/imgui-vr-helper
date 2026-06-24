@@ -1,57 +1,113 @@
 # ImGuiVRHelper
 
-A SKSE plugin that bridges ImGui-based mods to Skyrim VR.
+A standalone SKSE plugin that makes any ImGui-based mod interactive in the Skyrim
+VR headset — without each mod rebuilding the OpenVR overlay, controller input,
+button-combo, and laser-pointer plumbing.
 
-ImGuiVRHelper owns the OpenVR overlay submission, controller input
-collection, button-combo handling, and laser-pointer raycasting that other
-SKSE mods need to make their ImGui interfaces interactive in the headset.
-Client mods register at startup, render their ImGui frames into a
-helper-owned render target, and consume raw VR input via callback. The
-helper does not link against any client's ImGui — clients keep their own
-version forever.
+A client mod renders its existing ImGui frame into a helper-owned render target;
+the helper composites it as a flat 3D panel in front of the player and feeds back
+wand pointing, clicks, scroll, and button combos. The helper never links a
+client's ImGui — clients keep their own version forever and talk to the helper
+through a small versioned C-ABI obtained over an SKSE-messaging handshake.
 
-## Status
+## What it does for developers
 
-**Pre-alpha — design phase.** This repository currently contains a
-non-functional skeleton that compiles and exports the public API
-handshake. Real overlay submission, input handling, and combo
-machinery will be ported from
-[Skyrim Community Shaders](https://github.com/doodlum/skyrim-community-shaders)
-in subsequent PRs. See
-[`docs/development/vr-imgui-helper-plan.md`](https://github.com/doodlum/skyrim-community-shaders/blob/main/docs/development/vr-imgui-helper-plan.md)
-in SCS for the full design and migration plan.
+You already have a working flat-screen ImGui menu. In VR it's invisible — or worse,
+smeared onto the game's curved HUD. ImGuiVRHelper turns it into a proper headset
+panel for a few lines of integration:
 
-## Repository layout
+- **Bring your own ImGui.** You render into a helper panel RTV; the helper owns
+  OpenVR submission and never shares an ImGui instance with you, so ImGui version
+  drift can't break you — it composites pixels, not ABI.
+- **VR input, mapped for you.** Wand laser → panel cursor, trigger → click, stick →
+  scroll, delivered into your ImGui IO. Register button **combos** (with a built-in
+  rebinding table) instead of hand-rolling controller matching.
+- **Focus, overlays, HUD.** The helper owns menu open/close/cycle across all
+  clients, an always-on HUD-mode layer for persistent overlays, drag-to-reposition,
+  and an optional SteamVR dashboard surface.
+- **One handshake, then a vtable.** No per-frame messaging — you call a normal C++
+  interface.
 
+## Add it to your mod
+
+### 1. Depend on the API (`api/`, LGPL-3.0)
+
+CMake — fetch it pinned (recommended; nothing vendored to keep in sync):
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(
+  ImGuiVRHelper
+  GIT_REPOSITORY https://github.com/alandtse/imgui-vr-helper.git
+  GIT_TAG        v1.0.0          # a release tag or commit
+  GIT_SUBMODULES ""              # api/ needs none of the helper's submodules
+  SOURCE_SUBDIR  api             # configure only the api/ CMake target
+)
+FetchContent_MakeAvailable(ImGuiVRHelper)
+target_link_libraries(MyMod PRIVATE ImGuiVRHelper::api)
 ```
-api/                    LGPL-3.0 — public header surface that clients vendor
-src/                    GPL-3.0 with modding exception — helper internals
-lib/commonlibsse-ng/    submodule — VR-targeted CommonLibSSE-NG runtime
+
+`ImGuiVRHelper::api` is an INTERFACE target: it compiles the handshake stub into
+your plugin and adds the `api/` headers, inheriting your CommonLibSSE / Dear ImGui /
+DX11 backend / nlohmann_json. (You can also vendor `api/*` directly — it's LGPL and
+self-contained — but FetchContent keeps the dependency and its version explicit.)
+
+### 2. Connect from your kPostPostLoad handler
+
+```cpp
+#include "ImGuiVRHelperClientSDK.h"
+ImGuiVRHelperPluginAPI::Client g_vr;
+
+// in your own SKSE message handler, at kPostPostLoad:
+g_vr.Connect("MyMod", versionStr, ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus);
 ```
 
-Clients only ever consume `api/`. The DLL is loaded at runtime by SKSE;
-clients have no link-time dependency on the helper.
+Call `Connect` from your own SKSE lifecycle handler at **kPostPostLoad** — the
+helper's listener is up by then regardless of load order. If the helper isn't
+installed, `Connect` returns false and you keep your flat-screen path.
 
-## Licensing
+### 3. Drive it each frame
 
-Split license, designed so non-GPL clients can integrate without GPL
-infection:
+```cpp
+g_vr.Update(menuOpen);   // focus reconcile + wand input, in one call
+// ... your NewFrame / windows / ImGui::Render() ...
+g_vr.RenderFrame();      // VR: flat panel only; flat screen / no helper: your normal draw
+```
 
-- **`src/`** — GPL-3.0-or-later WITH a Skyrim modding exception (lifted
-  verbatim from Skyrim Community Shaders). See [COPYING](./COPYING) and
-  [EXCEPTIONS.md](./EXCEPTIONS.md).
-- **`api/`** — LGPL-3.0-or-later. Clients vendor `api/*.h` and
-  `api/ImGuiVRHelperAPI.cpp` under permissive terms; their own code stays
-  under their own license. The LGPL "must allow relinking" requirement is
-  satisfied trivially because the messaging handshake makes the helper DLL
-  replaceable at runtime. See [COPYING.LESSER](./COPYING.LESSER).
+`RenderFrame()` is the drop-in replacement for a bare
+`ImGui_ImplDX11_RenderDrawData(...)`. **Do not also draw your menu into the game's
+frame in VR:** a flat menu painted into Skyrim's `kHUDMENU` is wrapped onto the
+engine's curved world HUD and comes out sheared and mispositioned. `RenderFrame()`
+hides that branch. (If you instead hook at `IDXGISwapChain::Present` — so your
+in-game draw lands on the desktop mirror, not the headset — keep your normal draw
+_and_ add `RenderToPanel()`; that's how Community Shaders integrates.)
 
-Each source file carries an SPDX identifier in its header.
+### 4. Combos + a bindings UI (optional)
+
+```cpp
+auto open = g_vr.AddCombo("Open menu", keys, [](const auto* k, auto n){ /* persist */ });
+if (g_vr.Fired(open)) menuOpen = true;
+g_vr.DrawBindingsTable();   // drop-in, rebindable controller-map table for your settings UI
+```
+
+The full SDK is `api/ImGuiVRHelperClientSDK.h`. **Community Shaders** and **SKSE
+Menu Framework** are working reference integrations.
+
+## How it works
+
+- Each client renders into a **helper-owned panel texture** (RTV). The helper
+  composites that texture as a flat quad, per eye, with proper stereo convergence —
+  never onto the game's curved HUD.
+- **Separate ImGui instances.** The helper composites _pixels_, not ABI, so a
+  client's ImGui version is irrelevant.
+- **Handshake:** the client dispatches one SKSE message to `ImGuiVRHelper`; the
+  helper hands back a `GetApiFunction` vtable, and every later call goes through it.
+- The helper owns the Present hook and OpenVR access on the correct thread; clients
+  never touch OpenVR.
 
 ## Build
 
-Requires [xmake](https://xmake.io/) and Visual Studio 2022 with the C++
-desktop workload.
+Requires [xmake](https://xmake.io/) and Visual Studio 2022 (C++ desktop workload).
 
 ```sh
 git clone --recurse-submodules <url>
@@ -59,79 +115,28 @@ cd imgui-vr-helper
 xmake
 ```
 
-Set the `SkyrimVRPluginTargets` environment variable to a semicolon-separated
-list of Skyrim VR Data directories (or mod-manager mod folders) to auto-deploy
-the built DLL on every build. This is intentionally distinct from the more
-general `SkyrimPluginTargets` convention — the helper is VR-only, so its
-deploy targets shouldn't collide with non-VR plugins' deploy paths.
+Set `SkyrimVRPluginTargets` (a `;`-separated list of Skyrim VR `Data` dirs or
+mod-manager folders) to auto-deploy on every build — distinct from the general
+`SkyrimPluginTargets` convention since the helper is VR-only.
 
-## Using ImGuiVRHelper from a client mod
+## Licensing
 
-Vendor four files into your client's source tree, or pull this repo as a
-submodule and add `api/` to your include path:
+Split so non-GPL client mods can integrate without GPL infection:
 
-- `api/ImGuiVRHelperAPI.h`
-- `api/ImGuiVRHelperAPI.cpp`
-- `api/ImGuiVRHelperTypes.h`
-- `api/ImGuiVRHelperInput.h`
-
-In your `kPostPostLoad` SKSE message handler (`kPostPostLoad`, not `kPostLoad` —
-it fires after every plugin's `kPostLoad`, so the helper's messaging listener is
-registered regardless of load order; the handshake is also retryable if you call
-earlier):
-
-```cpp
-#include "ImGuiVRHelperAPI.h"
-
-namespace API = ImGuiVRHelperPluginAPI;
-
-API::IImGuiVRHelperInterface001* g_helper = nullptr;
-
-// kPostPostLoad
-g_helper = API::GetImGuiVRHelperInterface001();
-if (!g_helper) {
-    // Helper not installed — fall back to flatscreen-only behavior.
-    return;
-}
-
-uint32_t client_id = g_helper->RegisterClient("MyMod", &OnFrame, /*user*/ nullptr, /*flags*/ 0);
-```
-
-### Rendering: feed the panel, not the game's HUD
-
-In VR, the helper composites your menu as a flat 3D panel from a texture you
-render into (see `RenderToPanel` in the SDK). **When connected, that panel is your
-only headset output — do not _also_ run your normal flat-screen ImGui draw into
-the game's frame.** A flat menu drawn into Skyrim's HUD/menu target (`kHUDMENU`)
-gets wrapped onto the engine's **curved world HUD** and comes out sheared and
-mispositioned — a second, mangled copy floating next to the correct flat panel.
-This is the core reason the helper exists: a flat-screen ImGui mod's instinct
-("draw into the game's UI") is exactly what looks broken in VR.
-
-Use the one-call output — it hides that branch for you:
-
-```cpp
-ImGui::Render();
-g_vr.RenderFrame();   // connected (VR) -> flat panel only; else -> your normal draw
-```
-
-`RenderFrame()` is the drop-in replacement for a bare
-`ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData())`. (The device context is
-optional — the SDK derives it from the panel; pass one only for a deferred-context
-renderer.) Pair it with `Update(menuOpen)` once per frame, which folds
-`ReconcileFocus` + `PumpInput` (focus sync + wand input) into one call.
-
-> Note: if you hook at `IDXGISwapChain::Present` (the desktop swapchain/mirror)
-> rather than the game's menu render, your in-game draw lands on the mirror — which
-> isn't shown in the headset — so you can keep doing both your normal draw _and_ > `RenderToPanel()`. That's how Community Shaders integrates. `RenderFrame()` is for
-> the common case where your draw would otherwise land in the headset.
+- **`src/`** — GPL-3.0-or-later WITH a Skyrim modding exception. See
+  [COPYING](./COPYING) and [EXCEPTIONS.md](./EXCEPTIONS.md).
+- **`api/`** — LGPL-3.0-or-later; the only files a client consumes. Every `api/`
+  file carries an LGPL SPDX header, and the directory ships its own
+  [COPYING](./api/COPYING) (GPL-3.0, which LGPL-3.0 incorporates) and
+  [COPYING.LESSER](./api/COPYING.LESSER) (the LGPL additional permissions) so a
+  vendored copy is self-sufficient. The LGPL relinking requirement is satisfied
+  because the messaging handshake makes the helper DLL replaceable at runtime.
 
 ## Credits
 
-- Handshake pattern derived from
-  [SkyrimVRESL](https://github.com/alandtse/SkyrimVRESL), itself credited to
-  [HIGGS](https://github.com/adamhynek/higgs).
-- xmake plugin scaffolding adapted from
+- Handshake pattern from [SkyrimVRESL](https://github.com/alandtse/SkyrimVRESL),
+  itself crediting [HIGGS](https://github.com/adamhynek/higgs).
+- xmake scaffolding adapted from
   [Intellightent](https://github.com/alandtse/Intellightent).
 - VR overlay/input infrastructure ported from
   [Skyrim Community Shaders](https://github.com/doodlum/skyrim-community-shaders).
