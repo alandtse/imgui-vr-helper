@@ -44,6 +44,9 @@ namespace
 	// RegisterListener overload defaults to filter="SKSE", which is the
 	// canonical pattern every other SKSE plugin uses for lifecycle.
 
+	// Defined below; registered at kPostLoad (see the kPostLoad case).
+	void OnPluginMessage(SKSE::MessagingInterface::Message* msg);
+
 	void OnSKSELifecycle(SKSE::MessagingInterface::Message* msg)
 	{
 		if (!msg)
@@ -64,6 +67,22 @@ namespace
 			ImGuiVRHelper::Overlay::LoadSettings();
 			ImGuiVRHelper::Overlay::WriteDefaultsIfMissing();
 			ImGuiVRHelper::Overlay::ApplyLogLevel();
+
+			// Register the client-handshake (wildcard) listener HERE, not in
+			// SKSEPluginLoad. In SKSEVR a null-sender listener is attached only
+			// to plugins ALREADY LOADED at registration time (PluginManager
+			// copies it into each existing sender's list). Registering during
+			// SKSEPlugin_Load — mid-load — therefore reaches only clients that
+			// sort before us; clients loading later (e.g. SKSEMenuFramework)
+			// could never hand-shake. By kPostLoad every plugin has finished
+			// loading, so the listener reaches all of them regardless of load
+			// order. This is the canonical pattern (cf. SkyrimVRESL, and the
+			// SKSE PluginAPI.h messaging notes). Clients correspondingly
+			// request the interface at kPostPostLoad.
+			if (auto* m = SKSE::GetMessagingInterface();
+				!m || !m->RegisterListener(nullptr, OnPluginMessage)) {
+				logs::error("failed to register client handshake listener");
+			}
 			break;
 
 		case SKSE::MessagingInterface::kPostPostLoad:
@@ -160,13 +179,12 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 	if (!messaging->RegisterListener(OnSKSELifecycle)) {
 		SKSE::stl::report_and_fail("failed to register SKSE lifecycle listener"sv);
 	}
-	// Wildcard filter for client handshakes. OnPluginMessage skips
-	// sender=="SKSE" so the lifecycle handler stays the single source of
-	// truth for SKSE-emitted messages even if the wildcard also delivers
-	// them.
-	if (!messaging->RegisterListener(nullptr, OnPluginMessage)) {
-		SKSE::stl::report_and_fail("failed to register plugin message listener"sv);
-	}
+	// NOTE: the wildcard client-handshake listener (RegisterListener(nullptr,
+	// OnPluginMessage)) is intentionally NOT registered here. In SKSEVR a
+	// null-sender listener only attaches to plugins already loaded at
+	// registration time, so registering mid-load would miss any client that
+	// loads after us. It is registered at kPostLoad instead (see
+	// OnSKSELifecycle), once all plugins exist.
 
 	logs::info("ImGuiVRHelper loaded");
 	return true;
