@@ -43,6 +43,13 @@ namespace ImGuiVRHelper::Overlay
 		inline constexpr float kMinMenuScale = 0.1f;
 		inline constexpr float kMaxMenuScale = 5.0f;
 
+		// Fraction of each eye's view the HUD quad covers (see hudCoverage). Min/max
+		// are shared by the settings slider and the render-time clamp so the two
+		// can't disagree.
+		inline constexpr float kDefaultHUDCoverage = 0.5f;
+		inline constexpr float kMinHUDCoverage = 0.2f;
+		inline constexpr float kMaxHUDCoverage = 1.0f;
+
 		// HMD-relative defaults (meters).
 		inline constexpr float kDefaultHMDOffsetX = 0.195f;
 		inline constexpr float kDefaultHMDOffsetY = -0.375f;
@@ -174,9 +181,10 @@ namespace ImGuiVRHelper::Overlay
 		/// position, since HMD frustums are asymmetric) directly from the
 		/// per-eye projection tangents, so the HUD covers the actual view
 		/// like a screen rather than a small fixed-FOV window. 1.0 = edge
-		/// to edge (may clip at the lens mask on some HMDs); 0.92 leaves a
-		/// small comfort margin. Clamped to [0.5, 1.0].
-		float hudCoverage = 0.92f;
+		/// to edge (may clip at the lens mask on some HMDs); smaller values
+		/// shrink it toward a comfortable window. Clamped to
+		/// [kMinHUDCoverage, kMaxHUDCoverage].
+		float hudCoverage = Config::kDefaultHUDCoverage;
 
 		/// Base resolution of every overlay panel texture, before HUD
 		/// supersampling. Higher = sharper but more VRAM; pick to suit the

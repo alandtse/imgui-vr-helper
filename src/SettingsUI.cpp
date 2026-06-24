@@ -676,7 +676,8 @@ namespace ImGuiVRHelper::SettingsUI
 		{
 			ImGui::TextDisabled("HUD geometry");
 			ImGui::SliderFloat("HUD depth (m)", &s.hudDepth, 0.5f, 3.0f, "%.2f");
-			ImGui::SliderFloat("HUD coverage", &s.hudCoverage, 0.5f, 1.0f, "%.2f");
+			ImGui::SliderFloat("HUD coverage", &s.hudCoverage, Overlay::Config::kMinHUDCoverage,
+				Overlay::Config::kMaxHUDCoverage, "%.2f");
 			ImGui::TextDisabled("    Fraction of the view the HUD fills; 1.0 may clip at the lens.");
 
 			ImGui::Spacing();
@@ -941,7 +942,11 @@ namespace ImGuiVRHelper::SettingsUI
 			auto& state = Overlay::State::GetSingleton();
 			auto& s = state.settings;
 
-			ImGui::SetNextWindowSize(ImVec2(700, 600), ImGuiCond_FirstUseEver);
+			// Fill the whole panel by default so the settings occupy the full texture
+			// rather than floating as a small window in an otherwise-empty quad. Still
+			// movable/resizable within the panel for the session (no ini persistence).
+			ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_FirstUseEver);
+			ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize, ImGuiCond_FirstUseEver);
 			// Title shows the version; "###" keeps a stable window ID across versions.
 			if (!ImGui::Begin("ImGuiVRHelper Settings  v" IMGUI_VR_HELPER_VERSION_STRING "###ImGuiVRHelperSettings",
 					&g_visible)) {

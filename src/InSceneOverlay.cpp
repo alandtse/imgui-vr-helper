@@ -610,7 +610,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 	{
 		ZoneScopedN("InScene::HUDPass");
 		const float hudDepth = std::max(0.3f, s.hudDepth);  // sanity floor
-		const float coverage = std::clamp(s.hudCoverage, 0.5f, 1.0f);
+		const float coverage = std::clamp(s.hudCoverage, Overlay::Config::kMinHUDCoverage, Overlay::Config::kMaxHUDCoverage);
 
 		float projL[4], projR[4];
 		Util::CachedProjectionRaw(vr::Eye_Left, projL[0], projL[1], projL[2], projL[3]);
@@ -655,7 +655,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 			return;
 
 		const float hudDepth = std::max(0.3f, s.hudDepth);
-		const float coverage = std::clamp(s.hudCoverage, 0.5f, 1.0f);
+		const float coverage = std::clamp(s.hudCoverage, Overlay::Config::kMinHUDCoverage, Overlay::Config::kMaxHUDCoverage);
 		float projL[4], projR[4];
 		Util::CachedProjectionRaw(vr::Eye_Left, projL[0], projL[1], projL[2], projL[3]);
 		Util::CachedProjectionRaw(vr::Eye_Right, projR[0], projR[1], projR[2], projR[3]);
