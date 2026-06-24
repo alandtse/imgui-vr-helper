@@ -183,7 +183,7 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::Spacing();
 				ImGui::TextDisabled("Reposition in VR: hold grip on a controller and move your hand.");
 				ImGui::TextDisabled("Push that hand's thumbstick up/down to move it farther/closer.");
-				ImGui::TextDisabled("(Enable \"Grip-to-drag repositioning\" under Interaction first.)");
+				ImGui::TextDisabled("(Toggle under Interaction > Grip-to-drag repositioning.)");
 			}
 
 			if (ImGui::CollapsingHeader("HMD-relative offsets")) {

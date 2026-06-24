@@ -111,8 +111,10 @@ namespace ImGuiVRHelper::Overlay
 
 		bool enableWandPointing = true;
 
-		// Drag-to-reposition.
-		bool enableDragToReposition = false;
+		// Drag-to-reposition. On by default so the documented grip-to-move gesture
+		// works out of the box; gated to off-panel grip so it can't hijack on-panel
+		// menu input.
+		bool enableDragToReposition = true;
 		float autoResetDistance = 1000.0f;  ///< game units; 0 disables auto-reset
 
 		/// When true, an overlay may only be OPENED while the game is paused
