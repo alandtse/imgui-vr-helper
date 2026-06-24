@@ -102,13 +102,11 @@ jobs:
           set -euo pipefail
           tag="${{ needs.semantic-release.outputs.new_release_git_tag }}"
           stage="imgui-vr-helper-${tag}"
-          mkdir -p "$stage/SKSE/Plugins" "$stage/Developer"
+          # User archive ships only the plugin; docs/license live in the repo and
+          # the GitHub Release page, and the LGPL client API is consumed via source
+          # (FetchContent), not from the Nexus download.
+          mkdir -p "$stage/SKSE/Plugins"
           cp bin/imgui-vr-helper.dll bin/imgui-vr-helper.pdb "$stage/SKSE/Plugins/"
-          # Docs + license for the in-mod folder.
-          cp README.md COPYING COPYING.LESSER EXCEPTIONS.md "$stage/"
-          # LGPL-3.0 client API pack for mod developers: the headers + handshake stub
-          # plus the CMake FetchContent target (the recommended way to consume it).
-          cp api/*.h api/*.cpp api/CMakeLists.txt api/README.md api/COPYING api/COPYING.LESSER "$stage/Developer/"
           7z a -t7z -mx=9 "${stage}.7z" "$stage"
           echo "archive=${stage}.7z" >> "$GITHUB_OUTPUT"
           echo "Built ${stage}.7z:"
