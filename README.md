@@ -97,6 +97,32 @@ if (!g_helper) {
 uint32_t client_id = g_helper->RegisterClient("MyMod", &OnFrame, /*user*/ nullptr, /*flags*/ 0);
 ```
 
+### Rendering: feed the panel, not the game's HUD
+
+In VR, the helper composites your menu as a flat 3D panel from a texture you
+render into (see `RenderToPanel` in the SDK). **When connected, that panel is your
+only headset output — do not _also_ run your normal flat-screen ImGui draw into
+the game's frame.** A flat menu drawn into Skyrim's HUD/menu target (`kHUDMENU`)
+gets wrapped onto the engine's **curved world HUD** and comes out sheared and
+mispositioned — a second, mangled copy floating next to the correct flat panel.
+This is the core reason the helper exists: a flat-screen ImGui mod's instinct
+("draw into the game's UI") is exactly what looks broken in VR.
+
+Gate your final draw on the connection:
+
+```cpp
+ImGui::Render();
+if (g_vr.IsConnected()) {
+    g_vr.RenderToPanel(myD3DContext);   // VR: flat panel is the sole output
+} else {
+    ImGui_ImplDX11_RenderDrawData(...); // flat screen / helper absent
+}
+```
+
+Hooking at `IDXGISwapChain::Present` (the desktop swapchain/mirror) instead of the
+game's menu render is also safe, since the mirror window isn't shown in the headset
+— that's how Community Shaders avoids the issue.
+
 ## Credits
 
 - Handshake pattern derived from
