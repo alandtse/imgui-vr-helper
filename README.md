@@ -1,34 +1,29 @@
 # ImGuiVRHelper
 
-A standalone SKSE plugin that makes any ImGui-based mod interactive in the Skyrim
-VR headset — without each mod rebuilding the OpenVR overlay, controller input,
-button-combo, and laser-pointer plumbing.
+A SKSE plugin that enables ImGui-based mods in VR. [Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/183466)
 
-A client mod renders its existing ImGui frame into a helper-owned render target;
-the helper composites it as a flat 3D panel in front of the player and feeds back
-wand pointing, clicks, scroll, and button combos. The helper never links a
-client's ImGui — clients keep their own version forever and talk to the helper
-through a small versioned C-ABI obtained over an SKSE-messaging handshake.
+## Users
 
-## What it does for developers
+ImGuiVRHelper is a framework other mods depend on and support must be added by
+the mod author.
 
-You already have a working flat-screen ImGui menu. In VR it's invisible — or worse,
-smeared onto the game's curved HUD. ImGuiVRHelper turns it into a proper headset
-panel for a few lines of integration:
+- **Open / close** a mod's overlay with that mod's binding, or the helper
+  defaults: open with **A/X** or **B/Y** on your off hand, close with **both
+  grips**. With no overlay up, the open combo (or **Shift+F4**) opens the
+  helper's own settings.
+- **Point** a controller at the panel to drive the cursor; **trigger** clicks,
+  **thumbstick** scrolls.
+- **Cycle** between open overlays with a **stick click** — left goes back, right
+  goes forward (while pointing off the panel).
+- **Reposition** by holding **grip** off the panel and moving your hand; push
+  that hand's thumbstick up/down to move it farther/closer. (On by default;
+  toggle under Settings > Interaction.)
+- All binds are rebindable in the settings, saved to
+  `Data/SKSE/Plugins/ImGuiVRHelper.toml`.
 
-- **Bring your own ImGui.** You render into a helper panel RTV; the helper owns
-  OpenVR submission and never shares an ImGui instance with you, so ImGui version
-  drift can't break you — it composites pixels, not ABI.
-- **VR input, mapped for you.** Wand laser → panel cursor, trigger → click, stick →
-  scroll, delivered into your ImGui IO. Register button **combos** (with a built-in
-  rebinding table) instead of hand-rolling controller matching.
-- **Focus, overlays, HUD.** The helper owns menu open/close/cycle across all
-  clients, an always-on HUD-mode layer for persistent overlays, drag-to-reposition,
-  and an optional SteamVR dashboard surface.
-- **One handshake, then a vtable.** No per-frame messaging — you call a normal C++
-  interface.
+## Developers
 
-## Add it to your mod
+Bring an existing ImGui menu into VR in four steps.
 
 ### 1. Depend on the API (`api/`, LGPL-3.0)
 
@@ -80,7 +75,7 @@ frame in VR:** a flat menu painted into Skyrim's `kHUDMENU` is wrapped onto the
 engine's curved world HUD and comes out sheared and mispositioned. `RenderFrame()`
 hides that branch. (If you instead hook at `IDXGISwapChain::Present` — so your
 in-game draw lands on the desktop mirror, not the headset — keep your normal draw
-_and_ add `RenderToPanel()`; that's how Community Shaders integrates.)
+_and_ add `RenderToPanel()`; that's how Open Shaders integrates.)
 
 ### 4. Combos + a bindings UI (optional)
 
@@ -90,8 +85,8 @@ if (g_vr.Fired(open)) menuOpen = true;
 g_vr.DrawBindingsTable();   // drop-in, rebindable controller-map table for your settings UI
 ```
 
-The full SDK is `api/ImGuiVRHelperClientSDK.h`. **Community Shaders** and **SKSE
-Menu Framework** are working reference integrations.
+The full SDK is `api/ImGuiVRHelperClientSDK.h`. [**Open Shaders**](https://github.com/alandtse/open-shaders) and [**SKSE
+Menu Framework**](https://github.com/alandtse/SKSE-Menu-Framework-3) are working reference integrations.
 
 ## How it works
 
@@ -110,21 +105,22 @@ Menu Framework** are working reference integrations.
 Requires [xmake](https://xmake.io/) and Visual Studio 2022 (C++ desktop workload).
 
 ```sh
-git clone --recurse-submodules <url>
+git clone --recurse-submodules https://github.com/alandtse/imgui-vr-helper.git
 cd imgui-vr-helper
 xmake
 ```
 
 Set `SkyrimVRPluginTargets` (a `;`-separated list of Skyrim VR `Data` dirs or
-mod-manager folders) to auto-deploy on every build — distinct from the general
-`SkyrimPluginTargets` convention since the helper is VR-only.
+mod-manager folders) to auto-deploy on every build.
 
 ## Licensing
 
 Split so non-GPL client mods can integrate without GPL infection:
 
-- **`src/`** — GPL-3.0-or-later WITH a Skyrim modding exception. See
-  [COPYING](./COPYING) and [EXCEPTIONS.md](./EXCEPTIONS.md).
+- **`src/`** — [GPL-3.0-or-later](COPYING) WITH a [Modding Exception and a
+  GPL-3.0 Linking Exception (with Corresponding Source)](EXCEPTIONS.md), where:
+  - **Modded Code** — Skyrim and its variants
+  - **Modding Libraries** — [SKSE](https://skse.silverlock.org/), CommonLib and variants
 - **`api/`** — LGPL-3.0-or-later; the only files a client consumes. Every `api/`
   file carries an LGPL SPDX header, and the directory ships its own
   [COPYING](./api/COPYING) (GPL-3.0, which LGPL-3.0 incorporates) and
@@ -134,9 +130,8 @@ Split so non-GPL client mods can integrate without GPL infection:
 
 ## Credits
 
-- Handshake pattern from [SkyrimVRESL](https://github.com/alandtse/SkyrimVRESL),
+- Handshake pattern from [SkyrimVRESL](https://github.com/Nightfallstorm/SkyrimVRESL),
   itself crediting [HIGGS](https://github.com/adamhynek/higgs).
-- xmake scaffolding adapted from
-  [Intellightent](https://github.com/alandtse/Intellightent).
-- VR overlay/input infrastructure ported from
-  [Skyrim Community Shaders](https://github.com/doodlum/skyrim-community-shaders).
+- VR overlay/input infrastructure ported from my earlier work in
+  [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders)
+  and [Open Shaders](https://github.com/alandtse/open-shaders).
