@@ -29,7 +29,7 @@ on:
       mod_filename:
         description: "Nexus file name (without extension)."
         required: false
-        default: "imgui-vr-helper"
+        default: "ImGui VR Helper"
       dry_run:
         description: "If true, only report the planned upload; never upload."
         required: false
@@ -55,7 +55,7 @@ on:
       mod_filename:
         required: false
         type: string
-        default: "imgui-vr-helper"
+        default: "ImGui VR Helper"
       dry_run:
         required: false
         type: string
@@ -228,7 +228,7 @@ jobs:
       mod_version: ${{ needs.prepare.outputs.version }}
       mod_filename: ${{ inputs.mod_filename || 'imgui-vr-helper' }}
       changelog: ${{ needs.prepare.outputs.changelog }}
-      file_description: "imgui-vr-helper ${{ needs.prepare.outputs.version }} — SKSE VR ImGui overlay/menu/input helper. See changelog."
+      file_description: "See Description → Requirements for installation instructions. PDB is for crash debugging and can be removed."
       check_existing: true
     secrets:
       UNEX_NEXUSMODS_SESSION_COOKIE: ${{ secrets.UNEX_NEXUSMODS_SESSION_COOKIE }}
