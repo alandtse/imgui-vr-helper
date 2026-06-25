@@ -69,6 +69,22 @@ g_vr.Update(menuOpen);   // focus reconcile + wand input, in one call
 g_vr.RenderFrame();      // VR: flat panel only; flat screen / no helper: your normal draw
 ```
 
+- **Focus Sync Note:** `Update(menuOpen)` accepts `menuOpen` by reference. The helper will modify this boolean to `false` if the user closes the panel or switches focus to another mod. If your mod runs internal state machine triggers on menu open/close (e.g. pausing the game or locking keyboard/mouse input), you must check if `menuOpen` was mutated by `Update()` and synchronize your managers accordingly (e.g., call `CloseMenu()`).
+
+- **Always-On HUD overlays (HUD Mode):** For rendering a transparent HUD overlay (like crosshairs, widgets, or stats) instead of an interactive menu, connect using the `kClientFlag_HUDMode` flag and call `RenderHud`:
+
+  ```cpp
+  // Connect:
+  g_vr.Connect("MyHUD", versionStr, ImGuiVRHelperPluginAPI::kClientFlag_HUDMode);
+
+  // Each frame:
+  g_vr.RenderHud(device, context, displaySize, []() {
+      // standard ImGui HUD draw calls here
+  });
+  ```
+
+  HUD-mode clients bypass focus gating and are composited at a fixed, HMD-relative depth (~1.5m forward).
+
 `RenderFrame()` is the drop-in replacement for a bare
 `ImGui_ImplDX11_RenderDrawData(...)`. **Do not also draw your menu into the game's
 frame in VR:** a flat menu painted into Skyrim's `kHUDMENU` is wrapped onto the
