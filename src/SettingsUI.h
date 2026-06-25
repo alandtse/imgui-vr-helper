@@ -36,23 +36,13 @@ namespace ImGuiVRHelper::SettingsUI
 	void Toggle();
 
 	/// Returns true iff the settings window is currently visible —
-	/// either toggled open via the hotkey/combo, or forced visible
-	/// because the SteamVR dashboard is showing the helper's panel
-	/// (see SetForceVisible).
+	/// either toggled open via the hotkey/combo, or quick select is active.
 	bool IsVisible();
-
-	/// Force the settings window to render even when the user hasn't
-	/// toggled it open. HelperImpl sets this each frame from the
-	/// dashboard state so opening the SteamVR rail entry lands the user
-	/// straight on the settings/picker without needing the hotkey.
-	void SetForceVisible(bool forced);
 
 	/// Programmatically set self-UI visibility. Used by the focus reconciler
 	/// to auto-close the settings UI when a client takes focus (yield).
 	void SetVisible(bool visible);
 
-	/// The helper's own ImGui context. Used by the dashboard input pump
-	/// to route SteamVR dashboard mouse events into the right context.
-	/// nullptr before Init().
+	/// The helper's own ImGui context. nullptr before Init().
 	ImGuiContext* GetContext();
 }

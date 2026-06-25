@@ -99,8 +99,6 @@ namespace ImGuiVRHelper
 			uint32_t flags;
 			bool has_texture;         ///< texture was allocated (client has called GetPanel)
 			bool has_focus;           ///< this client currently holds focus
-			bool dashboard_eligible;  ///< client has kClientFlag_Dashboard (appears in dashboard picker)
-			bool dashboard_active;    ///< picker currently has this client selected (shown in dashboard rn)
 			bool hud_compositing;     ///< HUD-mode client painted recently → being composited this frame
 			bool hud_force_disabled;  ///< debug: compositing suppressed by the HUD-layers debug UI
 		};
@@ -201,12 +199,6 @@ namespace ImGuiVRHelper
 
 	private:
 		HelperImpl() = default;
-
-		// Dashboard subsystem reaches into m_clients / m_mutex / m_focused_client
-		// directly to mirror panel textures onto SteamVR dashboard surfaces
-		// each frame. Friend rather than passing accessors because the access
-		// is intrinsic to the helper's lifecycle, not a public API extension.
-		friend struct DashboardFriend;
 
 		std::mutex m_mutex;
 		uint32_t m_next_client_id = 1;
@@ -339,15 +331,6 @@ namespace ImGuiVRHelper
 		winrt::com_ptr<ID3D11Texture2D> texture;
 		winrt::com_ptr<ID3D11RenderTargetView> rtv;
 		winrt::com_ptr<ID3D11ShaderResourceView> srv;
-
-		// SteamVR Dashboard eligibility — purely informational on the
-		// per-client side. The helper owns ONE shared dashboard overlay
-		// (handle + thumbnail), and a picker inside the helper's
-		// settings panel chooses which kClientFlag_Dashboard client's
-		// panel texture is mirrored onto it. So we don't track per-
-		// client overlay handles here; whether this client appears in
-		// the picker is a function of (flags & kClientFlag_Dashboard).
-		std::string dashboard_thumbnail_path;  ///< optional icon for the picker entry; not yet rendered (v1 picker is text-only)
 	};
 
 	struct ComboRecord

@@ -7,7 +7,6 @@
 #include "pch.h"
 
 #include "ComboRecording.h"
-#include "Dashboard.h"
 #include "Globals.h"
 #include "HUDDemo.h"
 #include "HelperImpl.h"
@@ -126,22 +125,9 @@ namespace ImGuiVRHelper
 		// invoking it). The self-client passes an empty callback for the same
 		// reason; external clients can now simply pass nullptr.
 
-		// HUD-mode and Dashboard are mutually exclusive: HUD content is
-		// always-on overlay rendered through the world; Dashboard is a
-		// "look at this 2D panel and click" paradigm. Mixing them
-		// produces weird outcomes (subtitle text in the SteamVR rail).
-		// Strip the conflicting flag and warn.
 		uint32_t effective_flags = flags;
-		if ((effective_flags & ImGuiVRHelperPluginAPI::kClientFlag_HUDMode) &&
-			(effective_flags & ImGuiVRHelperPluginAPI::kClientFlag_Dashboard)) {
-			logs::warn(
-				"RegisterClient({}): kClientFlag_HUDMode + "
-				"kClientFlag_Dashboard set together; dropping "
-				"kClientFlag_Dashboard. HUD content doesn't belong "
-				"in the SteamVR dashboard rail.",
-				name);
-			effective_flags &= ~ImGuiVRHelperPluginAPI::kClientFlag_Dashboard;
-		}
+		// Strip the deprecated dashboard flag so it doesn't propagate internally.
+		effective_flags &= ~ImGuiVRHelperPluginAPI::kClientFlag_Dashboard;
 
 		std::scoped_lock lk{ m_mutex };
 		const uint32_t id = m_next_client_id++;
@@ -169,11 +155,6 @@ namespace ImGuiVRHelper
 			logs::info("UnregisterClient({})  // {}", client_id, it->second.name);
 			m_clients.erase(it);
 		}
-		// If the dashboard picker had this client selected, drop the
-		// selection so the next Tick falls back to the self-client.
-		// ClearActiveClientIfMatches is the lock-free variant that
-		// doesn't reach back into HelperImpl while we hold m_mutex.
-		Dashboard::ClearActiveClientIfMatches(client_id);
 		// Drop combos owned by this client.
 		for (auto it = m_combos.begin(); it != m_combos.end();) {
 			if (it->second.client_id == client_id) {
@@ -518,9 +499,6 @@ namespace ImGuiVRHelper
 			snap.flags = rec.flags;
 			snap.has_texture = (rec.texture != nullptr);
 			snap.has_focus = (m_focused_client == id);
-			snap.dashboard_eligible = (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_Dashboard) != 0;
-			snap.dashboard_active = (Dashboard::GetActiveClient() == id) ||
-			                        (Dashboard::GetActiveClient() == 0 && id == m_self_client_id);
 			const bool isHud = (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_HUDMode) != 0;
 			snap.hud_force_disabled = rec.hudForceDisabled;
 			snap.hud_compositing = isHud && !rec.hudForceDisabled && rec.lastPanelFrame != 0 &&
@@ -674,11 +652,6 @@ namespace ImGuiVRHelper
 		// because the helper drives its own rendering inline in
 		// DispatchFrame (we don't need to round-trip through the public
 		// callback path).
-		// Self-client is the default dashboard target — clicking the
-		// SteamVR dashboard's ImGuiVRHelper icon lands the user on this
-		// settings panel, with the picker (Registered Clients section)
-		// available to switch to other clients.
-		//
 		// RendersOnFocus: the helper unconditionally renders its
 		// settings UI into the self-client RTV (DispatchFrame's
 		// SettingsUI::Render block), so it trivially honors the
@@ -688,8 +661,7 @@ namespace ImGuiVRHelper
 			nullptr,
 			+[](const ImGuiVRHelperPluginAPI::Frame*, void*) { /* no-op */ },
 			nullptr,
-			ImGuiVRHelperPluginAPI::kClientFlag_Dashboard |
-				ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus);
+			ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus);
 
 		// Synthetic HUD-mode client for the Settings::showHUDDemo smoke
 		// test. Always registered (zero overhead until showHUDDemo
@@ -919,9 +891,7 @@ namespace ImGuiVRHelper
 	}
 
 	// Reconcile self-UI focus and latch combo rising edges. Order matters:
-	// runs after ComboRecording::Tick (so IsActive() reflects this frame) and
-	// the dashboard-visibility mirror runs before the focus reconciler (whose
-	// SettingsUI::IsVisible() check must see the forced-visible state).
+	// runs after ComboRecording::Tick (so IsActive() reflects this frame).
 	void HelperImpl::ReconcileSelfFocusAndCombos()
 	{
 		// Self-toggle combo (bound via "Rebind toggle"; default is Shift+F4 in
@@ -968,11 +938,6 @@ namespace ImGuiVRHelper
 				ReleaseFocus(m_focused_client);
 			}
 		}
-
-		// When the SteamVR dashboard shows the helper's own panel, force-render
-		// the settings/picker so the rail entry lands on a live menu.
-		SettingsUI::SetForceVisible(
-			Dashboard::IsDashboardVisible() && Dashboard::IsShowingSelf());
 
 		// Single source of truth for "self UI active → self-client holds focus".
 		// Runs after every path that can flip SettingsUI visibility this frame
@@ -1344,7 +1309,7 @@ namespace ImGuiVRHelper
 	}
 
 	// End-of-frame post-processing: drag-highlight tint, HUD-demo smoke test,
-	// overlay-visible sync, dashboard mirror. Texture submission to the headset
+	// overlay-visible sync. Texture submission to the headset
 	// happens later, lazily, from the IVRCompositor::Submit detour.
 	void HelperImpl::PostProcessFrame(uint32_t focused, float dt)
 	{
@@ -1478,9 +1443,6 @@ namespace ImGuiVRHelper
 
 		// Keep overlayVisible in sync so OverlayDrag::CanPerform sees it next frame.
 		overlayState.overlayVisible = (focused != 0);
-
-		// Last, so it mirrors the freshest panel pixels onto any dashboard surface.
-		Dashboard::Tick();
 	}
 
 	void HelperImpl::DispatchFrame(float dt)
@@ -1508,6 +1470,6 @@ namespace ImGuiVRHelper
 
 	bool HelperImpl::IsDashboardVisible()
 	{
-		return Dashboard::IsDashboardVisible();
+		return false;
 	}
 }

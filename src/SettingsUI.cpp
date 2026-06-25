@@ -6,7 +6,6 @@
 #include "SettingsUI.h"
 
 #include "ComboRecording.h"
-#include "Dashboard.h"
 #include "Globals.h"
 #include "HelperImpl.h"
 #include "HudContext.h"
@@ -33,10 +32,6 @@ namespace ImGuiVRHelper::SettingsUI
 	{
 		ImGuiContext* g_ctx = nullptr;
 		bool g_visible = false;
-		// Set by HelperImpl when the SteamVR dashboard is showing the
-		// helper's panel: render the window even if the user never
-		// toggled it open via the hotkey.
-		bool g_forceVisible = false;
 
 		// Win32 input plumbing. We hook the swapchain window's WndProc
 		// so desktop mouse + keyboard reach the helper's ImGui context.
@@ -262,81 +257,7 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::Text("Active clients: %zu", clients.size());
 
 				// Overlay switching is handled by RenderActiveOverlaySection at
-				// the top of the window; this section is the client roster plus
-				// the SteamVR dashboard picker.
-
-				// SteamVR Dashboard picker. The helper owns one shared
-				// dashboard surface; this combo picks which eligible
-				// client's panel texture is mirrored onto it. Selecting
-				// "(self) ImGuiVRHelper" routes back to the helper's
-				// own settings UI — useful when the user wants to
-				// reconfigure the helper from the SteamVR dashboard
-				// without leaving it.
-				const uint32_t activePicker = Dashboard::GetActiveClient();
-				const auto selfId = HelperImpl::GetSingleton().GetSelfClientId();
-				std::string preview = "(self) ImGuiVRHelper";
-				if (activePicker != 0) {
-					for (const auto& c : clients) {
-						if (c.client_id == activePicker) {
-							preview = c.name;
-							if (!c.version.empty())
-								preview += " " + c.version;
-							break;
-						}
-					}
-				}
-
-				ImGui::Spacing();
-				ImGui::TextDisabled("SteamVR dashboard panel currently shows:");
-				ImGui::TextDisabled("    (the dashboard plane — to pick the in-world overlay, use");
-				ImGui::TextDisabled("     \"Active overlay\" at the top of this window)");
-				namespace API = ImGuiVRHelperPluginAPI;
-				if (ImGui::BeginCombo("##DashboardPicker", preview.c_str())) {
-					if (ImGui::Selectable("(self) ImGuiVRHelper", activePicker == 0)) {
-						Dashboard::SetActiveClient(0);
-					}
-					for (const auto& c : clients) {
-						if (!c.dashboard_eligible)
-							continue;
-						if (c.client_id == selfId)
-							continue;  // already shown as "(self)" entry
-						std::string label = c.name;
-						if (!c.version.empty())
-							label += " " + c.version;
-						// Annotate clients that haven't acked the
-						// focus-render contract so the user knows the
-						// picker won't auto-show their menu.
-						if (!(c.flags & API::kClientFlag_RendersOnFocus)) {
-							label += "  (manual trigger)";
-						}
-						if (ImGui::Selectable(label.c_str(), c.client_id == activePicker)) {
-							Dashboard::SetActiveClient(c.client_id);
-						}
-					}
-					ImGui::EndCombo();
-				}
-
-				// Banner when a non-honoring client is selected. The
-				// dashboard surface stays on the helper's settings
-				// panel (Dashboard::ResolveActiveTexture falls back to
-				// self-client) so the user can pick something else
-				// without leaving the dashboard.
-				if (activePicker != 0) {
-					for (const auto& c : clients) {
-						if (c.client_id != activePicker)
-							continue;
-						if (!(c.flags & API::kClientFlag_RendersOnFocus)) {
-							ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f),
-								"Trigger %s manually to display its menu.",
-								c.name.c_str());
-							ImGui::TextDisabled(
-								"This client doesn't auto-render on focus; "
-								"use its own hotkey / activation.");
-						}
-						break;
-					}
-				}
-
+				// the top of the window; this section is the client roster.
 				ImGui::Spacing();
 
 				// Stable column identifiers — referenced by sort specs and
@@ -349,7 +270,6 @@ namespace ImGuiVRHelper::SettingsUI
 					kCol_Version = 2,
 					kCol_Mode = 3,
 					kCol_State = 4,
-					kCol_Dashboard = 5,
 				};
 
 				constexpr ImGuiTableFlags kTableFlags =
@@ -363,7 +283,7 @@ namespace ImGuiVRHelper::SettingsUI
 				// pushing the rest of the settings panel offscreen.
 				const ImVec2 outerSize(0.0f, ImGui::GetTextLineHeightWithSpacing() * 12.0f);
 
-				if (ImGui::BeginTable("##ClientsTable", 6, kTableFlags, outerSize)) {
+				if (ImGui::BeginTable("##ClientsTable", 5, kTableFlags, outerSize)) {
 					ImGui::TableSetupScrollFreeze(0, 1);  // pin header row
 					ImGui::TableSetupColumn("ID",
 						ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort |
@@ -381,9 +301,6 @@ namespace ImGuiVRHelper::SettingsUI
 					ImGui::TableSetupColumn("State",
 						ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending,
 						130.0f, kCol_State);
-					ImGui::TableSetupColumn("Dashboard",
-						ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending,
-						100.0f, kCol_Dashboard);
 					ImGui::TableHeadersRow();
 
 					namespace API = ImGuiVRHelperPluginAPI;
@@ -425,24 +342,6 @@ namespace ImGuiVRHelper::SettingsUI
 										break;
 									case kCol_Version:
 										cmp = a.version.compare(b.version);
-										break;
-									case kCol_Dashboard:
-										{
-											// Rank: active (2) > eligible (1) > none (0).
-											// Descending puts "shown in dashboard right now" at
-											// the top, then "available in the picker," then
-											// non-dashboard clients.
-											auto dashRank = [](const HelperImpl::ClientSnapshot& c) {
-												if (c.dashboard_active)
-													return 2;
-												if (c.dashboard_eligible)
-													return 1;
-												return 0;
-											};
-											const int ra = dashRank(a), rb = dashRank(b);
-											cmp = (ra < rb) ? -1 : (ra > rb) ? 1 :
-										                                       0;
-										}
 										break;
 									case kCol_Mode:
 										{
@@ -501,14 +400,6 @@ namespace ImGuiVRHelper::SettingsUI
 						} else {
 							ImGui::TextDisabled("idle");
 						}
-						ImGui::TableNextColumn();
-						if (c.dashboard_active) {
-							ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "ACTIVE");
-						} else if (c.dashboard_eligible) {
-							ImGui::TextDisabled("eligible");
-						} else {
-							ImGui::TextDisabled("-");
-						}
 					}
 					ImGui::EndTable();
 				}
@@ -518,9 +409,6 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::TextDisabled("State badge: FOCUS = receives input + drives 3D quad");
 				ImGui::TextDisabled("             alloc = panel RTV created");
 				ImGui::TextDisabled("             idle  = no RTV yet (lazy)");
-				ImGui::TextDisabled("Dashboard:   ACTIVE   = currently shown on SteamVR dashboard plane");
-				ImGui::TextDisabled("             eligible = listed in the dashboard picker below");
-				ImGui::TextDisabled("             -        = not opted into kClientFlag_Dashboard");
 			}
 		}
 
@@ -1176,9 +1064,7 @@ namespace ImGuiVRHelper::SettingsUI
 		g_visible = !g_visible;
 	}
 
-	bool IsVisible() { return g_visible || g_forceVisible || HelperImpl::GetSingleton().IsQuickSelectActive(); }
-
-	void SetForceVisible(bool forced) { g_forceVisible = forced; }
+	bool IsVisible() { return g_visible || HelperImpl::GetSingleton().IsQuickSelectActive(); }
 
 	// Programmatic visibility set (e.g. the focus reconciler auto-closing the
 	// self-UI when a client takes focus). Like Toggle, this is a pure flag set;
@@ -1191,10 +1077,10 @@ namespace ImGuiVRHelper::SettingsUI
 	{
 		if (!g_ctx)
 			return false;
-		// Render only when the settings window is up (toggled or dashboard-forced).
+		// Render only when the settings window is up.
 		// The rebind capture overlay renders independently — ComboRecording owns
 		// its own context + panel and composites over the focused client.
-		if (!g_visible && !g_forceVisible && !HelperImpl::GetSingleton().IsQuickSelectActive())
+		if (!g_visible && !HelperImpl::GetSingleton().IsQuickSelectActive())
 			return false;
 
 		ImGui::SetCurrentContext(g_ctx);
@@ -1407,7 +1293,7 @@ namespace ImGuiVRHelper::SettingsUI
 			io.MousePos.x >= 0.0f && io.MousePos.y >= 0.0f &&
 			io.MousePos.x < io.DisplaySize.x && io.MousePos.y < io.DisplaySize.y;
 
-		if (g_visible || g_forceVisible) {
+		if (g_visible) {
 			RenderWindow();
 		}
 		ImGui::Render();
