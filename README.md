@@ -13,8 +13,11 @@ the mod author.
   helper's own settings.
 - **Point** a controller at the panel to drive the cursor; **trigger** clicks,
   **thumbstick** scrolls.
-- **Cycle** between open overlays with a **stick click** — left goes back, right
-  goes forward (while pointing off the panel).
+- **Cycle & Quick Select** between open overlays with a **stick click** (left
+  goes back, right goes forward while pointing off the panel), or **long-hold
+  stick click** to open an interactive quick select list. Scroll the list with
+  either thumbstick, pull **trigger** or click the stick to select, and press
+  **grip** to cancel.
 - **Reposition** by holding **grip** off the panel and moving your hand; push
   that hand's thumbstick up/down to move it farther/closer. (On by default;
   toggle under Settings > Interaction.)

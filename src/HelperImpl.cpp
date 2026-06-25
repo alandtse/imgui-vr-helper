@@ -17,6 +17,7 @@
 #include "Overlay.h"
 #include "OverlayDrag.h"
 #include "OverlayTinter.h"
+#include "PluginVersion.h"
 #include "SettingsUI.h"
 #include "ToastHUD.h"
 #include "WandPointing.h"
@@ -581,6 +582,18 @@ namespace ImGuiVRHelper
 		return 0;
 	}
 
+	std::string HelperImpl::GetClientVersion(uint32_t client_id)
+	{
+		std::scoped_lock lk{ m_mutex };
+		if (client_id == m_self_client_id)
+			return IMGUI_VR_HELPER_VERSION_STRING;
+		auto it = m_clients.find(client_id);
+		if (it != m_clients.end()) {
+			return it->second.version;
+		}
+		return "";
+	}
+
 	bool HelperImpl::IsSelfUIVisible() { return SettingsUI::IsVisible(); }
 
 	bool HelperImpl::ShouldSwallowInput() const
@@ -1073,7 +1086,7 @@ namespace ImGuiVRHelper
 		logs::info("CycleOverlay({}) -> client {}", direction, target);
 	}
 
-	void HelperImpl::ProcessOverlayCycleInput()
+	void HelperImpl::ProcessOverlayCycleInput(float dt)
 	{
 		auto& state = Overlay::State::GetSingleton();
 		using K = RE::BSOpenVRControllerDevice::Keys;
@@ -1083,19 +1096,159 @@ namespace ImGuiVRHelper
 		const auto& rightCtl = leftHanded ? state.secondaryControllerState : state.primaryControllerState;
 		const bool leftClick = leftCtl[K::kJoystickTrigger].isPressed;
 		const bool rightClick = rightCtl[K::kJoystickTrigger].isPressed;
+		const bool leftTrigger = leftCtl[K::kTrigger].isPressed;
+		const bool rightTrigger = rightCtl[K::kTrigger].isPressed;
+		const bool leftGrip = leftCtl[K::kGrip].isPressed || leftCtl[K::kGripAlt].isPressed;
+		const bool rightGrip = rightCtl[K::kGrip].isPressed || rightCtl[K::kGripAlt].isPressed;
 
-		// Cycle only when an overlay is already open AND the wand is off the
-		// panel. Gating on "open" means a stick-click while nothing is shown
-		// falls through to the mod's own open combo (which may be stick-click) —
-		// so state disambiguates open-vs-cycle. Off-panel gating keeps cycling
-		// from fighting menu interaction. State is tracked unconditionally so a
-		// press begun while ineligible doesn't fire a stale edge later.
+		const size_t leftThumb = leftHanded ? static_cast<size_t>(RE::ControllerRole::Primary) : static_cast<size_t>(RE::ControllerRole::Secondary);
+		const size_t rightThumb = leftHanded ? static_cast<size_t>(RE::ControllerRole::Secondary) : static_cast<size_t>(RE::ControllerRole::Primary);
+
+		// Cycle or quick-select only when an overlay is open and the wand is off-panel.
 		if (m_focused_client != 0 && !state.wandState.isIntersecting) {
-			if (leftClick && !m_prevLeftStickClick)
-				CycleOverlay(-1);
-			else if (rightClick && !m_prevRightStickClick)
-				CycleOverlay(+1);
+			// Update click durations
+			if (leftClick) {
+				m_leftStickClickDuration += dt;
+			} else {
+				if (m_leftStickClickDuration > 0.0f && m_leftStickClickDuration < 0.5f) {
+					if (!m_quickSelectActive)
+						CycleOverlay(-1);
+				}
+				m_leftStickClickDuration = 0.0f;
+			}
+
+			if (rightClick) {
+				m_rightStickClickDuration += dt;
+			} else {
+				if (m_rightStickClickDuration > 0.0f && m_rightStickClickDuration < 0.5f) {
+					if (!m_quickSelectActive)
+						CycleOverlay(+1);
+				}
+				m_rightStickClickDuration = 0.0f;
+			}
+
+			// Edge-detect hold transitions (>= 0.5 seconds)
+			if (!m_quickSelectActive) {
+				if (m_leftStickClickDuration >= 0.5f) {
+					m_quickSelectActive = true;
+					m_quickSelectLeftHand = true;
+					m_quickSelectScrollTimer = 0.0f;
+					m_quickSelectStickReleased = false;
+					m_quickSelectOriginalFocus = m_focused_client;
+
+					// Set initial hovered client to current focused client
+					const auto order = BuildOverlayOrder();
+					m_quickSelectHoveredIdx = 0;
+					for (size_t i = 0; i < order.size(); ++i) {
+						if (order[i].first == m_focused_client) {
+							m_quickSelectHoveredIdx = static_cast<int>(i);
+							break;
+						}
+					}
+
+					// Force helper UI focus
+					SettingsUI::SetVisible(true);
+					RequestFocus(m_self_client_id);
+				} else if (m_rightStickClickDuration >= 0.5f) {
+					m_quickSelectActive = true;
+					m_quickSelectLeftHand = false;
+					m_quickSelectScrollTimer = 0.0f;
+					m_quickSelectStickReleased = false;
+					m_quickSelectOriginalFocus = m_focused_client;
+
+					// Set initial hovered client to current focused client
+					const auto order = BuildOverlayOrder();
+					m_quickSelectHoveredIdx = 0;
+					for (size_t i = 0; i < order.size(); ++i) {
+						if (order[i].first == m_focused_client) {
+							m_quickSelectHoveredIdx = static_cast<int>(i);
+							break;
+						}
+					}
+
+					// Force helper UI focus
+					SettingsUI::SetVisible(true);
+					RequestFocus(m_self_client_id);
+				}
+			}
+		} else {
+			// If wand starts intersecting or overlay closed, cancel quick select
+			if (m_quickSelectActive) {
+				m_quickSelectActive = false;
+				m_leftStickClickDuration = 0.0f;
+				m_rightStickClickDuration = 0.0f;
+				SettingsUI::SetVisible(false);
+				RequestFocus(m_self_client_id);  // Releases or goes to default
+			}
+			m_leftStickClickDuration = 0.0f;
+			m_rightStickClickDuration = 0.0f;
 		}
+
+		// Handle quick select navigation & select/cancel
+		if (m_quickSelectActive) {
+			const bool isStillClicked = leftClick || rightClick;
+			const bool isTriggerPressed = leftTrigger || rightTrigger;
+			const bool isGripPressed = leftGrip || rightGrip;
+
+			// Track when the user has released the initial long-hold click
+			if (!isStillClicked) {
+				m_quickSelectStickReleased = true;
+			}
+
+			if (isGripPressed) {
+				// Cancel and restore original focus
+				m_quickSelectActive = false;
+				m_leftStickClickDuration = 0.0f;
+				m_rightStickClickDuration = 0.0f;
+				if (m_quickSelectOriginalFocus == m_self_client_id) {
+					SettingsUI::SetVisible(true);
+					RequestFocus(m_self_client_id);
+				} else {
+					SettingsUI::SetVisible(false);
+					RequestFocus(m_quickSelectOriginalFocus);
+				}
+			} else if (isTriggerPressed || (m_quickSelectStickReleased && (leftClick || rightClick))) {
+				// Select hovered overlay
+				m_quickSelectActive = false;
+				m_leftStickClickDuration = 0.0f;
+				m_rightStickClickDuration = 0.0f;
+				const auto order = BuildOverlayOrder();
+				if (!order.empty() && m_quickSelectHoveredIdx >= 0 && m_quickSelectHoveredIdx < static_cast<int>(order.size())) {
+					const uint32_t target = order[m_quickSelectHoveredIdx].first;
+					if (target == m_self_client_id) {
+						SettingsUI::SetVisible(true);
+						RequestFocus(m_self_client_id);
+					} else {
+						SettingsUI::SetVisible(false);
+						RequestFocus(target);
+					}
+				}
+			} else {
+				// Process stick Y movement for navigation from either hand
+				const float leftSy = leftCtl.thumbsticks[leftThumb].y;
+				const float rightSy = rightCtl.thumbsticks[rightThumb].y;
+				const float sy = (std::abs(leftSy) >= std::abs(rightSy)) ? leftSy : rightSy;
+
+				m_quickSelectScrollTimer -= dt;
+
+				if (m_quickSelectScrollTimer <= 0.0f) {
+					const auto order = BuildOverlayOrder();
+					const int n = static_cast<int>(order.size());
+					if (n > 0) {
+						// Note: stick up (sy > 0.4f) goes up in the list (idx - 1),
+						// stick down (sy < -0.4f) goes down in the list (idx + 1).
+						if (sy > 0.4f) {
+							m_quickSelectHoveredIdx = (m_quickSelectHoveredIdx - 1 + n) % n;
+							m_quickSelectScrollTimer = 0.25f;  // rate limit scrolling to 250ms
+						} else if (sy < -0.4f) {
+							m_quickSelectHoveredIdx = (m_quickSelectHoveredIdx + 1) % n;
+							m_quickSelectScrollTimer = 0.25f;
+						}
+					}
+				}
+			}
+		}
+
 		m_prevLeftStickClick = leftClick;
 		m_prevRightStickClick = rightClick;
 	}
@@ -1346,7 +1499,7 @@ namespace ImGuiVRHelper
 		ComboRecording::Tick(dt);
 
 		ReconcileSelfFocusAndCombos();
-		ProcessOverlayCycleInput();
+		ProcessOverlayCycleInput(dt);
 
 		const uint32_t focused = DispatchToClients(baseFrame, dt);
 

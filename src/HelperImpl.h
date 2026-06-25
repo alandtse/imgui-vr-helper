@@ -125,6 +125,13 @@ namespace ImGuiVRHelper
 		/// panel to draw on each Submit.
 		uint32_t GetFocusedClientId();
 
+		/// Returns the registered client's version string.
+		std::string GetClientVersion(uint32_t client_id);
+
+		/// Quick select menu state query
+		[[nodiscard]] bool IsQuickSelectActive() const { return m_quickSelectActive; }
+		[[nodiscard]] int GetQuickSelectHoveredIdx() const { return m_quickSelectHoveredIdx; }
+
 		/// Cycle VR focus to the previous/next overlay (direction -1/+1),
 		/// wrapping through the helper's own settings UI and every non-HUD
 		/// client. Backs the Prev/Next buttons and the off-panel stick-click
@@ -286,6 +293,16 @@ namespace ImGuiVRHelper
 		float m_welcomeRemaining = 0.0f;
 		bool m_enteredGame = false;  ///< set from the SKSE message thread (one-way latch)
 
+		// Quick Select Menu variables
+		float m_leftStickClickDuration = 0.0f;
+		float m_rightStickClickDuration = 0.0f;
+		bool m_quickSelectActive = false;
+		bool m_quickSelectLeftHand = false;
+		int m_quickSelectHoveredIdx = 0;
+		float m_quickSelectScrollTimer = 0.0f;
+		bool m_quickSelectStickReleased = false;
+		uint32_t m_quickSelectOriginalFocus = 0;
+
 		// DispatchFrame phases, run in order each frame. Split out only for
 		// readability; each touches helper state directly.
 		void UpdateWandPointer();
@@ -293,7 +310,7 @@ namespace ImGuiVRHelper
 		/// Edge-detect the off-panel stick-click overlay-cycle shortcut and
 		/// dispatch CycleOverlay. Runs every frame; no-ops while the wand is on
 		/// the panel so it doesn't fight menu interaction.
-		void ProcessOverlayCycleInput();
+		void ProcessOverlayCycleInput(float dt);
 		/// Snapshot clients under the lock, render the self UI, then run each
 		/// client's on_frame. Returns the focused client id used this frame.
 		uint32_t DispatchToClients(const ImGuiVRHelperPluginAPI::Frame& baseFrame, float dt);

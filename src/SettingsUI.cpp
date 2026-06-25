@@ -1028,6 +1028,74 @@ namespace ImGuiVRHelper::SettingsUI
 
 			ImGui::End();
 		}
+
+		void RenderQuickSelectMenu()
+		{
+			auto& impl = HelperImpl::GetSingleton();
+			const auto order = impl.BuildOverlayOrder();
+			if (order.empty())
+				return;
+
+			// Center the window on the 1920x1080 display
+			const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+			ImGui::SetNextWindowPos(ImVec2(displaySize.x * 0.5f, displaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+
+			// Set some nice styling for the quick select box
+			ImGui::SetNextWindowSize(ImVec2(600.0f, 400.0f));
+
+			ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
+
+			// Custom colors & styles: transparent dark background, clean borders, rounded corners, large text
+			ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.02f, 0.02f, 0.02f, 0.90f));
+			ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 3.0f);
+			ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f, 16.0f));
+
+			if (ImGui::Begin("##QuickSelect", nullptr, flags)) {
+				// Title
+				ImGui::SetWindowFontScale(1.8f);
+				ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "  QUICK OVERLAY SELECT");
+				ImGui::SetWindowFontScale(1.0f);
+				ImGui::Separator();
+				ImGui::Dummy(ImVec2(0.0f, 10.0f));
+
+				const int hoveredIdx = impl.GetQuickSelectHoveredIdx();
+
+				ImGui::SetWindowFontScale(1.4f);
+				for (int i = 0; i < static_cast<int>(order.size()); ++i) {
+					const bool isHovered = (i == hoveredIdx);
+					const uint32_t clientId = order[i].first;
+					const auto& clientName = order[i].second;
+					const std::string version = impl.GetClientVersion(clientId);
+
+					if (isHovered) {
+						if (!version.empty()) {
+							ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "  >  %s  (v%s)", clientName.c_str(), version.c_str());
+						} else {
+							ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "  >  %s", clientName.c_str());
+						}
+					} else {
+						if (!version.empty()) {
+							ImGui::Text("     %s  (v%s)", clientName.c_str(), version.c_str());
+						} else {
+							ImGui::Text("     %s", clientName.c_str());
+						}
+					}
+				}
+				ImGui::SetWindowFontScale(1.0f);
+
+				ImGui::Dummy(ImVec2(0.0f, 15.0f));
+				ImGui::Separator();
+				ImGui::SetWindowFontScale(1.1f);
+				ImGui::TextDisabled("  Trigger / Stick Click to select. Grip to cancel.");
+				ImGui::SetWindowFontScale(1.0f);
+			}
+			ImGui::End();
+
+			ImGui::PopStyleVar(3);
+			ImGui::PopStyleColor(2);
+		}
 	}  // namespace
 
 	bool Init()
@@ -1108,7 +1176,7 @@ namespace ImGuiVRHelper::SettingsUI
 		g_visible = !g_visible;
 	}
 
-	bool IsVisible() { return g_visible || g_forceVisible; }
+	bool IsVisible() { return g_visible || g_forceVisible || HelperImpl::GetSingleton().IsQuickSelectActive(); }
 
 	void SetForceVisible(bool forced) { g_forceVisible = forced; }
 
@@ -1126,13 +1194,25 @@ namespace ImGuiVRHelper::SettingsUI
 		// Render only when the settings window is up (toggled or dashboard-forced).
 		// The rebind capture overlay renders independently — ComboRecording owns
 		// its own context + panel and composites over the focused client.
-		if (!g_visible && !g_forceVisible)
+		if (!g_visible && !g_forceVisible && !HelperImpl::GetSingleton().IsQuickSelectActive())
 			return false;
 
 		ImGui::SetCurrentContext(g_ctx);
 
 		ImGuiIO& io = ImGui::GetIO();
 		io.DeltaTime = dt > 0.0f ? dt : 1.0f / 60.0f;
+
+		if (HelperImpl::GetSingleton().IsQuickSelectActive()) {
+			ImGui_ImplDX11_NewFrame();
+			if (g_hwnd) {
+				ImGui_ImplWin32_NewFrame();
+			}
+			ImGui::NewFrame();
+			io.MouseDrawCursor = false;
+			RenderQuickSelectMenu();
+			ImGui::Render();
+			return true;
+		}
 
 		// Two cursor sources, matching SCS open_composite exactly:
 		//

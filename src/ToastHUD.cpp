@@ -129,8 +129,8 @@ namespace ImGuiVRHelper::ToastHUD
 			}
 			if (pauseHint)
 				ImGui::TextDisabled("Opens while the game is paused (in a menu).");
+			ImGui::TextDisabled("Switch mods: Click thumbstick off-panel (short = cycle, hold 0.5s = menu).");
 			ImGui::TextDisabled("Settings: Shift+F4 (or the open combo with no mod open).");
-			ImGui::TextDisabled("Switch mods: Settings -> Active overlay.");
 		}
 		ImGui::End();
 		ImGui::PopStyleVar();
