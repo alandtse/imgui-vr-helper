@@ -1453,6 +1453,9 @@ namespace ImGuiVRHelper
 
 		ImGuiVRHelperPluginAPI::Frame baseFrame;
 		Input::BuildFrame(baseFrame, dt);
+		baseFrame.hud_depth = std::max(0.3f, Overlay::State::GetSingleton().settings.hudDepth);
+		baseFrame.hud_coverage = std::clamp(Overlay::State::GetSingleton().settings.hudCoverage,
+			Overlay::Config::kMinHUDCoverage, Overlay::Config::kMaxHUDCoverage);
 
 		// Drag state machine + combo recording before the focus reconciler,
 		// which treats ComboRecording::IsActive() as part of "self active".

@@ -81,6 +81,8 @@ namespace ImGuiVRHelperPluginAPI
 		uint32_t flags;  ///< bit0 client_has_focus
 						 ///< bit1 overlay_visible
 						 ///< bit2 client_pointer_in_panel
+		float hud_depth;
+		float hud_coverage;
 	};
 
 	/// Named bits for Frame::flags.

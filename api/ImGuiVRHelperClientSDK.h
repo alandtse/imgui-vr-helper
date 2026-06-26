@@ -469,6 +469,9 @@ namespace ImGuiVRHelperPluginAPI
 		/// right after it's created, so RenderHud matches your desktop look.
 		void SetHudStyleCallback(std::function<void()> styleSetup) { m_hudStyle = std::move(styleSetup); }
 
+		[[nodiscard]] float GetHudCoverage() const { return m_hudCoverage; }
+		[[nodiscard]] float GetHudDepth() const { return m_hudDepth; }
+
 		/// Render an always-on HUD layer (a kClientFlag_HUDMode client) in one
 		/// call — the whole context lifecycle the flag promises, done for you.
 		/// Owns a private, non-interactive ImGui context + DX11 backend, sizes it
@@ -679,6 +682,10 @@ namespace ImGuiVRHelperPluginAPI
 			self->m_heldMask = f->left.buttons_held | f->right.buttons_held;
 			self->m_stickX = sx;
 			self->m_stickY = sy;
+			if (f->struct_size >= offsetof(Frame, hud_coverage) + sizeof(float)) {
+				self->m_hudDepth = f->hud_depth;
+				self->m_hudCoverage = f->hud_coverage;
+			}
 		}
 
 		// on_rebind from the helper: live keys already updated; mirror them into
@@ -794,6 +801,8 @@ namespace ImGuiVRHelperPluginAPI
 		uint32_t m_heldMask = 0;
 		float m_stickX = 0.0f;
 		float m_stickY = 0.0f;
+		float m_hudDepth = 1.0f;
+		float m_hudCoverage = 0.5f;
 
 		// Render-thread-only state.
 		uint32_t m_prevHeld = 0;
