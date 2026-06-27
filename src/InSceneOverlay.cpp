@@ -114,6 +114,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 			winrt::com_ptr<ID3D11Buffer> cylinderIB;
 			uint32_t cylinderIndexCount = 0;
 			int      cylinderSegments   = 0;
+			float    cylinderDepth      = 0.0f;
+			float    cylinderCoverage   = 0.0f;
 
 			// Cached per-eye RTVs keyed by target texture pointer (rebuilt
 			// when SteamVR rotates eye textures).
@@ -536,6 +538,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 			g_res.cylinderIndexCount = static_cast<uint32_t>(idxs.size());
 			g_res.cylinderSegments   = segments;
+			g_res.cylinderDepth      = hudDepth;
+			g_res.cylinderCoverage   = coverage;
 			return true;
 		}
 
@@ -701,13 +705,19 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		const bool useCylinder = (s.hudShape == HUDShape::Cylinder);
 
-		// For cylinder mode, build/rebuild mesh if segments changed.
+		// For cylinder mode, build/rebuild mesh if segments, depth or coverage changed.
 		if (useCylinder) {
 			float projL[4], projR[4];
 			Util::CachedProjectionRaw(vr::Eye_Left,  projL[0], projL[1], projL[2], projL[3]);
 			Util::CachedProjectionRaw(vr::Eye_Right, projR[0], projR[1], projR[2], projR[3]);
-			const int segs = std::max(2, s.hudCylinderSegments);
-			if (g_res.cylinderSegments != segs || !g_res.cylinderVB) {
+			// Clamp to [2, 64] — prevents arbitrarily large CPU/D3D allocations
+			// from untrusted config values on the hot Submit path.
+			const int segs = std::clamp(s.hudCylinderSegments, 2, 64);
+			const bool needsRebuild = !g_res.cylinderVB || !g_res.cylinderIB
+				|| g_res.cylinderSegments != segs
+				|| g_res.cylinderDepth    != hudDepth
+				|| g_res.cylinderCoverage != coverage;
+			if (needsRebuild) {
 				if (!BuildCylinderBuffers(projL, projR, hudDepth, coverage, segs)) {
 					logs::warn("InSceneOverlay: cylinder mesh build failed, falling back to flat");
 					goto flat_hud;
