@@ -43,7 +43,7 @@ jobs:
       # directxtk are — cache them keyed on the lockfile so only a dep bump
       # invalidates the cache.
       - name: Cache xmake packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/AppData/Local/.xmake/packages
