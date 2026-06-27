@@ -166,20 +166,35 @@ namespace ImGuiVRHelperPluginAPI
 				m_helper = nullptr;
 				return false;
 			}
+			// Optional: VR text entry (interface 002). Null against an older helper,
+			// in which case PumpKeyboard is a no-op (desktop keyboard only).
+			m_helper002 = GetImGuiVRHelperInterface002();
 			return true;
 		}
 
 		void Disconnect()
 		{
+			// Release any latched keyboard before we drop the interface, or the helper
+			// keeps this client's keyboard state active after we're gone.
+			if (m_helper002 && m_id && m_kbShown)
+				m_helper002->SetKeyboardActive(m_id, false, "");
 			if (m_helper && m_id)
 				m_helper->UnregisterClient(m_id);
 			m_helper = nullptr;
+			m_helper002 = nullptr;
+			m_kbShown = false;
+			m_kbDelivered.clear();
+			m_kbDismissCooldown = 0;
 			m_id = 0;
 		}
 
 		[[nodiscard]] bool IsConnected() const { return m_helper != nullptr && m_id != 0; }
 		[[nodiscard]] uint32_t Id() const { return m_id; }
 		[[nodiscard]] IImGuiVRHelperInterface001* Helper() const { return m_helper; }
+
+		/// True if the helper supports VR text entry (interface 002 acquired). When
+		/// false, PumpKeyboard is a no-op.
+		[[nodiscard]] bool HasKeyboard() const { return m_helper002 != nullptr; }
 
 		/// True when the helper routed in-scene focus to this client this frame
 		/// (it expects fresh pixels in the panel RTV even if your own menu flag
@@ -214,6 +229,98 @@ namespace ImGuiVRHelperPluginAPI
 
 		/// Edge-triggered: true exactly once per activation.
 		bool Fired(ComboId id) { return IsConnected() && id != 0 && m_helper->ComboFired(id); }
+
+		// ---- Text entry ------------------------------------------------
+
+		/// Automatic VR text entry. Call once per frame, before your NewFrame, on
+		/// your menu's ImGui context. Whenever ANY text field is focused
+		/// (io.WantTextInput) it shows the VR keyboard and replays the runtime's
+		/// text into the active field — no per-field wrapping. No-op when the helper
+		/// predates 002 or the runtime has no keyboard.
+		void PumpKeyboard()
+		{
+			if (!m_helper002 || !IsConnected()) {
+				if (m_kbShown && m_helper002)
+					m_helper002->SetKeyboardActive(m_id, false, "");
+				m_kbShown = false;
+				if (m_kbDismissCooldown > 0)
+					--m_kbDismissCooldown;
+				return;
+			}
+			ImGuiIO& io = ImGui::GetIO();
+			if (m_kbDismissCooldown > 0)
+				--m_kbDismissCooldown;
+
+			if (!m_kbShown) {
+				// Open when a text field is focused, seeding the runtime keyboard with
+				// the field's current text. Without the seed the diff below only manages
+				// characters we ourselves typed, so backspace can't delete text that was
+				// already in the field. ImGui keeps the live UTF-8 buffer of the active
+				// InputText in InputTextState (imgui_internal.h). The cooldown after a
+				// dismiss keeps the OK-trigger release (and its wand click) from
+				// re-opening the keyboard on the same field a frame later.
+				if (io.WantTextInput && m_kbDismissCooldown == 0) {
+					std::string seed;
+					if (ImGuiContext* g = ImGui::GetCurrentContext();
+						g && g->InputTextState.ID != 0 && g->InputTextState.ID == g->ActiveId &&
+						g->InputTextState.TextLen > 0)
+						seed.assign(g->InputTextState.TextA.Data,
+							static_cast<std::size_t>(g->InputTextState.TextLen));
+					m_kbShown = true;
+					m_kbDelivered = seed;
+					m_helper002->SetKeyboardActive(m_id, true, seed.c_str());
+				}
+				return;
+			}
+
+			// Shown: honor a real dismiss first. On Done/X (or the menu overlay being
+			// dismissed) drop the field's focus so it stays closed — leaving the field
+			// focused makes WantTextInput re-open the keyboard the very next frame, so
+			// the user would have to press OK twice. The cooldown guards the same frame
+			// against the OK-trigger's wand click re-focusing the field.
+			if (m_helper002->ConsumeKeyboardClosed(m_id) || !m_helper->IsOverlayVisible()) {
+				m_helper002->SetKeyboardActive(m_id, false, "");
+				m_kbShown = false;
+				m_kbDismissCooldown = kKbDismissCooldown;
+				ImGui::ClearActiveID();
+				return;
+			}
+
+			// Replay the runtime keyboard's text into the focused field as edits. Wand
+			// input is suppressed while shown, so a transient WantTextInput=false is
+			// just focus jitter, not a dismiss — keep it latched.
+			char kb[512];
+			const uint32_t n = m_helper002->GetKeyboardText(m_id, kb, sizeof(kb));
+			const std::string cur(kb, n);
+			if (cur != m_kbDelivered) {
+				// Diff on UTF-8 code-point boundaries. A byte-wise prefix could stop
+				// inside a multibyte character, which would emit the wrong number of
+				// backspaces (ImGui deletes whole code points, not bytes) and hand a
+				// continuation byte to AddInputCharactersUTF8.
+				std::size_t p = 0;
+				const std::size_t maxp = cur.size() < m_kbDelivered.size() ? cur.size() : m_kbDelivered.size();
+				while (p < maxp && cur[p] == m_kbDelivered[p])
+					++p;
+				// [0, p) is shared, so a continuation byte at p on either side means the
+				// prefix split a code point — back up to its lead byte.
+				while (p > 0 &&
+					   ((p < cur.size() && (static_cast<unsigned char>(cur[p]) & 0xC0) == 0x80) ||
+						   (p < m_kbDelivered.size() && (static_cast<unsigned char>(m_kbDelivered[p]) & 0xC0) == 0x80)))
+					--p;
+				// Backspace once per code point removed (skip continuation bytes).
+				int backspaces = 0;
+				for (std::size_t i = p; i < m_kbDelivered.size(); ++i)
+					if ((static_cast<unsigned char>(m_kbDelivered[i]) & 0xC0) != 0x80)
+						++backspaces;
+				for (int i = 0; i < backspaces; ++i) {
+					io.AddKeyEvent(ImGuiKey_Backspace, true);
+					io.AddKeyEvent(ImGuiKey_Backspace, false);
+				}
+				if (p < cur.size())
+					io.AddInputCharactersUTF8(cur.c_str() + p);
+				m_kbDelivered = cur;
+			}
+		}
 
 		// ---- Per-frame plumbing ----------------------------------------
 
@@ -321,6 +428,16 @@ namespace ImGuiVRHelperPluginAPI
 			}
 
 			ImGuiIO& io = ImGui::GetIO();
+
+			// While the VR keyboard is up, don't let the wand move the cursor or
+			// click — pointing at the keyboard would otherwise deselect the focused
+			// text field and close the keyboard. The keyboard has its own laser. The
+			// dismiss cooldown extends this so the OK-trigger release can't click the
+			// field and immediately re-open the keyboard.
+			if (m_kbShown || m_kbDismissCooldown > 0) {
+				m_prevHeld = held;  // keep edges current for when it closes
+				return;
+			}
 
 			// Wand-laser intersection → ImGui cursor. WantSetMousePos warps the
 			// OS cursor so the platform backend reads our position back instead
@@ -792,9 +909,17 @@ namespace ImGuiVRHelperPluginAPI
 		}
 
 		IImGuiVRHelperInterface001* m_helper = nullptr;
+		IImGuiVRHelperInterface002* m_helper002 = nullptr;  // null if helper predates 002 (no VR keyboard)
 		uint32_t m_id = 0;
 		ID3D11DeviceContext* m_cachedContext = nullptr;  // ctx resolved lazily, device-owned
 		bool m_requestsRender = false;
+
+		bool m_kbShown = false;     // PumpKeyboard: keyboard latched open (suppresses wand input)
+		std::string m_kbDelivered;  // PumpKeyboard: text already replayed into the field
+		// Frames after a dismiss during which the keyboard won't re-open and the wand
+		// stays suppressed, so the OK-trigger release can't re-focus the field.
+		static constexpr int kKbDismissCooldown = 30;
+		int m_kbDismissCooldown = 0;
 
 		// OnFrame snapshot (frame thread → render thread).
 		std::mutex m_mutex;
