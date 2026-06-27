@@ -5,21 +5,13 @@
 # tag, attach the .7z mod archive, promote the release, and — on the source repo —
 # upload to Nexus with the same changelog.
 #
-# TRIGGER IS INTENTIONALLY workflow_dispatch-ONLY until we're ready to publish. The
-# whole pipeline (and its UNEX_* secret references, for secret-provisioning tooling)
-# stays present, but nothing auto-releases — no [skip ci] needed. To arm auto-release
-# on every push to main, add back:
-#   push:
-#     branches: [main]
+# Runs on every push to main (and on manual dispatch): if there are unreleased
+# Conventional commits, semantic-release cuts the next version; otherwise it no-ops
+# and the downstream jobs skip. The bump commit carries [skip ci] so it doesn't
+# re-trigger.
 #
-# Nexus is dry-run by default: it only reports. Set repo variable
-# NEXUS_AUTO_UPLOAD=true (plus secrets UNEX_APIKEY / UNEX_NEXUSMODS_SESSION_COOKIE) to
-# upload for real. If there are no unreleased commits semantic-release no-ops and the
-# downstream jobs skip.
-#
-# First release note: with no prior tag, semantic-release starts at 1.0.0. To stay on
-# 0.x, push an initial tag (e.g. `git tag v0.1.0 && git push --tags`) before the first
-# release so it continues from there.
+# Nexus upload is gated on repo variable NEXUS_AUTO_UPLOAD=true (plus secrets
+# UNEX_APIKEY / UNEX_NEXUSMODS_SESSION_COOKIE); when unset it dry-runs (reports only).
 name: Release
 
 on:

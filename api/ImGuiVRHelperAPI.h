@@ -68,7 +68,7 @@ namespace ImGuiVRHelperPluginAPI
 		// ---- Lifecycle --------------------------------------------------
 
 		/// Register a client. Returns a non-zero client_id on success, 0 on
-		/// failure (e.g. a null `name`, or HUD and Dashboard flags both set).
+		/// failure (e.g. a null `name`).
 		/// `name` and `version` are copied internally; pass `nullptr` for
 		/// `version` to omit it. `flags` is a bitmask of ClientFlags.
 		///
@@ -185,19 +185,11 @@ namespace ImGuiVRHelperPluginAPI
 		virtual void FeedVREvent(uint32_t device, uint32_t key_code, bool pressed,
 			float thumbstick_x, float thumbstick_y) = 0;
 
-		// ---- SteamVR Dashboard ------------------------------------------
+		// ---- SteamVR Dashboard (removed) --------------------------------
 
-		/// True iff the SteamVR dashboard is currently open. Useful for
-		/// clients that want to suppress in-scene rendering while their
-		/// panel is the active dashboard surface (avoids double-paint
-		/// when the user is interacting with the dashboard).
-		///
-		/// The helper owns a single shared dashboard surface; a picker
-		/// inside the helper's settings panel chooses which
-		/// kClientFlag_Dashboard client's panel texture is mirrored.
-		/// Per-client thumbnails / individual rail entries are not part
-		/// of the v1 design — keeps the SteamVR rail uncluttered as the
-		/// helper picks up more clients.
+		/// DEPRECATED, always returns false. The SteamVR Dashboard surface
+		/// was removed; this method is retained only so existing clients
+		/// keep linking against IImGuiVRHelperInterface001. Don't call it.
 		virtual bool IsDashboardVisible() = 0;
 
 		// ---- Combo rebinding -------------------------------------------

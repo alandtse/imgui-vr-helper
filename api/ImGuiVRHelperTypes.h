@@ -78,11 +78,11 @@ namespace ImGuiVRHelperPluginAPI
 		Pose hmd;
 		Hand left;
 		Hand right;
-		uint32_t flags;  ///< bit0 client_has_focus
-						 ///< bit1 overlay_visible
-						 ///< bit2 client_pointer_in_panel
-		float hud_depth;
-		float hud_coverage;
+		uint32_t flags;      ///< bit0 client_has_focus
+							 ///< bit1 overlay_visible
+							 ///< bit2 client_pointer_in_panel
+		float hud_depth;     ///< HUD plane distance, meters (kClientFlag_HUDMode)
+		float hud_coverage;  ///< fraction of each eye's view the HUD plane fills
 	};
 
 	/// Named bits for Frame::flags.
@@ -149,39 +149,10 @@ namespace ImGuiVRHelperPluginAPI
 		///     last-registered draws on top.
 		kClientFlag_HUDMode = 1u << 1,
 
-		/// Also surface this client as a SteamVR Dashboard overlay. The
-		/// client appears as an icon in the SteamVR dashboard's left rail;
-		/// clicking it pops out the client's panel as a 3D plane the user
-		/// can pin / move / resize through SteamVR's standard dashboard
-		/// gestures.
-		///
-		/// Orthogonal to kClientFlag_HUDMode and to the in-scene panel —
-		/// a dashboard client may also be an in-scene panel client (most
-		/// common case: same panel, two surfaces). HUD-mode + Dashboard
-		/// is allowed but unusual.
-		///
-		/// Behaviour:
-		///   - The panel RTV is reused; SteamVR makes its own copy on
-		///     SetOverlayTextureFromHandle, so one render produces both
-		///     the in-scene quad and the dashboard plane.
-		///   - SteamVR drives input via VREvent_Mouse* delivered to the
-		///     overlay; the helper translates those to ImGui mouse state
-		///     for the focused client. No wand pointing involved on this
-		///     path — the dashboard's own laser handles it.
-		///   - The dashboard plane renders only while the SteamVR
-		///     dashboard is open; the in-scene panel takes over when
-		///     it's closed.
-		///   - The helper owns a single shared dashboard overlay; a picker
-		///     in the helper's settings panel chooses which eligible
-		///     client's panel is mirrored onto it. There is no per-client
-		///     thumbnail API in v1 — the rail entry uses SteamVR's default
-		///     overlay icon.
-		///
-		/// Compatibility note: dashboard overlays require the SteamVR
-		/// IVROverlay implementation. OpenComposite-based runtimes
-		/// implement this only partially; the helper detects this at
-		/// CreateDashboardOverlay time and gracefully degrades to the
-		/// in-scene-only path (logged once at registration).
+		/// DEPRECATED, no-op. The SteamVR Dashboard surface was removed; the
+		/// helper strips this flag at registration and treats the client as
+		/// in-scene only. The value is reserved so it isn't reused and so old
+		/// clients still link. Don't set it in new code.
 		kClientFlag_Dashboard = 1u << 2,
 
 		/// Acknowledge the focus-render contract: when this client's
@@ -192,18 +163,15 @@ namespace ImGuiVRHelperPluginAPI
 		///
 		/// This is the wire signal the helper uses to tell a client
 		/// "you're being shown right now — please draw something."
-		/// Triggers include:
-		///   - User selected this client in the helper's dashboard
-		///     picker (SteamVR rail interaction).
-		///   - The helper's in-scene focus model picked this client
-		///     (e.g. user just dismissed another panel).
+		/// It fires when the helper's focus model picks this client
+		/// (e.g. the user opened it, or dismissed another panel, or
+		/// chose it from the quick-select list).
 		///
 		/// Without this flag, the helper still tracks focus on the
 		/// client (so RequestFocus / ReleaseFocus still work), but
 		/// assumes the client renders only when its own internal
-		/// trigger fires (e.g. a TAB hotkey). The dashboard picker
-		/// for such clients shows a "trigger this manually" banner
-		/// instead of trying to mirror a possibly-stale panel RTV.
+		/// trigger fires (e.g. a TAB hotkey); such clients get a
+		/// "trigger this manually" banner instead.
 		///
 		/// New code SHOULD set this flag. Pre-existing clients that
 		/// can't easily move their render to focus-driven (legacy
