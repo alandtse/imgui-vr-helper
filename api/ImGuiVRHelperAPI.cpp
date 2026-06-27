@@ -14,6 +14,24 @@ namespace ImGuiVRHelperPluginAPI
 	namespace
 	{
 		IImGuiVRHelperInterface001* g_interface001 = nullptr;
+		IImGuiVRHelperInterface002* g_interface002 = nullptr;
+
+		// Run the SKSE handshake and return the helper's GetApiFunction, or nullptr
+		// if the helper isn't up yet (retryable — never latched).
+		void* (*Handshake())(uint32_t)
+		{
+			const auto* messaging = SKSE::GetMessagingInterface();
+			if (!messaging) {
+				return nullptr;
+			}
+			Message msg{};
+			messaging->Dispatch(
+				Message::kMessage_GetInterface,
+				static_cast<void*>(&msg),
+				sizeof(Message*),
+				kPluginName);
+			return msg.GetApiFunction;
+		}
 	}
 
 	IImGuiVRHelperInterface001* GetImGuiVRHelperInterface001()
@@ -21,24 +39,24 @@ namespace ImGuiVRHelperPluginAPI
 		if (g_interface001) {
 			return g_interface001;
 		}
-
-		const auto* messaging = SKSE::GetMessagingInterface();
-		if (!messaging) {
-			return nullptr;
-		}
-
-		Message msg{};
-		messaging->Dispatch(
-			Message::kMessage_GetInterface,
-			static_cast<void*>(&msg),
-			sizeof(Message*),
-			kPluginName);
-
-		if (!msg.GetApiFunction) {
+		auto* getApi = Handshake();
+		if (!getApi) {
 			return nullptr;  // helper not ready yet — safe to retry next call
 		}
-
-		g_interface001 = static_cast<IImGuiVRHelperInterface001*>(msg.GetApiFunction(1));
+		g_interface001 = static_cast<IImGuiVRHelperInterface001*>(getApi(1));
 		return g_interface001;
+	}
+
+	IImGuiVRHelperInterface002* GetImGuiVRHelperInterface002()
+	{
+		if (g_interface002) {
+			return g_interface002;
+		}
+		auto* getApi = Handshake();
+		if (!getApi) {
+			return nullptr;  // helper not ready yet — retry; or simply older than 002
+		}
+		g_interface002 = static_cast<IImGuiVRHelperInterface002*>(getApi(2));
+		return g_interface002;
 	}
 }

@@ -19,6 +19,7 @@
 #include "PluginVersion.h"
 #include "SettingsUI.h"
 #include "ToastHUD.h"
+#include "VRKeyboard.h"
 #include "WandPointing.h"
 #include "internal/Profiler.h"
 #include "internal/VRUtils.h"
@@ -1474,5 +1475,20 @@ namespace ImGuiVRHelper
 	bool HelperImpl::IsDashboardVisible()
 	{
 		return false;
+	}
+
+	void HelperImpl::SetKeyboardActive(uint32_t client_id, bool active, const char* seed_utf8)
+	{
+		VRKeyboard::SetActive(client_id, active, seed_utf8);
+	}
+
+	uint32_t HelperImpl::GetKeyboardText(uint32_t client_id, char* out_utf8, uint32_t out_size)
+	{
+		return VRKeyboard::GetText(client_id, out_utf8, out_size);
+	}
+
+	bool HelperImpl::ConsumeKeyboardClosed(uint32_t client_id)
+	{
+		return VRKeyboard::ConsumeClosed(client_id);
 	}
 }

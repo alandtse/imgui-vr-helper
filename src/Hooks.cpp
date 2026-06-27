@@ -27,6 +27,7 @@
 #include "InSceneOverlay.h"
 #include "Input.h"
 #include "SettingsUI.h"
+#include "VRKeyboard.h"
 #include "internal/Detour.h"
 
 #include <RE/B/BSOpenVR.h>
@@ -293,6 +294,10 @@ namespace ImGuiVRHelper::Hooks
 					func(a_dispatcher, a_events);
 					return;
 				}
+
+				// Pump the VR keyboard on the input thread — IVROverlay calls must
+				// not run on the render thread (the vrclient "device busy" race).
+				VRKeyboard::Tick();
 
 				// Always feed the menu its input first, even when we're
 				// about to swallow the events from the game side. This is

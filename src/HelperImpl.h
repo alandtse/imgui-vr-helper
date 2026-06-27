@@ -13,7 +13,7 @@
 
 namespace ImGuiVRHelper
 {
-	class HelperImpl final : public ImGuiVRHelperPluginAPI::IImGuiVRHelperInterface001
+	class HelperImpl final : public ImGuiVRHelperPluginAPI::IImGuiVRHelperInterface002
 	{
 	public:
 		static HelperImpl& GetSingleton();
@@ -51,6 +51,12 @@ namespace ImGuiVRHelper
 			float thumbstick_x, float thumbstick_y) override;
 
 		bool IsDashboardVisible() override;
+
+		// IImGuiVRHelperInterface002 (VR text entry). Thin delegates to the
+		// VRKeyboard bridge, which marshals OpenVR calls to the input thread.
+		void SetKeyboardActive(uint32_t client_id, bool active, const char* seed_utf8) override;
+		uint32_t GetKeyboardText(uint32_t client_id, char* out_utf8, uint32_t out_size) override;
+		bool ConsumeKeyboardClosed(uint32_t client_id) override;
 
 		// Helper-internal entry points (not part of the public API).
 

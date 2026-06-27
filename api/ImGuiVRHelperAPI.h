@@ -204,4 +204,36 @@ namespace ImGuiVRHelperPluginAPI
 			std::size_t n) = 0;
 	};
 
+	/// Revision 002. Adds VR text entry (the SteamVR / OpenComposite system
+	/// keyboard) for client text fields. Obtain via GetImGuiVRHelperInterface002();
+	/// it returns nullptr against a helper older than 002, so fall back to 001 (no
+	/// VR keyboard). The SDK's Client::PumpKeyboard wraps all of this.
+	struct IImGuiVRHelperInterface002 : IImGuiVRHelperInterface001
+	{
+		/// Show (active=true) or hide (active=false) the VR keyboard for this
+		/// client's focused text field. Call every active frame; `seed_utf8` is the
+		/// field's current text, applied on the first activating frame. Safe to call
+		/// from your on_frame/render thread — the helper marshals the OpenVR calls to
+		/// its input thread. No-op if the runtime exposes no keyboard (logged once;
+		/// OpenComposite-Unleashed or SteamVR provide one, vanilla OpenComposite
+		/// does not).
+		virtual void SetKeyboardActive(uint32_t client_id, bool active,
+			const char* seed_utf8) = 0;
+
+		/// Copy the keyboard's current text (UTF-8, null-terminated) into `out_utf8`
+		/// (capacity `out_size`) and return its byte length. The runtime keyboard is
+		/// authoritative — feed this back into your field each active frame. 0 if no
+		/// text is available.
+		virtual uint32_t GetKeyboardText(uint32_t client_id, char* out_utf8,
+			uint32_t out_size) = 0;
+
+		/// Returns true exactly once after the user dismissed the keyboard (Done /
+		/// close) for this client, so the client can commit and defocus its field.
+		virtual bool ConsumeKeyboardClosed(uint32_t client_id) = 0;
+	};
+
+	/// Handshake for revision 002 (see GetImGuiVRHelperInterface001). Returns
+	/// nullptr if the installed helper predates 002.
+	IImGuiVRHelperInterface002* GetImGuiVRHelperInterface002();
+
 }  // namespace ImGuiVRHelperPluginAPI
