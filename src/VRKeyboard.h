@@ -33,7 +33,4 @@ namespace ImGuiVRHelper::VRKeyboard
 
 	/// Input-thread pump (from PollInputDevices). Owns every IVROverlay call.
 	void Tick();
-
-	/// Hide the keyboard and destroy the anchor overlay. Safe anytime.
-	void Shutdown();
 }

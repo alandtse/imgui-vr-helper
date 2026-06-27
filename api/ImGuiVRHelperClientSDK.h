@@ -174,11 +174,16 @@ namespace ImGuiVRHelperPluginAPI
 
 		void Disconnect()
 		{
+			// Release any latched keyboard before we drop the interface, or the helper
+			// keeps this client's keyboard state active after we're gone.
+			if (m_helper002 && m_id && m_kbShown)
+				m_helper002->SetKeyboardActive(m_id, false, "");
 			if (m_helper && m_id)
 				m_helper->UnregisterClient(m_id);
 			m_helper = nullptr;
 			m_helper002 = nullptr;
 			m_kbShown = false;
+			m_kbDelivered.clear();
 			m_kbDismissCooldown = 0;
 			m_id = 0;
 		}
@@ -288,10 +293,26 @@ namespace ImGuiVRHelperPluginAPI
 			const uint32_t n = m_helper002->GetKeyboardText(m_id, kb, sizeof(kb));
 			const std::string cur(kb, n);
 			if (cur != m_kbDelivered) {
+				// Diff on UTF-8 code-point boundaries. A byte-wise prefix could stop
+				// inside a multibyte character, which would emit the wrong number of
+				// backspaces (ImGui deletes whole code points, not bytes) and hand a
+				// continuation byte to AddInputCharactersUTF8.
 				std::size_t p = 0;
-				while (p < cur.size() && p < m_kbDelivered.size() && cur[p] == m_kbDelivered[p])
+				const std::size_t maxp = cur.size() < m_kbDelivered.size() ? cur.size() : m_kbDelivered.size();
+				while (p < maxp && cur[p] == m_kbDelivered[p])
 					++p;
-				for (std::size_t i = p; i < m_kbDelivered.size(); ++i) {
+				// [0, p) is shared, so a continuation byte at p on either side means the
+				// prefix split a code point — back up to its lead byte.
+				while (p > 0 &&
+					   ((p < cur.size() && (static_cast<unsigned char>(cur[p]) & 0xC0) == 0x80) ||
+						   (p < m_kbDelivered.size() && (static_cast<unsigned char>(m_kbDelivered[p]) & 0xC0) == 0x80)))
+					--p;
+				// Backspace once per code point removed (skip continuation bytes).
+				int backspaces = 0;
+				for (std::size_t i = p; i < m_kbDelivered.size(); ++i)
+					if ((static_cast<unsigned char>(m_kbDelivered[i]) & 0xC0) != 0x80)
+						++backspaces;
+				for (int i = 0; i < backspaces; ++i) {
 					io.AddKeyEvent(ImGuiKey_Backspace, true);
 					io.AddKeyEvent(ImGuiKey_Backspace, false);
 				}

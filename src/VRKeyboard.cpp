@@ -9,6 +9,7 @@
 #include <openvr.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -37,9 +38,10 @@ namespace ImGuiVRHelper::VRKeyboard
 		std::string g_currentText;
 		bool g_closed = false;
 
-		// Input-thread-only.
+		// Input-thread-only, except g_shownClient which the render-thread GetText /
+		// ConsumeClosed also read (hence atomic).
 		bool g_shown = false;
-		uint32_t g_shownClient = 0;
+		std::atomic<uint32_t> g_shownClient{ 0 };
 		// Set once a real keystroke has arrived. After that we poll the live text
 		// every tick (not just on char events) as a safety net for runtimes that may
 		// mutate the buffer without firing an event. Before the first keystroke we
@@ -55,11 +57,12 @@ namespace ImGuiVRHelper::VRKeyboard
 		int g_showGuard = 0;
 		int g_reshowsLeft = 0;
 		bool g_suppressReopen = false;  // set on Done so the still-focused field can't re-pop
-		// Opening the keyboard steals focus from the ImGui field, so WantTextInput
-		// (and thus the client's active flag) flickers off for a frame or two. Latch
-		// the keyboard shown for a grace window after the last "active" tick so it
-		// doesn't flicker open/closed; only hide once truly unfocused.
-		constexpr int kHideGraceTicks = 120;
+		// Small grace between the client clearing its active flag and us hiding, to
+		// absorb a one-tick race between the render-thread SetActive and this input
+		// thread. The SDK now latches focus jitter itself, so this no longer needs to
+		// bridge the open-flicker window — keep it short so an explicit dismiss (or a
+		// menu close while the keyboard is up) hides promptly.
+		constexpr int kHideGraceTicks = 12;
 		int g_hideGrace = 0;
 		vr::VROverlayHandle_t g_anchor = vr::k_ulOverlayHandleInvalid;
 		bool g_failLogged = false;
@@ -119,6 +122,7 @@ namespace ImGuiVRHelper::VRKeyboard
 				g_seed = seed ? seed : "";
 				g_seedPending = true;
 				g_currentText = g_seed;  // echo the seed until the runtime updates it
+				g_closed = false;        // don't let a prior session's close edge leak in
 			}
 		} else if (g_wantClient == clientId) {
 			g_wantActive = false;
@@ -264,17 +268,5 @@ namespace ImGuiVRHelper::VRKeyboard
 				g_shown = false;
 			}
 		}
-	}
-
-	void Shutdown()
-	{
-		if (vr::IVROverlay* ov = GetOverlay()) {
-			if (g_shown)
-				ov->HideKeyboard();
-			if (g_anchor != vr::k_ulOverlayHandleInvalid)
-				ov->DestroyOverlay(g_anchor);
-		}
-		g_shown = false;
-		g_anchor = vr::k_ulOverlayHandleInvalid;
 	}
 }
