@@ -19,6 +19,7 @@
 #include "OverlayTinter.h"
 #include "internal/Detour.h"
 #include "internal/HUDGeometry.h"
+#include "internal/VRMath.h"
 #include "internal/Profiler.h"
 #include "internal/VRUtils.h"
 
@@ -238,6 +239,12 @@ float4 main(PS_INPUT input) : SV_TARGET
 			// the CPU-side ZoneScopedN dispatch-cost zones already at each call site.
 			TracyD3D11Ctx tracyCtx = nullptr;
 #endif
+
+			// Cylinder mesh buffers (rebuilt when segments count changes).
+			winrt::com_ptr<ID3D11Buffer> cylinderVB;
+			winrt::com_ptr<ID3D11Buffer> cylinderIB;
+			uint32_t cylinderIndexCount = 0;
+			int      cylinderSegments   = 0;
 
 			// Cached per-eye RTVs keyed by target texture pointer (rebuilt
 			// when SteamVR rotates eye textures).
@@ -764,6 +771,81 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		// ---- Quad draw --------------------------------------------------
 
+		bool BuildCylinderBuffers(const float projL[4], const float projR[4],
+			float hudDepth, float coverage, int segments)
+		{
+			std::vector<HUDVertex> verts;
+			std::vector<uint32_t>  idxs;
+			ComputeCylinderMesh(projL, projR, hudDepth, coverage, segments, verts, idxs);
+
+			if (verts.empty() || idxs.empty())
+				return false;
+
+			auto* device = Globals::GetD3D().device;
+
+			// Vertex buffer
+			g_res.cylinderVB = nullptr;
+			D3D11_BUFFER_DESC vbDesc = {};
+			vbDesc.Usage     = D3D11_USAGE_DEFAULT;
+			vbDesc.ByteWidth = static_cast<UINT>(verts.size() * sizeof(HUDVertex));
+			vbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+			D3D11_SUBRESOURCE_DATA vbData = { verts.data() };
+			if (FAILED(device->CreateBuffer(&vbDesc, &vbData, g_res.cylinderVB.put()))) {
+				logs::error("InSceneOverlay: cylinder VB creation failed");
+				return false;
+			}
+
+			// Index buffer
+			g_res.cylinderIB = nullptr;
+			D3D11_BUFFER_DESC ibDesc = {};
+			ibDesc.Usage     = D3D11_USAGE_DEFAULT;
+			ibDesc.ByteWidth = static_cast<UINT>(idxs.size() * sizeof(uint32_t));
+			ibDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+			D3D11_SUBRESOURCE_DATA ibData = { idxs.data() };
+			if (FAILED(device->CreateBuffer(&ibDesc, &ibData, g_res.cylinderIB.put()))) {
+				logs::error("InSceneOverlay: cylinder IB creation failed");
+				return false;
+			}
+
+			g_res.cylinderIndexCount = static_cast<uint32_t>(idxs.size());
+			g_res.cylinderSegments   = segments;
+			return true;
+		}
+
+		void DrawCylinder(ID3D11DeviceContext* ctx, const ConstantBufferData& cbData,
+			ID3D11ShaderResourceView* srv)
+		{
+			D3D11_MAPPED_SUBRESOURCE mapped;
+			if (SUCCEEDED(ctx->Map(g_res.cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+				std::memcpy(mapped.pData, &cbData, sizeof(cbData));
+				ctx->Unmap(g_res.cb.get(), 0);
+			}
+
+			ctx->VSSetShader(g_res.vs.get(), nullptr, 0);
+			ctx->PSSetShader(g_res.ps.get(), nullptr, 0);
+
+			ID3D11Buffer* cb = g_res.cb.get();
+			ctx->VSSetConstantBuffers(0, 1, &cb);
+
+			UINT stride = sizeof(HUDVertex);
+			UINT offset = 0;
+			ID3D11Buffer* vb = g_res.cylinderVB.get();
+			ctx->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
+			ctx->IASetIndexBuffer(g_res.cylinderIB.get(), DXGI_FORMAT_R32_UINT, 0);
+			ctx->IASetInputLayout(g_res.inputLayout.get());
+			ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+			ctx->OMSetBlendState(g_res.blendState.get(), nullptr, 0xFFFFFFFF);
+			ctx->OMSetDepthStencilState(g_res.depthState.get(), 0);
+			ctx->RSSetState(g_res.rasterizerState.get());
+
+			ctx->PSSetShaderResources(0, 1, &srv);
+			ID3D11SamplerState* sampler = g_res.sampler.get();
+			ctx->PSSetSamplers(0, 1, &sampler);
+
+			ctx->DrawIndexed(g_res.cylinderIndexCount, 0, 0);
+		}
+
 		void DrawQuad(ID3D11DeviceContext* ctx, const ConstantBufferData& cbData,
 			ID3D11ShaderResourceView* srv)
 		{
@@ -891,21 +973,53 @@ float4 main(PS_INPUT input) : SV_TARGET
 		Util::CachedProjectionRaw(vr::Eye_Right, projR[0], projR[1], projR[2], projR[3]);
 		const HUDQuad hudQuad = ComputeHUDQuad(projL, projR, hudDepth, coverage);
 
-		const Matrix hudModel =
-			Matrix::CreateScale(hudQuad.width, hudQuad.height, 1.0f) *
-			Matrix::CreateTranslation(0.0f, hudQuad.centerY, -hudDepth);
-		const Matrix hudWvp = (hudModel * matrices.vpHeadSpace).Transpose();
+		const bool useCylinder = (s.hudShape == HUDShape::Cylinder);
 
-		// Iteration = registration order, so later HUD layers draw on top.
-		for (const auto& hud : hudClients) {
-			if (!hud.texture)
-				continue;
-			auto* hudSRV = GetOrCreateHUDSRV(hud.client_id, hud.texture);
-			if (!hudSRV)
-				continue;
-			ConstantBufferData cb;
-			cb.wvp = hudWvp;
-			DrawQuad(ctx, cb, hudSRV);
+		// For cylinder mode, build/rebuild mesh if segments changed.
+		if (useCylinder) {
+			float projL[4], projR[4];
+			Util::CachedProjectionRaw(vr::Eye_Left,  projL[0], projL[1], projL[2], projL[3]);
+			Util::CachedProjectionRaw(vr::Eye_Right, projR[0], projR[1], projR[2], projR[3]);
+			const int segs = std::max(2, s.hudCylinderSegments);
+			if (g_res.cylinderSegments != segs || !g_res.cylinderVB) {
+				if (!BuildCylinderBuffers(projL, projR, hudDepth, coverage, segs)) {
+					logs::warn("InSceneOverlay: cylinder mesh build failed, falling back to flat");
+					goto flat_hud;
+				}
+			}
+
+			// Cylinder mesh is already in head space — WVP is just the
+			// head-space view-projection (no extra model matrix needed).
+			ConstantBufferData cylinderCB;
+			cylinderCB.wvp = matrices.vpHeadSpace.Transpose();
+
+			for (const auto& hud : hudClients) {
+				if (!hud.texture) continue;
+				auto* hudSRV = GetOrCreateHUDSRV(hud.client_id, hud.texture);
+				if (!hudSRV) continue;
+				DrawCylinder(ctx, cylinderCB, hudSRV);
+			}
+			return;
+		}
+
+		flat_hud:
+		{
+			const Matrix hudModel =
+				Matrix::CreateScale(hudQuad.width, hudQuad.height, 1.0f) *
+				Matrix::CreateTranslation(0.0f, hudQuad.centerY, -hudDepth);
+			const Matrix hudWvp = (hudModel * matrices.vpHeadSpace).Transpose();
+
+			// Iteration = registration order, so later HUD layers draw on top.
+			for (const auto& hud : hudClients) {
+				if (!hud.texture)
+					continue;
+				auto* hudSRV = GetOrCreateHUDSRV(hud.client_id, hud.texture);
+				if (!hudSRV)
+					continue;
+				ConstantBufferData cb;
+				cb.wvp = hudWvp;
+				DrawQuad(ctx, cb, hudSRV);
+			}
 		}
 	}
 
