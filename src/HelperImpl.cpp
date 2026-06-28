@@ -586,6 +586,18 @@ namespace ImGuiVRHelper
 		       m_focused_client != 0;
 	}
 
+	bool HelperImpl::IsLiveToolFocused() const
+	{
+		// Only a focused client can be a live tool; the helper's own settings UI
+		// and the combo modal are always pause-time, so they never qualify.
+		if (m_focused_client == 0 || SettingsUI::IsVisible() || ComboRecording::IsActive()) {
+			return false;
+		}
+		const auto it = m_clients.find(m_focused_client);
+		return it != m_clients.end() &&
+		       (it->second.flags & ImGuiVRHelperPluginAPI::kClientFlag_LiveTool) != 0;
+	}
+
 	void HelperImpl::NotifyEnteredGame()
 	{
 		m_enteredGame = true;  // one-way latch; dismisses the startup welcome

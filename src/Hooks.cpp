@@ -371,6 +371,33 @@ namespace ImGuiVRHelper::Hooks
 				// Non-VR-controller events pass through unchanged so the
 				// game still sees keyboard / gamepad / mouse / etc.
 				if (sawVRController && HelperImpl::GetSingleton().ShouldSwallowInput()) {
+					// Live-tool clients (e.g. VR photo mode) keep driving the
+					// unpaused world, so forward locomotion to the game: rebuild
+					// the chain with only thumbstick (and non-VR) events and drop
+					// the VR buttons, which stay reserved for laser-driven UI.
+					if (HelperImpl::GetSingleton().IsLiveToolFocused() && a_events) {
+						RE::InputEvent* head = nullptr;
+						RE::InputEvent* tail = nullptr;
+						for (auto* e = *a_events; e; e = e->next) {
+							const bool isVR = IsVRControllerDevice(e->GetDevice());
+							const bool passThrough = !isVR ||
+							                         e->GetEventType() == RE::INPUT_EVENT_TYPE::kThumbstick;
+							if (passThrough) {
+								if (tail) {
+									tail->next = e;
+								} else {
+									head = e;
+								}
+								tail = e;
+							}
+						}
+						if (tail) {
+							tail->next = nullptr;
+						}
+						RE::InputEvent* const forwarded[] = { head };
+						func(a_dispatcher, forwarded);
+						return;
+					}
 					constexpr RE::InputEvent* const dummy[] = { nullptr };
 					func(a_dispatcher, dummy);
 					return;
