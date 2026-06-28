@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include "internal/HUDGeometry.h"
+
 #include <SimpleMath.h>
 #include <imgui.h>
 #include <openvr.h>
