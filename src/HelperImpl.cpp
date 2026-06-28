@@ -1015,6 +1015,12 @@ namespace ImGuiVRHelper
 				continue;
 			if (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_HUDMode)
 				continue;
+			// PointerFocus clients are coexistence overlays the owning mod drives itself via
+			// RequestFocus (e.g. an in-conversation panel that shares the wand with the game
+			// menu) — not user-pickable menus. Keep them out of the cycle / quick-select / the
+			// cold-start "first overlay" pick, so cycling can't land on an auto-only panel.
+			if (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_PointerFocus)
+				continue;
 			clients.emplace_back(id, rec.name);
 		}
 
