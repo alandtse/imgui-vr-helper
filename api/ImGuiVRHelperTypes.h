@@ -178,6 +178,33 @@ namespace ImGuiVRHelperPluginAPI
 		/// menu state machines, etc.) can omit it and the helper
 		/// degrades gracefully.
 		kClientFlag_RendersOnFocus = 1u << 3,
+
+		// 1u << 4 is reserved for kClientFlag_LiveTool (defined on the VR-keyboard feature
+		// branch); keep this value free so client flags don't collide across branches.
+
+		/// Declare this client a "pointer-focus" panel: a focused interactive
+		/// overlay that COEXISTS with the game's own UI instead of taking the
+		/// wand exclusively. Opt-in per client at RegisterClient().
+		///
+		/// The problem it solves: a normal focused panel swallows ALL VR
+		/// controller input while shown, which is correct for a standalone menu
+		/// but wrong for an overlay meant to sit alongside a live game menu (e.g.
+		/// a dialogue-history panel shown during a conversation — you still need
+		/// to pick dialogue options). LiveTool passes locomotion through but still
+		/// reserves buttons for the panel; this is for the menu-coexistence case.
+		///
+		/// Behavior when a pointer-focus client holds focus:
+		///   - INPUT IS SWALLOWED ONLY WHILE THE WAND IS ON THE PANEL. On frames
+		///     where the wand laser intersects this client's panel
+		///     (kFrameFlag_PointerInPanel) the helper captures the wand for the
+		///     panel UI as usual; on every other frame the input passes straight
+		///     to the game, so the underlying menu keeps working.
+		///   - The panel composites and receives OnFrame input exactly like any
+		///     focused client; only the swallow decision is pointer-gated.
+		///
+		/// Pair with kClientFlag_RendersOnFocus. Enter via RequestFocus(),
+		/// exit via ReleaseFocus().
+		kClientFlag_PointerFocus = 1u << 5,
 	};
 
 }  // namespace ImGuiVRHelperPluginAPI

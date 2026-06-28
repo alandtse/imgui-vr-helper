@@ -582,8 +582,21 @@ namespace ImGuiVRHelper
 		// focused client panel (e.g. a swapped-to client menu). m_focused_client
 		// is only ever a panel overlay (HUD clients are never focused), so this
 		// is exactly "an interactive overlay wants the input."
-		return SettingsUI::IsVisible() || ComboRecording::IsActive() ||
-		       m_focused_client != 0;
+		if (SettingsUI::IsVisible() || ComboRecording::IsActive()) {
+			return true;
+		}
+		if (m_focused_client == 0) {
+			return false;
+		}
+		// A pointer-focus client coexists with the game's own menu: it owns the
+		// wand only while the laser is on its panel, so the underlying menu (e.g.
+		// the dialogue menu during a conversation) keeps input every other frame.
+		const auto it = m_clients.find(m_focused_client);
+		if (it != m_clients.end() &&
+			(it->second.flags & ImGuiVRHelperPluginAPI::kClientFlag_PointerFocus) != 0) {
+			return Overlay::State::GetSingleton().wandState.isIntersecting;
+		}
+		return true;
 	}
 
 	void HelperImpl::NotifyEnteredGame()
