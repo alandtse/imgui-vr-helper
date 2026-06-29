@@ -13,7 +13,7 @@
 
 namespace ImGuiVRHelper
 {
-	class HelperImpl final : public ImGuiVRHelperPluginAPI::IImGuiVRHelperInterface002
+	class HelperImpl final : public ImGuiVRHelperPluginAPI::IImGuiVRHelperInterface003
 	{
 	public:
 		static HelperImpl& GetSingleton();
@@ -57,6 +57,9 @@ namespace ImGuiVRHelper
 		void SetKeyboardActive(uint32_t client_id, bool active, const char* seed_utf8) override;
 		uint32_t GetKeyboardText(uint32_t client_id, char* out_utf8, uint32_t out_size) override;
 		bool ConsumeKeyboardClosed(uint32_t client_id) override;
+
+		// IImGuiVRHelperInterface003 (per-combo off-panel context).
+		void SetComboOffPanel(ImGuiVRHelperPluginAPI::ComboId combo, bool off_panel) override;
 
 		// Helper-internal entry points (not part of the public API).
 
@@ -121,6 +124,7 @@ namespace ImGuiVRHelper
 			std::string label;
 			std::vector<ImGuiVRHelperPluginAPI::InputCombo> keys;
 			bool conflict;
+			bool off_panel;  ///< only acts while the wand is off the owning client's panel
 		};
 		std::vector<ComboSnapshot> SnapshotCombos();
 
@@ -353,6 +357,7 @@ namespace ImGuiVRHelper
 		float timeout_s = 0.0f;
 		bool latched = false;                                       ///< edge-fired, cleared on read
 		bool was_matched = false;                                   ///< previous-frame match, for rising edge detection
+		bool off_panel = false;                                     ///< context: off-panel-only combo (Interface003)
 		ImGuiVRHelperPluginAPI::ComboRebindFn on_rebind = nullptr;  ///< client persist hook
 		void* on_rebind_user = nullptr;
 	};

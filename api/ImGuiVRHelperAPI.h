@@ -236,4 +236,18 @@ namespace ImGuiVRHelperPluginAPI
 	/// nullptr if the installed helper predates 002.
 	IImGuiVRHelperInterface002* GetImGuiVRHelperInterface002();
 
+	/// Revision 003. Adds per-combo context: a client can declare a combo "off-panel",
+	/// so the SDK's Fired() reports it only while the wand is off the client's panel and
+	/// the controller map tags it. Obtain via GetImGuiVRHelperInterface003().
+	struct IImGuiVRHelperInterface003 : IImGuiVRHelperInterface002
+	{
+		/// Mark a registered combo as off-panel (true) or global (false, the default).
+		/// An off-panel combo acts only while the wand is off the owning client's panel
+		/// (the SDK's Fired() enforces the gate); the controller map shows the tag.
+		virtual void SetComboOffPanel(ComboId combo, bool off_panel) = 0;
+	};
+
+	/// Handshake for revision 003. Returns nullptr if the installed helper predates 003.
+	IImGuiVRHelperInterface003* GetImGuiVRHelperInterface003();
+
 }  // namespace ImGuiVRHelperPluginAPI

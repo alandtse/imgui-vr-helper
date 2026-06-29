@@ -390,6 +390,14 @@ namespace ImGuiVRHelper
 		return fired;
 	}
 
+	void HelperImpl::SetComboOffPanel(ImGuiVRHelperPluginAPI::ComboId combo, bool off_panel)
+	{
+		std::scoped_lock lk{ m_mutex };
+		if (auto it = m_combos.find(combo); it != m_combos.end()) {
+			it->second.off_panel = off_panel;
+		}
+	}
+
 	void HelperImpl::StartComboRecording(uint32_t client_id, const char* label,
 		ImGuiVRHelperPluginAPI::ComboRecordedFn on_done, void* user, float timeout_s)
 	{
@@ -452,6 +460,7 @@ namespace ImGuiVRHelper
 				s.label = rec.label;
 				s.keys = rec.keys;
 				s.conflict = false;
+				s.off_panel = rec.off_panel;
 				out.push_back(std::move(s));
 			}
 		}
@@ -473,6 +482,9 @@ namespace ImGuiVRHelper
 			}
 			return true;
 		};
+		// Any two registered combos sharing a chord clash off-panel (an off-panel combo is active
+		// off the panel; a global one is active everywhere), so flag every chord match. On-panel UI
+		// buttons aren't registered combos, so they're never part of this pass.
 		for (size_t i = 0; i < out.size(); ++i)
 			for (size_t j = i + 1; j < out.size(); ++j)
 				if (sameChord(out[i].keys, out[j].keys)) {
@@ -582,8 +594,21 @@ namespace ImGuiVRHelper
 		// focused client panel (e.g. a swapped-to client menu). m_focused_client
 		// is only ever a panel overlay (HUD clients are never focused), so this
 		// is exactly "an interactive overlay wants the input."
-		return SettingsUI::IsVisible() || ComboRecording::IsActive() ||
-		       m_focused_client != 0;
+		if (SettingsUI::IsVisible() || ComboRecording::IsActive()) {
+			return true;
+		}
+		if (m_focused_client == 0) {
+			return false;
+		}
+		// A pointer-focus client coexists with the game's own menu: it owns the
+		// wand only while the laser is on its panel, so the underlying menu (e.g.
+		// the dialogue menu during a conversation) keeps input every other frame.
+		const auto it = m_clients.find(m_focused_client);
+		if (it != m_clients.end() &&
+			(it->second.flags & ImGuiVRHelperPluginAPI::kClientFlag_PointerFocus) != 0) {
+			return Overlay::State::GetSingleton().wandState.isIntersecting;
+		}
+		return true;
 	}
 
 	bool HelperImpl::IsLiveToolFocused() const
@@ -1013,6 +1038,12 @@ namespace ImGuiVRHelper
 			if (id == m_self_client_id)
 				continue;
 			if (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_HUDMode)
+				continue;
+			// PointerFocus clients are coexistence overlays the owning mod drives itself via
+			// RequestFocus (e.g. an in-conversation panel that shares the wand with the game
+			// menu) — not user-pickable menus. Keep them out of the cycle / quick-select / the
+			// cold-start "first overlay" pick, so cycling can't land on an auto-only panel.
+			if (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_PointerFocus)
 				continue;
 			clients.emplace_back(id, rec.name);
 		}
