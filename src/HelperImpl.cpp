@@ -594,8 +594,21 @@ namespace ImGuiVRHelper
 		// focused client panel (e.g. a swapped-to client menu). m_focused_client
 		// is only ever a panel overlay (HUD clients are never focused), so this
 		// is exactly "an interactive overlay wants the input."
-		return SettingsUI::IsVisible() || ComboRecording::IsActive() ||
-		       m_focused_client != 0;
+		if (SettingsUI::IsVisible() || ComboRecording::IsActive()) {
+			return true;
+		}
+		if (m_focused_client == 0) {
+			return false;
+		}
+		// A pointer-focus client coexists with the game's own menu: it owns the
+		// wand only while the laser is on its panel, so the underlying menu (e.g.
+		// the dialogue menu during a conversation) keeps input every other frame.
+		const auto it = m_clients.find(m_focused_client);
+		if (it != m_clients.end() &&
+			(it->second.flags & ImGuiVRHelperPluginAPI::kClientFlag_PointerFocus) != 0) {
+			return Overlay::State::GetSingleton().wandState.isIntersecting;
+		}
+		return true;
 	}
 
 	void HelperImpl::NotifyEnteredGame()
@@ -1013,6 +1026,12 @@ namespace ImGuiVRHelper
 			if (id == m_self_client_id)
 				continue;
 			if (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_HUDMode)
+				continue;
+			// PointerFocus clients are coexistence overlays the owning mod drives itself via
+			// RequestFocus (e.g. an in-conversation panel that shares the wand with the game
+			// menu) — not user-pickable menus. Keep them out of the cycle / quick-select / the
+			// cold-start "first overlay" pick, so cycling can't land on an auto-only panel.
+			if (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_PointerFocus)
 				continue;
 			clients.emplace_back(id, rec.name);
 		}
