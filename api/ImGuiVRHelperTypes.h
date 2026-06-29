@@ -179,8 +179,32 @@ namespace ImGuiVRHelperPluginAPI
 		/// degrades gracefully.
 		kClientFlag_RendersOnFocus = 1u << 3,
 
-		// 1u << 4 is reserved for kClientFlag_LiveTool (defined on the VR-keyboard feature
-		// branch); keep this value free so client flags don't collide across branches.
+		/// Declare this client a "live tool": an interactive overlay that runs
+		/// while the game is UNPAUSED and the player keeps using the world
+		/// (e.g. a VR photo mode flying a free camera). Opt-in per client at
+		/// RegisterClient().
+		///
+		/// The problem it solves: by default, while any client holds focus the
+		/// helper SWALLOWS all VR controller input from the game (so a trigger
+		/// pull that clicks a menu button doesn't also fire your bow, and a
+		/// thumbstick used for menu nav doesn't walk your character). That's
+		/// correct for a pause-time settings panel, but wrong for a live tool
+		/// whose whole point is to keep driving the world (fly the camera,
+		/// move) while you poke its panel.
+		///
+		/// Behavior when a live-tool client holds focus:
+		///   - LOCOMOTION PASSES THROUGH. Thumbstick events are forwarded to
+		///     the game, so the player's own bindings/deadzones/handedness
+		///     drive movement (e.g. the free camera) normally. The client does
+		///     NOT need to read raw controller state itself.
+		///   - The OVERLAY IS LASER-DRIVEN. Button events (trigger, etc.) are
+		///     still captured for the panel UI (point-and-click with the wand),
+		///     so the same stick can fly the world while the laser works the
+		///     widgets — no fighting over the stick.
+		///
+		/// Pair with kClientFlag_RendersOnFocus. Enter via RequestFocus(),
+		/// exit via ReleaseFocus().
+		kClientFlag_LiveTool = 1u << 4,
 
 		/// Declare this client a "pointer-focus" panel: a focused interactive
 		/// overlay that COEXISTS with the game's own UI instead of taking the

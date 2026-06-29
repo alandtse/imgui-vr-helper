@@ -207,6 +207,12 @@ namespace ImGuiVRHelper
 		/// the player camera. Mirrors SCS Menu::ShouldSwallowInput.
 		bool ShouldSwallowInput() const;
 
+		/// True when the focused client opted into kClientFlag_LiveTool. The
+		/// PollInputDevices thunk uses this to forward locomotion (thumbstick)
+		/// to the game while still swallowing buttons for the panel, so a live
+		/// tool can keep driving the unpaused world (e.g. fly a free camera).
+		bool IsLiveToolFocused() const;
+
 	private:
 		HelperImpl() = default;
 
