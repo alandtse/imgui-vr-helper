@@ -63,3 +63,68 @@ TEST_CASE("vertically-offset frustum yields a non-zero centerY", "[hud]")
 	REQUIRE(q.height == Approx(2.0f));
 	REQUIRE(q.centerY == Approx(0.5f));
 }
+
+using ImGuiVRHelper::InSceneOverlay::ComputeCylinderMesh;
+using ImGuiVRHelper::InSceneOverlay::HUDVertex;
+
+TEST_CASE("cylinder mesh has correct vertex and index counts", "[hud][cylinder]")
+{
+	const float eye[4] = { -1.0f, 1.0f, -1.0f, 1.0f };
+	std::vector<HUDVertex> verts;
+	std::vector<uint32_t> idxs;
+	ComputeCylinderMesh(eye, eye, 2.0f, 1.0f, 16, verts, idxs);
+
+	// (segments+1) columns * 2 rows
+	REQUIRE(verts.size() == static_cast<size_t>(17 * 2));
+	// segments * 2 triangles * 3 indices
+	REQUIRE(idxs.size() == static_cast<size_t>(16 * 2 * 3));
+}
+
+TEST_CASE("cylinder vertices lie on the arc at hudDepth radius", "[hud][cylinder]")
+{
+	const float eye[4] = { -1.0f, 1.0f, -1.0f, 1.0f };
+	std::vector<HUDVertex> verts;
+	std::vector<uint32_t> idxs;
+	const float depth = 2.0f;
+	ComputeCylinderMesh(eye, eye, depth, 1.0f, 16, verts, idxs);
+
+	for (const auto& v : verts) {
+		const float r = std::sqrt(v.x * v.x + v.z * v.z);
+		REQUIRE(r == Approx(depth).epsilon(0.001f));
+	}
+}
+
+TEST_CASE("cylinder UVs run 0→1 left to right", "[hud][cylinder]")
+{
+	const float eye[4] = { -1.0f, 1.0f, -1.0f, 1.0f };
+	std::vector<HUDVertex> verts;
+	std::vector<uint32_t> idxs;
+	ComputeCylinderMesh(eye, eye, 2.0f, 1.0f, 8, verts, idxs);
+
+	REQUIRE(verts.front().u == Approx(0.0f));
+	REQUIRE(verts[verts.size() - 2].u == Approx(1.0f));
+}
+
+TEST_CASE("cylinder top UVs are 0, bottom UVs are 1", "[hud][cylinder]")
+{
+	const float eye[4] = { -1.0f, 1.0f, -1.0f, 1.0f };
+	std::vector<HUDVertex> verts;
+	std::vector<uint32_t> idxs;
+	ComputeCylinderMesh(eye, eye, 2.0f, 1.0f, 4, verts, idxs);
+
+	for (size_t i = 0; i < verts.size(); i += 2) {
+		REQUIRE(verts[i].v == Approx(0.0f));      // top
+		REQUIRE(verts[i + 1].v == Approx(1.0f));  // bottom
+	}
+}
+
+TEST_CASE("cylinder with 2 segments produces minimum valid mesh", "[hud][cylinder]")
+{
+	const float eye[4] = { -1.0f, 1.0f, -1.0f, 1.0f };
+	std::vector<HUDVertex> verts;
+	std::vector<uint32_t> idxs;
+	ComputeCylinderMesh(eye, eye, 1.0f, 1.0f, 2, verts, idxs);
+
+	REQUIRE(verts.size() == static_cast<size_t>(3 * 2));
+	REQUIRE(idxs.size() == static_cast<size_t>(2 * 2 * 3));
+}

@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include "internal/HUDGeometry.h"
+
 #include <SimpleMath.h>
 #include <imgui.h>
 #include <openvr.h>
@@ -187,6 +189,17 @@ namespace ImGuiVRHelper::Overlay
 		/// shrink it toward a comfortable window. Clamped to
 		/// [kMinHUDCoverage, kMaxHUDCoverage].
 		float hudCoverage = Config::kDefaultHUDCoverage;
+
+		/// Shape of the HUD panel. Flat = original 2-triangle quad (default).
+		/// Cylinder = tessellated arc that wraps horizontally around the
+		/// player, matching the natural curvature of VR lenses so the panel
+		/// spans a wider FOV without corner clipping or perspective distortion.
+		InSceneOverlay::HUDShape hudShape = InSceneOverlay::HUDShape::Flat;
+
+		/// Number of horizontal segments for the cylinder mesh (HUDShape::Cylinder
+		/// only). Higher = smoother curve, more triangles. 16 is imperceptible
+		/// from 32 at typical VR resolutions; default 24 is a safe middle ground.
+		int hudCylinderSegments = 24;
 
 		/// Base resolution of every overlay panel texture, before HUD
 		/// supersampling. Higher = sharper but more VRAM; pick to suit the
