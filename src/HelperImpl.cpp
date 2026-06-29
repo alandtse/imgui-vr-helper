@@ -563,6 +563,10 @@ namespace ImGuiVRHelper
 		auto it = m_clients.find(client_id);
 		if (it == m_clients.end())
 			return;
+		// Documented no-op for clients that didn't register as world-quad clients —
+		// don't pay the per-frame clear/copy for a list that will never render.
+		if ((it->second.flags & ImGuiVRHelperPluginAPI::kClientFlag_WorldQuad) == 0)
+			return;
 		auto& list = it->second.worldQuads;
 		list.clear();
 		if (quads && count > 0)
@@ -580,7 +584,7 @@ namespace ImGuiVRHelper
 				continue;  // nothing submitted this frame → nothing to draw
 			if (!EnsureClientTextureLocked(rec))
 				continue;
-			out.push_back({ id, rec.texture.get(), rec.worldQuads });
+			out.push_back({ id, rec.texture, rec.worldQuads });
 		}
 		return out;
 	}

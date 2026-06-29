@@ -30,6 +30,7 @@
 #include <d3dcompiler.h>
 
 #include <atomic>
+#include <cmath>
 #include <exception>
 
 #pragma comment(lib, "d3dcompiler.lib")
@@ -398,6 +399,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		{
 			Matrix vpHeadSpace;   // for HMD-relative attach mode
 			Matrix vpWorldSpace;  // for controller-attached and fixed-world
+			Vector3 hmdPos;       // HMD position (standing space) from the SAME pose as vpWorldSpace
 			bool valid = false;
 		};
 
@@ -444,6 +446,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 			result.vpHeadSpace = eyeToHead.Invert() * proj;
 			Matrix eyeToWorld = eyeToHead * hmdWorld;
 			result.vpWorldSpace = eyeToWorld.Invert() * proj;
+			result.hmdPos = hmdWorld.Translation();  // share the vpWorldSpace pose with world-quad facing
 			result.valid = true;
 			return result;
 		}
@@ -753,22 +756,16 @@ float4 main(PS_INPUT input) : SV_TARGET
 		if (worldClients.empty())
 			return;
 
-		// HMD position (standing space) for billboard facing — taken once and shared
-		// by both eyes so the quad's orientation is identical per eye (only
+		// HMD position (standing space) for billboard facing — reuse the SAME pose
+		// vpWorldSpace was built from (matrices.hmdPos), so the quad's orientation can't
+		// diverge from its projection within the pass. Shared across both eyes (only
 		// vpWorldSpace differs); a per-eye yaw would break stereo fusion.
-		vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount];
-		if (!Util::GetDeviceToAbsoluteTrackingPoseCompatible(
-				vr::TrackingUniverseStanding, 0, poses, vr::k_unMaxTrackedDeviceCount) ||
-			!poses[vr::k_unTrackedDeviceIndex_Hmd].bPoseIsValid)
-			return;
-		const Vector3 hmdPos = Util::HmdMatrix34ToMatrix(
-			poses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking)
-		                           .Translation();
+		const Vector3 hmdPos = matrices.hmdPos;
 
 		for (const auto& client : worldClients) {
 			if (!client.texture)
 				continue;
-			auto* srv = GetOrCreateHUDSRV(client.client_id, client.texture);
+			auto* srv = GetOrCreateHUDSRV(client.client_id, client.texture.get());
 			if (!srv)
 				continue;
 			D3D11_TEXTURE2D_DESC texDesc;
@@ -777,6 +774,11 @@ float4 main(PS_INPUT input) : SV_TARGET
 			const float texH = static_cast<float>(texDesc.Height);
 
 			for (const auto& q : client.quads) {
+				// Reject non-finite inputs so NaN/Inf never reach the transform or UVs.
+				if (!std::isfinite(q.u0) || !std::isfinite(q.u1) || !std::isfinite(q.v0) ||
+					!std::isfinite(q.v1) || !std::isfinite(q.height_m) ||
+					!std::isfinite(q.pos[0]) || !std::isfinite(q.pos[1]) || !std::isfinite(q.pos[2]))
+					continue;
 				const float du = q.u1 - q.u0;
 				const float dv = q.v1 - q.v0;
 				if (du <= 0.0f || dv <= 0.0f || q.height_m <= 0.0f || texH <= 0.0f)

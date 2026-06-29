@@ -109,7 +109,9 @@ namespace ImGuiVRHelper
 		struct WorldQuadClientSnapshot
 		{
 			uint32_t client_id;
-			ID3D11Texture2D* texture;
+			// Strong ref so the panel texture can't be released by an UnregisterClient
+			// on another thread between snapshot (m_mutex held) and use in RenderForEye.
+			winrt::com_ptr<ID3D11Texture2D> texture;
 			std::vector<ImGuiVRHelperPluginAPI::WorldQuad> quads;
 		};
 		std::vector<WorldQuadClientSnapshot> SnapshotWorldQuadClients();
