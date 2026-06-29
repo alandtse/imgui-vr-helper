@@ -250,4 +250,26 @@ namespace ImGuiVRHelperPluginAPI
 	/// Handshake for revision 003. Returns nullptr if the installed helper predates 003.
 	IImGuiVRHelperInterface003* GetImGuiVRHelperInterface003();
 
+	/// Revision 004. Adds world-anchored quads: a kClientFlag_WorldQuad client can
+	/// submit a per-frame list of billboards drawn at world positions (so they stay
+	/// fixed in the scene instead of swimming on the head-locked HUD). Obtain via
+	/// GetImGuiVRHelperInterface004(); nullptr against a helper older than 004.
+	struct IImGuiVRHelperInterface004 : IImGuiVRHelperInterface003
+	{
+		/// Submit this frame's world-billboard list for a kClientFlag_WorldQuad
+		/// client. Replaces the previous frame's list wholesale; `count == 0`
+		/// (quads may be null) clears it so nothing draws. Each WorldQuad samples
+		/// a sub-rect of the client's own panel texture (rendered as usual via
+		/// GetPanel / RenderToPanel) and is drawn as a camera-facing billboard at
+		/// `pos` (OpenVR standing-space meters). Call every frame the client wants
+		/// its quads shown; a frame with no call keeps the prior list, so clients
+		/// that go idle should submit `count == 0`. No-op for unknown ids or
+		/// clients that didn't set kClientFlag_WorldQuad.
+		virtual void SubmitWorldQuads(uint32_t client_id, const WorldQuad* quads,
+			std::size_t count) = 0;
+	};
+
+	/// Handshake for revision 004. Returns nullptr if the installed helper predates 004.
+	IImGuiVRHelperInterface004* GetImGuiVRHelperInterface004();
+
 }  // namespace ImGuiVRHelperPluginAPI

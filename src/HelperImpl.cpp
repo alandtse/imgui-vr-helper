@@ -556,6 +556,35 @@ namespace ImGuiVRHelper
 		return out;
 	}
 
+	void HelperImpl::SubmitWorldQuads(uint32_t client_id,
+		const ImGuiVRHelperPluginAPI::WorldQuad* quads, std::size_t count)
+	{
+		std::scoped_lock lk{ m_mutex };
+		auto it = m_clients.find(client_id);
+		if (it == m_clients.end())
+			return;
+		auto& list = it->second.worldQuads;
+		list.clear();
+		if (quads && count > 0)
+			list.assign(quads, quads + count);
+	}
+
+	std::vector<HelperImpl::WorldQuadClientSnapshot> HelperImpl::SnapshotWorldQuadClients()
+	{
+		std::vector<WorldQuadClientSnapshot> out;
+		std::scoped_lock lk{ m_mutex };
+		for (auto& [id, rec] : m_clients) {
+			if ((rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_WorldQuad) == 0)
+				continue;
+			if (rec.worldQuads.empty())
+				continue;  // nothing submitted this frame → nothing to draw
+			if (!EnsureClientTextureLocked(rec))
+				continue;
+			out.push_back({ id, rec.texture.get(), rec.worldQuads });
+		}
+		return out;
+	}
+
 	uint32_t HelperImpl::GetFocusedClientId()
 	{
 		std::scoped_lock lk{ m_mutex };

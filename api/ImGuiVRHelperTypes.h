@@ -229,6 +229,34 @@ namespace ImGuiVRHelperPluginAPI
 		/// Pair with kClientFlag_RendersOnFocus. Enter via RequestFocus(),
 		/// exit via ReleaseFocus().
 		kClientFlag_PointerFocus = 1u << 5,
+
+		/// Declare this client a "world-quad" client. Instead of the head-locked
+		/// HUD plane (which swims for world-anchored content as the head turns),
+		/// the helper draws one or more of the client's panel sub-rects as
+		/// billboards anchored at caller-supplied WORLD positions, rendered with
+		/// the in-scene world-space projection so they stay fixed in the world.
+		///
+		/// Submit the per-frame billboard list via SubmitWorldQuads(). Positions
+		/// are OpenVR standing-space meters, so a game client must convert its own
+		/// world coordinates into tracking space before submitting. The client
+		/// still renders into its normal panel RTV; each WorldQuad references a
+		/// sub-rect of that panel as its texture.
+		///
+		/// Drawn at the OpenVR Submit hook like every other helper surface — no
+		/// game-render-pipeline injection — so there is no bound scene depth and
+		/// thus no per-pixel occlusion; occlude at the client level if needed.
+		kClientFlag_WorldQuad = 1u << 6,
+	};
+
+	/// One world-anchored billboard for a kClientFlag_WorldQuad client. The helper
+	/// samples the client's panel texture over [u0,v0]..[u1,v1] (0..1 panel UV) and
+	/// draws it as a camera-facing quad centered at `pos` (OpenVR standing-space
+	/// meters), `height_m` meters tall; width follows the sub-rect's aspect ratio.
+	struct WorldQuad
+	{
+		float u0, v0, u1, v1;  ///< source sub-rect in the client's panel, 0..1 UV
+		float pos[3];          ///< billboard center, OpenVR standing space, meters
+		float height_m;        ///< billboard height in meters (width = height * uvAspect)
 	};
 
 }  // namespace ImGuiVRHelperPluginAPI

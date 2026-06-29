@@ -13,7 +13,7 @@
 
 namespace ImGuiVRHelper
 {
-	class HelperImpl final : public ImGuiVRHelperPluginAPI::IImGuiVRHelperInterface003
+	class HelperImpl final : public ImGuiVRHelperPluginAPI::IImGuiVRHelperInterface004
 	{
 	public:
 		static HelperImpl& GetSingleton();
@@ -61,6 +61,10 @@ namespace ImGuiVRHelper
 		// IImGuiVRHelperInterface003 (per-combo off-panel context).
 		void SetComboOffPanel(ImGuiVRHelperPluginAPI::ComboId combo, bool off_panel) override;
 
+		// IImGuiVRHelperInterface004 (world-anchored quads).
+		void SubmitWorldQuads(uint32_t client_id,
+			const ImGuiVRHelperPluginAPI::WorldQuad* quads, std::size_t count) override;
+
 		// Helper-internal entry points (not part of the public API).
 
 		/// Build the per-frame Frame snapshot via Input::BuildFrame and
@@ -95,6 +99,20 @@ namespace ImGuiVRHelper
 			ID3D11Texture2D* texture;
 		};
 		std::vector<HUDClientSnapshot> SnapshotHUDClients();
+
+		/// Snapshot of every kClientFlag_WorldQuad client that submitted a
+		/// non-empty billboard list this frame, as (client_id, panel_texture,
+		/// quads). The texture is the EnsureClientTextureLocked result (the same
+		/// panel the client renders into); InSceneOverlay::RenderForEye draws each
+		/// quad as a camera-facing billboard at its world position, sampling the
+		/// named sub-rect of that texture. Independent of focus / HUD gating.
+		struct WorldQuadClientSnapshot
+		{
+			uint32_t client_id;
+			ID3D11Texture2D* texture;
+			std::vector<ImGuiVRHelperPluginAPI::WorldQuad> quads;
+		};
+		std::vector<WorldQuadClientSnapshot> SnapshotWorldQuadClients();
 
 		/// Snapshot of every registered client for diagnostic display.
 		/// Used by the helper's settings UI to show a 'Registered
@@ -347,6 +365,10 @@ namespace ImGuiVRHelper
 		winrt::com_ptr<ID3D11Texture2D> texture;
 		winrt::com_ptr<ID3D11RenderTargetView> rtv;
 		winrt::com_ptr<ID3D11ShaderResourceView> srv;
+
+		// Per-frame world-billboard list for kClientFlag_WorldQuad clients,
+		// replaced wholesale by SubmitWorldQuads. Empty for everyone else.
+		std::vector<ImGuiVRHelperPluginAPI::WorldQuad> worldQuads;
 	};
 
 	struct ComboRecord

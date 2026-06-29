@@ -16,6 +16,7 @@ namespace ImGuiVRHelperPluginAPI
 		IImGuiVRHelperInterface001* g_interface001 = nullptr;
 		IImGuiVRHelperInterface002* g_interface002 = nullptr;
 		IImGuiVRHelperInterface003* g_interface003 = nullptr;
+		IImGuiVRHelperInterface004* g_interface004 = nullptr;
 
 		// Run the SKSE handshake and return the helper's GetApiFunction, or nullptr
 		// if the helper isn't up yet (retryable — never latched).
@@ -72,5 +73,18 @@ namespace ImGuiVRHelperPluginAPI
 		}
 		g_interface003 = static_cast<IImGuiVRHelperInterface003*>(getApi(3));
 		return g_interface003;
+	}
+
+	IImGuiVRHelperInterface004* GetImGuiVRHelperInterface004()
+	{
+		if (g_interface004) {
+			return g_interface004;
+		}
+		auto* getApi = Handshake();
+		if (!getApi) {
+			return nullptr;  // helper not ready yet — retry; or simply older than 004
+		}
+		g_interface004 = static_cast<IImGuiVRHelperInterface004*>(getApi(4));
+		return g_interface004;
 	}
 }

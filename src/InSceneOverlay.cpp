@@ -56,6 +56,8 @@ namespace ImGuiVRHelper::InSceneOverlay
 cbuffer MatrixBuffer : register(b0)
 {
 	matrix wvp;
+	float2 uvScale;   // map unit-quad uv into a panel sub-rect (1,1 = whole panel)
+	float2 uvOffset;  // sub-rect origin (0,0 = whole panel)
 };
 struct VS_INPUT
 {
@@ -71,7 +73,7 @@ PS_INPUT main(VS_INPUT input)
 {
 	PS_INPUT output;
 	output.pos = mul(float4(input.pos, 1.0f), wvp);
-	output.uv = input.uv;
+	output.uv = input.uv * uvScale + uvOffset;
 	return output;
 }
 )";
@@ -93,6 +95,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 		struct ConstantBufferData
 		{
 			Matrix wvp;
+			// UV sub-rect transform (panel uv = quad uv * scale + offset). Defaults
+			// map the whole panel, so existing full-panel callers need not set them.
+			float uvScale[2] = { 1.0f, 1.0f };
+			float uvOffset[2] = { 0.0f, 0.0f };
 		};
 
 		struct Resources
@@ -735,6 +741,90 @@ float4 main(PS_INPUT input) : SV_TARGET
 		}
 	}
 
+	// World-quad pass: each kClientFlag_WorldQuad client's submitted billboards,
+	// drawn at their world positions (OpenVR standing space) facing the HMD, so they
+	// stay anchored in the scene instead of swimming on the head-locked HUD. Depth is
+	// off like every other helper surface, so there's no scene occlusion — clients
+	// occlude at their own level.
+	void RenderWorldQuadPass(ID3D11DeviceContext* ctx, const EyeMatrices& matrices,
+		const std::vector<HelperImpl::WorldQuadClientSnapshot>& worldClients)
+	{
+		ZoneScopedN("InScene::WorldQuadPass");
+		if (worldClients.empty())
+			return;
+
+		// HMD position (standing space) for billboard facing — taken once and shared
+		// by both eyes so the quad's orientation is identical per eye (only
+		// vpWorldSpace differs); a per-eye yaw would break stereo fusion.
+		vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount];
+		if (!Util::GetDeviceToAbsoluteTrackingPoseCompatible(
+				vr::TrackingUniverseStanding, 0, poses, vr::k_unMaxTrackedDeviceCount) ||
+			!poses[vr::k_unTrackedDeviceIndex_Hmd].bPoseIsValid)
+			return;
+		const Vector3 hmdPos = Util::HmdMatrix34ToMatrix(
+			poses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking)
+		                           .Translation();
+
+		for (const auto& client : worldClients) {
+			if (!client.texture)
+				continue;
+			auto* srv = GetOrCreateHUDSRV(client.client_id, client.texture);
+			if (!srv)
+				continue;
+			D3D11_TEXTURE2D_DESC texDesc;
+			client.texture->GetDesc(&texDesc);
+			const float texW = static_cast<float>(texDesc.Width);
+			const float texH = static_cast<float>(texDesc.Height);
+
+			for (const auto& q : client.quads) {
+				const float du = q.u1 - q.u0;
+				const float dv = q.v1 - q.v0;
+				if (du <= 0.0f || dv <= 0.0f || q.height_m <= 0.0f || texH <= 0.0f)
+					continue;
+				// Width from the requested height via the sub-rect's pixel aspect.
+				const float aspect = (du * texW) / (dv * texH);
+				const float height = q.height_m;
+				const float width = height * aspect;
+
+				const Vector3 center(q.pos[0], q.pos[1], q.pos[2]);
+				Vector3 forward = hmdPos - center;
+				if (forward.LengthSquared() < 1e-6f)
+					continue;
+				forward.Normalize();
+				Vector3 right = Vector3(0.0f, 1.0f, 0.0f).Cross(forward);
+				if (right.LengthSquared() < 1e-6f)
+					right = Vector3(1.0f, 0.0f, 0.0f);  // looking straight up/down
+				right.Normalize();
+				const Vector3 up = forward.Cross(right);
+
+				// Rotation rows map local axes (x=right, y=up, z=forward) to world,
+				// so the unit quad (XY plane, +Z normal) faces the HMD, upright and
+				// un-mirrored.
+				Matrix rot = Matrix::Identity;
+				rot._11 = right.x;
+				rot._12 = right.y;
+				rot._13 = right.z;
+				rot._21 = up.x;
+				rot._22 = up.y;
+				rot._23 = up.z;
+				rot._31 = forward.x;
+				rot._32 = forward.y;
+				rot._33 = forward.z;
+
+				const Matrix model = Matrix::CreateScale(width, height, 1.0f) * rot *
+				                     Matrix::CreateTranslation(center);
+
+				ConstantBufferData cb;
+				cb.wvp = (model * matrices.vpWorldSpace).Transpose();
+				cb.uvScale[0] = du;
+				cb.uvScale[1] = dv;
+				cb.uvOffset[0] = q.u0;
+				cb.uvOffset[1] = q.v0;
+				DrawQuad(ctx, cb, srv);
+			}
+		}
+	}
+
 	void RenderForEye(vr::EVREye eye, ID3D11Texture2D* targetTexture,
 		const vr::VRTextureBounds_t* bounds)
 	{
@@ -759,6 +849,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// the whole frame.
 		const uint32_t focused = HelperImpl::GetSingleton().GetFocusedClientId();
 		auto hudClients = HelperImpl::GetSingleton().SnapshotHUDClients();
+		auto worldClients = HelperImpl::GetSingleton().SnapshotWorldQuadClients();
 
 		// Focused panel-mode client gate (existing semantics).
 		ID3D11Texture2D* menuTex = nullptr;
@@ -768,7 +859,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 			wantPanelPass = (menuTex != nullptr);
 		}
 
-		if (!wantPanelPass && hudClients.empty())
+		if (!wantPanelPass && hudClients.empty() && worldClients.empty())
 			return;
 
 		if (!InitResources())
@@ -803,15 +894,16 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// this same thing — composites onto a virtual plane at a fixed
 		// distance, per-eye projection.
 		EyeMatrices matrices;
-		if (wantPanelPass || !hudClients.empty()) {
+		if (wantPanelPass || !hudClients.empty() || !worldClients.empty()) {
 			matrices = ComputeEyeMatrices(eye);
 			if (!matrices.valid) {
 				wantPanelPass = false;
 				hudClients.clear();
+				worldClients.clear();
 			}
 		}
 
-		if (!wantPanelPass && hudClients.empty())
+		if (!wantPanelPass && hudClients.empty() && worldClients.empty())
 			return;
 
 		// Save current render state so we don't clobber Skyrim's submit.
@@ -836,6 +928,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 		}
 		vp.MaxDepth = 1.0f;
 		ctx->RSSetViewports(1, &vp);
+
+		// World-anchored billboards first (they sit in the scene), then the
+		// head-locked HUD/panel surfaces on top.
+		RenderWorldQuadPass(ctx, matrices, worldClients);
 
 		RenderHUDPass(ctx, matrices, s, hudClients);
 
