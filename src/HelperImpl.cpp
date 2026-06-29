@@ -390,6 +390,14 @@ namespace ImGuiVRHelper
 		return fired;
 	}
 
+	void HelperImpl::SetComboOffPanel(ImGuiVRHelperPluginAPI::ComboId combo, bool off_panel)
+	{
+		std::scoped_lock lk{ m_mutex };
+		if (auto it = m_combos.find(combo); it != m_combos.end()) {
+			it->second.off_panel = off_panel;
+		}
+	}
+
 	void HelperImpl::StartComboRecording(uint32_t client_id, const char* label,
 		ImGuiVRHelperPluginAPI::ComboRecordedFn on_done, void* user, float timeout_s)
 	{
@@ -452,6 +460,7 @@ namespace ImGuiVRHelper
 				s.label = rec.label;
 				s.keys = rec.keys;
 				s.conflict = false;
+				s.off_panel = rec.off_panel;
 				out.push_back(std::move(s));
 			}
 		}
@@ -473,6 +482,9 @@ namespace ImGuiVRHelper
 			}
 			return true;
 		};
+		// Any two registered combos sharing a chord clash off-panel (an off-panel combo is active
+		// off the panel; a global one is active everywhere), so flag every chord match. On-panel UI
+		// buttons aren't registered combos, so they're never part of this pass.
 		for (size_t i = 0; i < out.size(); ++i)
 			for (size_t j = i + 1; j < out.size(); ++j)
 				if (sameChord(out[i].keys, out[j].keys)) {

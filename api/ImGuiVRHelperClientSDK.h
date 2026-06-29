@@ -26,6 +26,16 @@
 //
 //   g_vr.DrawBindingsTable();
 //
+// Off-panel input contract: while your client holds focus, the helper turns
+// controller buttons into UI input ONLY when the wand laser is on your panel
+// (IsPointerInPanel() == true) — trigger/grip/pad/stick → mouse clicks, A/X →
+// Enter, B/Y → Tab. Off the panel those buttons are the client's: register actions
+// with AddCombo (so they surface in the helper's controller map) and gate the
+// handler on !IsPointerInPanel(). The helper's own system gestures are designed
+// not to collide — the open-menu chord is a no-op while any client is focused,
+// overlay cycle is a stick-click, and close/exit is grip — so a focused client
+// effectively owns the off-panel face buttons.
+//
 // Hard dependencies (include from a TU that has them): Dear ImGui (<imgui.h> +
 // <imgui_internal.h>) and the official DX11 backend (<imgui_impl_dx11.h>),
 // <d3d11.h>, and nlohmann/json (pulled by ImGuiVRHelperInput.h). RenderHud /
@@ -37,6 +47,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cstddef>
@@ -169,6 +180,7 @@ namespace ImGuiVRHelperPluginAPI
 			// Optional: VR text entry (interface 002). Null against an older helper,
 			// in which case PumpKeyboard is a no-op (desktop keyboard only).
 			m_helper002 = GetImGuiVRHelperInterface002();
+			m_helper003 = GetImGuiVRHelperInterface003();
 			return true;
 		}
 
@@ -182,6 +194,7 @@ namespace ImGuiVRHelperPluginAPI
 				m_helper->UnregisterClient(m_id);
 			m_helper = nullptr;
 			m_helper002 = nullptr;
+			m_helper003 = nullptr;
 			m_kbShown = false;
 			m_kbDelivered.clear();
 			m_kbDismissCooldown = 0;
@@ -201,6 +214,20 @@ namespace ImGuiVRHelperPluginAPI
 		/// is closed — e.g. the user cycled overlays to you).
 		[[nodiscard]] bool HasFocus() const { return m_requestsRender; }
 
+		/// True when this client's wand laser is on its panel this frame
+		/// (kFrameFlag_PointerInPanel). Lets a client route input by where the
+		/// wand points — e.g. trigger = click on the panel, trigger = a tool
+		/// action when off it — without owning a PollInputDevices hook.
+		[[nodiscard]] bool IsPointerInPanel() const { return m_pointerInPanel; }
+
+		/// True while the given controller button is held this frame (either hand),
+		/// from the same snapshot that drives the laser UI. Edge-detect client-side.
+		[[nodiscard]] bool IsButtonHeld(Button a_button) const
+		{
+			std::scoped_lock lk{ m_mutex };
+			return (m_heldMask & (1u << static_cast<uint32_t>(a_button))) != 0;
+		}
+
 		// ---- Combos ----------------------------------------------------
 
 		/// Register a chord. `onRebind` (optional) fires with the new chord
@@ -209,8 +236,12 @@ namespace ImGuiVRHelperPluginAPI
 		/// is the factory default for this binding — pass it to enable the
 		/// per-row "Reset" button in DrawBindingsTable. Returns 0 for an empty
 		/// initial chord or if not connected.
+		/// `offPanel`: when true, Fired() only reports the combo while the wand is OFF this client's
+		/// panel — the on-panel buttons drive the UI instead. Lets a focused client own the off-panel
+		/// face buttons without each caller re-checking IsPointerInPanel().
 		ComboId AddCombo(const char* label, const std::vector<InputCombo>& keys,
-			RebindCallback onRebind = {}, const std::vector<InputCombo>& defaultKeys = {})
+			RebindCallback onRebind = {}, const std::vector<InputCombo>& defaultKeys = {},
+			bool offPanel = false)
 		{
 			if (!IsConnected() || keys.empty())
 				return 0;
@@ -220,15 +251,30 @@ namespace ImGuiVRHelperPluginAPI
 			entry.keys = keys;
 			entry.onRebind = std::move(onRebind);
 			entry.defaults = defaultKeys;
+			entry.offPanel = offPanel;
 			m_combos.push_back(std::move(entry));
 			ComboEntry& e = m_combos.back();
 			e.id = m_helper->RegisterCombo(m_id, e.keys.data(), e.keys.size(), 0.0f,
 				e.label.c_str(), &RebindThunk, &e);
+			// Tell the helper the context too (003+), so the controller map shows it and conflict
+			// flagging stays per-context. Older helpers still get the local Fired() gate above.
+			if (offPanel && m_helper003 && e.id != 0)
+				m_helper003->SetComboOffPanel(e.id, true);
 			return e.id;
 		}
 
-		/// Edge-triggered: true exactly once per activation.
-		bool Fired(ComboId id) { return IsConnected() && id != 0 && m_helper->ComboFired(id); }
+		/// Edge-triggered: true exactly once per activation. For an off-panel combo, returns false
+		/// while the wand is on the panel (the edge is still consumed, so an on-panel press is dropped
+		/// rather than deferred to when you next look off-panel).
+		bool Fired(ComboId id)
+		{
+			if (!IsConnected() || id == 0 || !m_helper->ComboFired(id))
+				return false;
+			for (const auto& e : m_combos)
+				if (e.id == id)
+					return !e.offPanel || !m_pointerInPanel;
+			return true;
+		}
 
 		// ---- Text entry ------------------------------------------------
 
@@ -435,7 +481,8 @@ namespace ImGuiVRHelperPluginAPI
 			// dismiss cooldown extends this so the OK-trigger release can't click the
 			// field and immediately re-open the keyboard.
 			if (m_kbShown || m_kbDismissCooldown > 0) {
-				m_prevHeld = held;  // keep edges current for when it closes
+				m_pointerInPanel = true;  // the keyboard owns the wand; suppress off-panel client shortcuts
+				m_prevHeld = held;        // keep edges current for when it closes
 				return;
 			}
 
@@ -443,13 +490,22 @@ namespace ImGuiVRHelperPluginAPI
 			// OS cursor so the platform backend reads our position back instead
 			// of the (off-screen, in VR) desktop cursor.
 			float u = 0.0f, v = 0.0f;
-			if (m_helper->GetPointer(m_id, &u, &v, nullptr)) {
+			const bool onPanel = m_helper->GetPointer(m_id, &u, &v, nullptr);
+			m_pointerInPanel = onPanel;
+			if (onPanel) {
 				const float x = std::clamp(u * io.DisplaySize.x, 0.0f, io.DisplaySize.x);
 				const float y = std::clamp(v * io.DisplaySize.y, 0.0f, io.DisplaySize.y);
 				io.MousePos = ImVec2(x, y);
 				io.AddMousePosEvent(x, y);
 				io.MouseDrawCursor = true;
 				io.WantSetMousePos = true;
+			} else {
+				// Wand off the panel: park the cursor off-screen so a click can't land on the
+				// last-hovered widget, and skip the pointer-click synthesis below — off-panel input
+				// belongs to the client (e.g. a tool shortcut, read via IsButtonHeld).
+				io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
+				io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+				io.MouseDrawCursor = false;
 			}
 
 			const uint32_t changed = held ^ m_prevHeld;
@@ -458,12 +514,16 @@ namespace ImGuiVRHelperPluginAPI
 				if (changed & bit)
 					fn((held & bit) != 0);
 			};
-			onEdge(Button::TriggerClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Left, d); });
-			onEdge(Button::GripClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Right, d); });
-			onEdge(Button::PadClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
-			onEdge(Button::StickClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
-			onEdge(Button::BY, [&](bool d) { io.AddKeyEvent(ImGuiKey_Tab, d); });
-			onEdge(Button::AX, [&](bool d) { io.AddKeyEvent(ImGuiKey_Enter, d); });
+			if (onPanel) {
+				// Button input drives the UI only while the wand is on the panel. Off-panel the
+				// buttons belong to the client (read via IsButtonHeld) for its own shortcuts.
+				onEdge(Button::TriggerClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Left, d); });
+				onEdge(Button::GripClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Right, d); });
+				onEdge(Button::PadClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
+				onEdge(Button::StickClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
+				onEdge(Button::BY, [&](bool d) { io.AddKeyEvent(ImGuiKey_Tab, d); });
+				onEdge(Button::AX, [&](bool d) { io.AddKeyEvent(ImGuiKey_Enter, d); });
+			}
 			m_prevHeld = held;
 
 			// Thumbstick → discrete wheel ticks.
@@ -781,6 +841,7 @@ namespace ImGuiVRHelperPluginAPI
 			std::vector<InputCombo> keys;
 			std::vector<InputCombo> defaults;  ///< factory default, for the Reset button
 			RebindCallback onRebind;
+			bool offPanel = false;  ///< only fires while the wand is off this client's panel
 		};
 
 		static void OnFrameThunk(const Frame* f, void* user)
@@ -910,6 +971,7 @@ namespace ImGuiVRHelperPluginAPI
 
 		IImGuiVRHelperInterface001* m_helper = nullptr;
 		IImGuiVRHelperInterface002* m_helper002 = nullptr;  // null if helper predates 002 (no VR keyboard)
+		IImGuiVRHelperInterface003* m_helper003 = nullptr;  // null if helper predates 003 (no off-panel combos)
 		uint32_t m_id = 0;
 		ID3D11DeviceContext* m_cachedContext = nullptr;  // ctx resolved lazily, device-owned
 		bool m_requestsRender = false;
@@ -922,7 +984,7 @@ namespace ImGuiVRHelperPluginAPI
 		int m_kbDismissCooldown = 0;
 
 		// OnFrame snapshot (frame thread → render thread).
-		std::mutex m_mutex;
+		mutable std::mutex m_mutex;
 		uint32_t m_heldMask = 0;
 		float m_stickX = 0.0f;
 		float m_stickY = 0.0f;
@@ -931,6 +993,9 @@ namespace ImGuiVRHelperPluginAPI
 
 		// Render-thread-only state.
 		uint32_t m_prevHeld = 0;
+		// Last GetPointer result from PumpInput. Atomic because the public IsPointerInPanel() may be
+		// read off the render thread (e.g. from a client's on_frame callback).
+		std::atomic<bool> m_pointerInPanel = false;
 		bool m_focusRequested = false;
 		bool m_hadFocus = false;
 		bool m_prevMenuOpen = false;  // ReconcileFocus edge state

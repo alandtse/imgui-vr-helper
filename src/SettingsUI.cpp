@@ -443,6 +443,10 @@ namespace ImGuiVRHelper::SettingsUI
 					ImGui::TextColored(Theme::DeviceColor(c.keys[i].GetDevice()), "%s",
 						Input::ButtonName(c.keys[i].GetKey()));
 				}
+				if (c.off_panel) {
+					ImGui::SameLine();
+					ImGui::TextDisabled("  (off-panel)");
+				}
 				if (c.conflict) {
 					ImGui::SameLine();
 					ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "  [conflict]");
