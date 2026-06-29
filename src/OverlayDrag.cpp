@@ -78,17 +78,20 @@ namespace ImGuiVRHelper::OverlayDrag
 				// respawns where the user put it (next session and on each re-anchor).
 				if (mode == DragState::Mode::FixedWorld) {
 					vr::TrackedDevicePose_t hmdPose;
-					if (Util::GetDeviceToAbsoluteTrackingPoseCompatible(
-							vr::TrackingUniverseStanding, 0, &hmdPose, 1) &&
-						hmdPose.bPoseIsValid) {
-						const Matrix hmd = Util::HmdMatrix34ToMatrix(hmdPose.mDeviceToAbsoluteTracking);
-						const Vector3 menuWorld(
-							state.fixedWorld.m._41, state.fixedWorld.m._42, state.fixedWorld.m._43);
-						const Vector3 local = Vector3::Transform(menuWorld, hmd.Invert());
-						s.hmdOffsetX = local.x;
-						s.hmdOffsetY = local.y;
-						s.hmdOffsetZ = local.z;
+					if (!Util::GetDeviceToAbsoluteTrackingPoseCompatible(
+							vr::TrackingUniverseStanding, 0, &hmdPose, 1) ||
+						!hmdPose.bPoseIsValid) {
+						// Couldn't read the HMD pose, so we can't derive the offset.
+						// Bail without saving rather than persist a stale one.
+						return;
 					}
+					const Matrix hmd = Util::HmdMatrix34ToMatrix(hmdPose.mDeviceToAbsoluteTracking);
+					const Vector3 menuWorld(
+						state.fixedWorld.m._41, state.fixedWorld.m._42, state.fixedWorld.m._43);
+					const Vector3 local = Vector3::Transform(menuWorld, hmd.Invert());
+					s.hmdOffsetX = local.x;
+					s.hmdOffsetY = local.y;
+					s.hmdOffsetZ = local.z;
 				}
 				// Persist on release: the drag updates the live settings in real time,
 				// but nothing else writes them until the menu closes — so without this
