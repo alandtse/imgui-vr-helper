@@ -63,10 +63,38 @@ namespace ImGuiVRHelper::OverlayDrag
 				return;
 
 			auto resetDragState = [&]() {
+				const bool wasDragging = drag.dragging;
+				const auto mode = drag.mode;
 				drag.dragging = false;
 				drag.controllerIndex = vr::k_unTrackedDeviceIndexInvalid;
 				drag.isPrimary = false;
 				drag.isSecondary = false;
+				if (!wasDragging)
+					return;
+				// Fixed-world stores a volatile world matrix that re-anchors as the
+				// player moves and re-initializes each session, so persisting it is
+				// pointless. Instead capture where the menu ended up as an HMD-relative
+				// offset — the same recipe SetFixedToCurrentHMD replays — so the menu
+				// respawns where the user put it (next session and on each re-anchor).
+				if (mode == DragState::Mode::FixedWorld) {
+					vr::TrackedDevicePose_t hmdPose;
+					if (Util::GetDeviceToAbsoluteTrackingPoseCompatible(
+							vr::TrackingUniverseStanding, 0, &hmdPose, 1) &&
+						hmdPose.bPoseIsValid) {
+						const Matrix hmd = Util::HmdMatrix34ToMatrix(hmdPose.mDeviceToAbsoluteTracking);
+						const Vector3 menuWorld(
+							state.fixedWorld.m._41, state.fixedWorld.m._42, state.fixedWorld.m._43);
+						const Vector3 local = Vector3::Transform(menuWorld, hmd.Invert());
+						s.hmdOffsetX = local.x;
+						s.hmdOffsetY = local.y;
+						s.hmdOffsetZ = local.z;
+					}
+				}
+				// Persist on release: the drag updates the live settings in real time,
+				// but nothing else writes them until the menu closes — so without this
+				// a reposition is lost if the user keeps playing (HUD layers never
+				// "close") or exits with the menu open.
+				Overlay::SaveSettings();
 			};
 
 			float rawMatrix[3][4];
