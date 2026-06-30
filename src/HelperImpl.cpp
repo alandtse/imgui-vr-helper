@@ -1078,6 +1078,10 @@ namespace ImGuiVRHelper
 			// cold-start "first overlay" pick, so cycling can't land on an auto-only panel.
 			if (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_PointerFocus)
 				continue;
+			// World-quad clients render in-scene billboards (subtitles, damage numbers), never an
+			// interactive menu — keep them out of the cycle so it can't land on an empty panel.
+			if (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_WorldQuad)
+				continue;
 			clients.emplace_back(id, rec.name);
 		}
 
