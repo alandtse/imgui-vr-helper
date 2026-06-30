@@ -10,7 +10,7 @@ includes("lib/commonlibsse-ng")
 set_project("ImGuiVRHelper")
 set_license("GPL-3.0")
 
-local version = "1.4.1"
+local version = "1.5.0"
 local ver = version:split("%.")
 set_version(version)
 
