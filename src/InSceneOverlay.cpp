@@ -762,12 +762,41 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// vpWorldSpace differs); a per-eye yaw would break stereo fusion.
 		const Vector3 hmdPos = matrices.hmdPos;
 
+		// Bind the invariant quad pipeline ONCE for the whole pass. DrawQuad() re-binds shaders,
+		// buffers, input layout, blend/depth/raster, and sampler on every call — wasted work when
+		// a client submits many quads (e.g. floating damage numbers). Here only the constant
+		// buffer and the per-client SRV change per quad; the caller's StateBackup restores after.
+		{
+			struct VT
+			{
+				XMFLOAT3 p;
+				XMFLOAT2 t;
+			};
+			ctx->VSSetShader(g_res.vs.get(), nullptr, 0);
+			ctx->PSSetShader(g_res.ps.get(), nullptr, 0);
+			ID3D11Buffer* cbuf = g_res.cb.get();
+			ctx->VSSetConstantBuffers(0, 1, &cbuf);
+			UINT stride = sizeof(VT);
+			UINT offset = 0;
+			ID3D11Buffer* vb = g_res.vb.get();
+			ctx->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
+			ctx->IASetIndexBuffer(g_res.ib.get(), DXGI_FORMAT_R32_UINT, 0);
+			ctx->IASetInputLayout(g_res.inputLayout.get());
+			ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			ctx->OMSetBlendState(g_res.blendState.get(), nullptr, 0xFFFFFFFF);
+			ctx->OMSetDepthStencilState(g_res.depthState.get(), 0);
+			ctx->RSSetState(g_res.rasterizerState.get());
+			ID3D11SamplerState* samp = g_res.sampler.get();
+			ctx->PSSetSamplers(0, 1, &samp);
+		}
+
 		for (const auto& client : worldClients) {
 			if (!client.texture)
 				continue;
 			auto* srv = GetOrCreateHUDSRV(client.client_id, client.texture.get());
 			if (!srv)
 				continue;
+			ctx->PSSetShaderResources(0, 1, &srv);  // once per client; all its quads share it
 			D3D11_TEXTURE2D_DESC texDesc;
 			client.texture->GetDesc(&texDesc);
 			const float texW = static_cast<float>(texDesc.Width);
@@ -816,13 +845,26 @@ float4 main(PS_INPUT input) : SV_TARGET
 				const Matrix model = Matrix::CreateScale(width, height, 1.0f) * rot *
 				                     Matrix::CreateTranslation(center);
 
+				// Cull quads behind the camera (clip w <= 0) so we skip the CB upload and draw
+				// call entirely rather than relying on the GPU to clip them. The client is
+				// expected to cull off-screen content too; this guards clients that don't.
+				const Vector4 clip = Vector4::Transform(Vector4(center.x, center.y, center.z, 1.0f), matrices.vpWorldSpace);
+				if (clip.w <= 0.0f)
+					continue;
+
 				ConstantBufferData cb;
 				cb.wvp = (model * matrices.vpWorldSpace).Transpose();
 				cb.uvScale[0] = du;
 				cb.uvScale[1] = dv;
 				cb.uvOffset[0] = q.u0;
 				cb.uvOffset[1] = q.v0;
-				DrawQuad(ctx, cb, srv);
+				// Pipeline state + SRV are already bound for this pass — only update the CB and draw.
+				D3D11_MAPPED_SUBRESOURCE mapped;
+				if (SUCCEEDED(ctx->Map(g_res.cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+					std::memcpy(mapped.pData, &cb, sizeof(cb));
+					ctx->Unmap(g_res.cb.get(), 0);
+				}
+				ctx->DrawIndexed(6, 0, 0);
 			}
 		}
 	}
