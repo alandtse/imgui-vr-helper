@@ -18,6 +18,10 @@ the SKSE Menu Framework is the second.
   depth, with grip-to-drag repositioning, wand pointing → ImGui cursor, and thumbstick scroll.
 - **HUD mode** (`kClientFlag_HUDMode`) — always-on full-FOV layer for subtitle/nameplate-style
   content, at a client-readable depth/coverage (surfaced on the per-frame `Frame`).
+- **World-quad mode** (`kClientFlag_WorldQuad`, interface 004) — per-frame `SubmitWorldQuads` list
+  of camera-facing billboards drawn at world (OpenVR standing-space) positions, batched and
+  GPU-instanced in the Submit pass, so scene-anchored 2D (subtitles, damage numbers) holds its
+  spot instead of swimming on the head-locked plane. Not user-cyclable.
 - **Focus-render contract** (`kClientFlag_RendersOnFocus`) — clients that ack it render on focus;
   clients that don't get a "trigger manually" banner.
 - **Overlay cycle + quick-select** — stick-click cycles between open overlays; a long-hold stick

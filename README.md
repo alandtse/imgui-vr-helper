@@ -88,6 +88,20 @@ g_vr.RenderFrame();      // VR: flat panel only; flat screen / no helper: your n
 
   HUD-mode clients bypass focus gating and are composited at a fixed, HMD-relative depth (~1.5m forward).
 
+- **World-anchored overlays (World-Quad Mode):** For 2D content that should stay pinned in the scene (subtitles, damage numbers, nameplates) rather than ride the head-locked HUD plane, connect with `kClientFlag_WorldQuad`. Draw your text into the client panel as usual, then each frame submit billboards that sample sub-rects of that panel at world positions:
+
+  ```cpp
+  // Connect:
+  g_vr.Connect("MySubtitles", versionStr, ImGuiVRHelperPluginAPI::kClientFlag_WorldQuad);
+
+  // Each frame, after drawing your panel text (RenderHud / RenderToPanel):
+  std::vector<ImGuiVRHelperPluginAPI::WorldQuad> quads;
+  // fill u0/v0/u1/v1 (panel UV), pos[3] (OpenVR standing space, meters), height_m
+  g_vr.SubmitWorldQuads(quads.data(), quads.size());
+  ```
+
+  Each billboard is camera-facing, `height_m` tall (width follows the sub-rect aspect), and reprojected by the compositor like world geometry, so it holds its spot as the head turns. `pos` is OpenVR standing-space meters — convert your game-world anchor into tracking space before submitting. World-quad clients aren't user-cyclable overlays (no interactive panel). The helper caps the list at 4096 quads per client; submit `count == 0` to clear. `SubmitWorldQuads` is a no-op against a pre-004 helper (`HasWorldQuads()` returns false) — connect as `kClientFlag_HUDMode` instead if you need a head-locked fallback for older helpers.
+
 `RenderFrame()` is the drop-in replacement for a bare
 `ImGui_ImplDX11_RenderDrawData(...)`. **Do not also draw your menu into the game's
 frame in VR:** a flat menu painted into Skyrim's `kHUDMENU` is wrapped onto the
