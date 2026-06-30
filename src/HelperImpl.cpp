@@ -556,6 +556,42 @@ namespace ImGuiVRHelper
 		return out;
 	}
 
+	void HelperImpl::SubmitWorldQuads(uint32_t client_id,
+		const ImGuiVRHelperPluginAPI::WorldQuad* quads, std::size_t count)
+	{
+		std::scoped_lock lk{ m_mutex };
+		auto it = m_clients.find(client_id);
+		if (it == m_clients.end())
+			return;
+		// Documented no-op for clients that didn't register as world-quad clients —
+		// don't pay the per-frame clear/copy for a list that will never render.
+		if ((it->second.flags & ImGuiVRHelperPluginAPI::kClientFlag_WorldQuad) == 0)
+			return;
+		auto& list = it->second.worldQuads;
+		list.clear();
+		// Cap the per-client list so a malformed count can't drive a huge alloc/copy; far
+		// above any real subtitle/damage-number scene. Kept in sync with the API doc comment.
+		constexpr std::size_t kMaxWorldQuads = 4096;
+		if (quads && count > 0)
+			list.assign(quads, quads + std::min(count, kMaxWorldQuads));
+	}
+
+	std::vector<HelperImpl::WorldQuadClientSnapshot> HelperImpl::SnapshotWorldQuadClients()
+	{
+		std::vector<WorldQuadClientSnapshot> out;
+		std::scoped_lock lk{ m_mutex };
+		for (auto& [id, rec] : m_clients) {
+			if ((rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_WorldQuad) == 0)
+				continue;
+			if (rec.worldQuads.empty())
+				continue;  // nothing submitted this frame → nothing to draw
+			if (!EnsureClientTextureLocked(rec))
+				continue;
+			out.push_back({ id, rec.texture, rec.worldQuads });
+		}
+		return out;
+	}
+
 	uint32_t HelperImpl::GetFocusedClientId()
 	{
 		std::scoped_lock lk{ m_mutex };
@@ -1044,6 +1080,10 @@ namespace ImGuiVRHelper
 			// menu) — not user-pickable menus. Keep them out of the cycle / quick-select / the
 			// cold-start "first overlay" pick, so cycling can't land on an auto-only panel.
 			if (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_PointerFocus)
+				continue;
+			// World-quad clients render in-scene billboards (subtitles, damage numbers), never an
+			// interactive menu — keep them out of the cycle so it can't land on an empty panel.
+			if (rec.flags & ImGuiVRHelperPluginAPI::kClientFlag_WorldQuad)
 				continue;
 			clients.emplace_back(id, rec.name);
 		}

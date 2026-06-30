@@ -181,6 +181,7 @@ namespace ImGuiVRHelperPluginAPI
 			// in which case PumpKeyboard is a no-op (desktop keyboard only).
 			m_helper002 = GetImGuiVRHelperInterface002();
 			m_helper003 = GetImGuiVRHelperInterface003();
+			m_helper004 = GetImGuiVRHelperInterface004();
 			return true;
 		}
 
@@ -195,6 +196,7 @@ namespace ImGuiVRHelperPluginAPI
 			m_helper = nullptr;
 			m_helper002 = nullptr;
 			m_helper003 = nullptr;
+			m_helper004 = nullptr;
 			m_kbShown = false;
 			m_kbDelivered.clear();
 			m_kbDismissCooldown = 0;
@@ -208,6 +210,24 @@ namespace ImGuiVRHelperPluginAPI
 		/// True if the helper supports VR text entry (interface 002 acquired). When
 		/// false, PumpKeyboard is a no-op.
 		[[nodiscard]] bool HasKeyboard() const { return m_helper002 != nullptr; }
+
+		/// True if the helper supports world-anchored quads (interface 004 acquired).
+		/// When false, SubmitWorldQuads is a no-op (connect as kClientFlag_HUDMode for
+		/// a head-locked fallback if you need one).
+		[[nodiscard]] bool HasWorldQuads() const { return m_helper004 != nullptr; }
+
+		/// Submit this frame's world-billboard list (kClientFlag_WorldQuad clients).
+		/// Replaces the previous frame's list; pass count==0 to clear. Each WorldQuad
+		/// names a sub-rect of THIS client's panel (render it via RenderToPanel /
+		/// GetPanel as usual) and a world position in OpenVR standing space (meters) —
+		/// convert game-world coordinates to tracking space before calling. No-op when
+		/// disconnected or the helper predates interface 004.
+		void SubmitWorldQuads(const ImGuiVRHelperPluginAPI::WorldQuad* quads, std::size_t count)
+		{
+			if (!m_helper004 || !IsConnected())
+				return;
+			m_helper004->SubmitWorldQuads(m_id, quads, count);
+		}
 
 		/// True when the helper routed in-scene focus to this client this frame
 		/// (it expects fresh pixels in the panel RTV even if your own menu flag
@@ -972,6 +992,7 @@ namespace ImGuiVRHelperPluginAPI
 		IImGuiVRHelperInterface001* m_helper = nullptr;
 		IImGuiVRHelperInterface002* m_helper002 = nullptr;  // null if helper predates 002 (no VR keyboard)
 		IImGuiVRHelperInterface003* m_helper003 = nullptr;  // null if helper predates 003 (no off-panel combos)
+		IImGuiVRHelperInterface004* m_helper004 = nullptr;  // null if helper predates 004 (no world quads)
 		uint32_t m_id = 0;
 		ID3D11DeviceContext* m_cachedContext = nullptr;  // ctx resolved lazily, device-owned
 		bool m_requestsRender = false;

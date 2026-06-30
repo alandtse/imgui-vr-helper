@@ -10,3 +10,4 @@ build/
 *.obj
 src/Version.h
 .gstack/
+*.code-workspace

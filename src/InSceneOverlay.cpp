@@ -30,6 +30,7 @@
 #include <d3dcompiler.h>
 
 #include <atomic>
+#include <cmath>
 #include <exception>
 
 #pragma comment(lib, "d3dcompiler.lib")
@@ -56,6 +57,8 @@ namespace ImGuiVRHelper::InSceneOverlay
 cbuffer MatrixBuffer : register(b0)
 {
 	matrix wvp;
+	float2 uvScale;   // map unit-quad uv into a panel sub-rect (1,1 = whole panel)
+	float2 uvOffset;  // sub-rect origin (0,0 = whole panel)
 };
 struct VS_INPUT
 {
@@ -71,7 +74,37 @@ PS_INPUT main(VS_INPUT input)
 {
 	PS_INPUT output;
 	output.pos = mul(float4(input.pos, 1.0f), wvp);
-	output.uv = input.uv;
+	output.uv = input.uv * uvScale + uvOffset;
+	return output;
+}
+)";
+
+		// Instanced variant of the vertex shader. The wvp matrix (4 rows) and uv-transform arrive
+		// as per-instance vertex data (slot 1) instead of the constant buffer, so a whole client's
+		// billboards draw in one DrawIndexedInstanced. Same packing as the single-quad path: the
+		// rows are (model*vpWorldSpace).Transpose(), transposed back here so mul(pos, wvp) matches.
+		constexpr const char* kInstancedVertexShader = R"(
+struct VS_INPUT
+{
+	float3 pos: POSITION;
+	float2 uv: TEXCOORD0;
+	float4 wvp0: TEXCOORD1;
+	float4 wvp1: TEXCOORD2;
+	float4 wvp2: TEXCOORD3;
+	float4 wvp3: TEXCOORD4;
+	float4 uvxform: TEXCOORD5;  // uvScale.xy, uvOffset.xy
+};
+struct PS_INPUT
+{
+	float4 pos: SV_POSITION;
+	float2 uv: TEXCOORD0;
+};
+PS_INPUT main(VS_INPUT input)
+{
+	PS_INPUT output;
+	matrix wvp = transpose(matrix(input.wvp0, input.wvp1, input.wvp2, input.wvp3));
+	output.pos = mul(float4(input.pos, 1.0f), wvp);
+	output.uv = input.uv * input.uvxform.xy + input.uvxform.zw;
 	return output;
 }
 )";
@@ -93,6 +126,19 @@ float4 main(PS_INPUT input) : SV_TARGET
 		struct ConstantBufferData
 		{
 			Matrix wvp;
+			// UV sub-rect transform (panel uv = quad uv * scale + offset). Defaults
+			// map the whole panel, so existing full-panel callers need not set them.
+			float uvScale[2] = { 1.0f, 1.0f };
+			float uvOffset[2] = { 0.0f, 0.0f };
+		};
+
+		// Per-instance data for the instanced world-quad path; layout must match the
+		// slot-1 input elements (4 wvp rows -> TEXCOORD1..4, uv transform -> TEXCOORD5).
+		struct InstanceData
+		{
+			Matrix wvp;                          // (model * vpWorldSpace).Transpose()
+			float uvScale[2] = { 1.0f, 1.0f };   // TEXCOORD5.xy
+			float uvOffset[2] = { 0.0f, 0.0f };  // TEXCOORD5.zw
 		};
 
 		struct Resources
@@ -107,6 +153,14 @@ float4 main(PS_INPUT input) : SV_TARGET
 			winrt::com_ptr<ID3D11DepthStencilState> depthState;
 			winrt::com_ptr<ID3D11RasterizerState> rasterizerState;
 			winrt::com_ptr<ID3D11SamplerState> sampler;
+
+			// Instanced world-quad path: a client's billboards draw in one
+			// DrawIndexedInstanced. Per-instance data (wvp rows + uv transform)
+			// lives in instanceBuffer (slot 1), grown on demand.
+			winrt::com_ptr<ID3D11VertexShader> instancedVS;
+			winrt::com_ptr<ID3D11InputLayout> instancedInputLayout;
+			winrt::com_ptr<ID3D11Buffer> instanceBuffer;
+			uint32_t instanceCapacity = 0;
 
 			// Cached per-eye RTVs keyed by target texture pointer (rebuilt
 			// when SteamVR rotates eye textures).
@@ -135,6 +189,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 				return true;
 			if (!Globals::IsReady())
 				return false;
+
+			// Release anything a prior failed attempt left behind so the com_ptr .put() calls
+			// below overwrite null and do not leak earlier references when we retry.
+			g_res = Resources{};
 
 			auto& d3d = Globals::GetD3D();
 			auto* device = d3d.device;
@@ -187,6 +245,40 @@ float4 main(PS_INPUT input) : SV_TARGET
 				return false;
 			}
 
+			// Instanced world-quad pipeline: per-vertex POSITION/TEXCOORD0 from slot 0 (the unit
+			// quad VB), per-instance wvp rows + uv transform from slot 1 (instanceBuffer).
+			winrt::com_ptr<ID3DBlob> instVsBlob;
+			errorBlob = nullptr;
+			hr = D3DCompile(
+				kInstancedVertexShader, std::strlen(kInstancedVertexShader), "InSceneOverlay.inst.vs",
+				nullptr, nullptr, "main", "vs_5_0",
+				D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
+				instVsBlob.put(), errorBlob.put());
+			if (FAILED(hr)) {
+				logs::error("InSceneOverlay instanced VS compile failed: {}",
+					errorBlob ? static_cast<const char*>(errorBlob->GetBufferPointer()) : "<no message>");
+				return false;
+			}
+			if (FAILED(device->CreateVertexShader(instVsBlob->GetBufferPointer(),
+					instVsBlob->GetBufferSize(), nullptr, g_res.instancedVS.put()))) {
+				logs::error("InSceneOverlay: CreateVertexShader (instanced) failed");
+				return false;
+			}
+			D3D11_INPUT_ELEMENT_DESC instLayout[7] = {
+				{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+				{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+				{ "TEXCOORD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+				{ "TEXCOORD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+				{ "TEXCOORD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+				{ "TEXCOORD", 4, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+				{ "TEXCOORD", 5, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+			};
+			if (FAILED(device->CreateInputLayout(instLayout, 7, instVsBlob->GetBufferPointer(),
+					instVsBlob->GetBufferSize(), g_res.instancedInputLayout.put()))) {
+				logs::error("InSceneOverlay: CreateInputLayout (instanced) failed");
+				return false;
+			}
+
 			// Quad vertices (XY plane, z=0, size=1).
 			struct VertexType
 			{
@@ -229,6 +321,21 @@ float4 main(PS_INPUT input) : SV_TARGET
 			if (FAILED(device->CreateBuffer(&cbDesc, nullptr, g_res.cb.put()))) {
 				logs::error("InSceneOverlay: constant buffer creation failed");
 				return false;
+			}
+
+			// Dynamic per-instance buffer for the world-quad pass; grown on demand in the pass.
+			{
+				constexpr uint32_t kInitialInstances = 256;
+				D3D11_BUFFER_DESC instBufDesc = {};
+				instBufDesc.Usage = D3D11_USAGE_DYNAMIC;
+				instBufDesc.ByteWidth = sizeof(InstanceData) * kInitialInstances;
+				instBufDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+				instBufDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+				if (FAILED(device->CreateBuffer(&instBufDesc, nullptr, g_res.instanceBuffer.put()))) {
+					logs::error("InSceneOverlay: instance buffer creation failed");
+					return false;
+				}
+				g_res.instanceCapacity = kInitialInstances;
 			}
 
 			// Blend state: standard alpha blending so the menu doesn't paint
@@ -392,6 +499,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		{
 			Matrix vpHeadSpace;   // for HMD-relative attach mode
 			Matrix vpWorldSpace;  // for controller-attached and fixed-world
+			Vector3 hmdPos;       // HMD position (standing space) from the SAME pose as vpWorldSpace
 			bool valid = false;
 		};
 
@@ -438,6 +546,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 			result.vpHeadSpace = eyeToHead.Invert() * proj;
 			Matrix eyeToWorld = eyeToHead * hmdWorld;
 			result.vpWorldSpace = eyeToWorld.Invert() * proj;
+			result.hmdPos = hmdWorld.Translation();  // share the vpWorldSpace pose with world-quad facing
 			result.valid = true;
 			return result;
 		}
@@ -735,6 +844,160 @@ float4 main(PS_INPUT input) : SV_TARGET
 		}
 	}
 
+	// World-quad pass: each kClientFlag_WorldQuad client's submitted billboards,
+	// drawn at their world positions (OpenVR standing space) facing the HMD, so they
+	// stay anchored in the scene instead of swimming on the head-locked HUD. Depth is
+	// off like every other helper surface, so there's no scene occlusion — clients
+	// occlude at their own level.
+	void RenderWorldQuadPass(ID3D11DeviceContext* ctx, const EyeMatrices& matrices,
+		const std::vector<HelperImpl::WorldQuadClientSnapshot>& worldClients)
+	{
+		ZoneScopedN("InScene::WorldQuadPass");
+		if (worldClients.empty())
+			return;
+
+		// HMD position (standing space) for billboard facing — reuse the SAME pose
+		// vpWorldSpace was built from (matrices.hmdPos), so the quad's orientation can't
+		// diverge from its projection within the pass. Shared across both eyes (only
+		// vpWorldSpace differs); a per-eye yaw would break stereo fusion.
+		const Vector3 hmdPos = matrices.hmdPos;
+
+		auto* device = Globals::GetD3D().device;
+		if (!device)
+			return;
+
+		// Bind the instanced quad pipeline ONCE for the pass. Slot 0 = the unit-quad VB
+		// (per-vertex); slot 1 = the per-instance buffer (wvp rows + uv transform), bound per
+		// client below since it can be regrown. Each client's billboards then draw in a single
+		// DrawIndexedInstanced. State is restored by the caller's StateBackup.
+		struct VT
+		{
+			XMFLOAT3 p;
+			XMFLOAT2 t;
+		};
+		ctx->VSSetShader(g_res.instancedVS.get(), nullptr, 0);
+		ctx->PSSetShader(g_res.ps.get(), nullptr, 0);
+		ctx->IASetIndexBuffer(g_res.ib.get(), DXGI_FORMAT_R32_UINT, 0);
+		ctx->IASetInputLayout(g_res.instancedInputLayout.get());
+		ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		ctx->OMSetBlendState(g_res.blendState.get(), nullptr, 0xFFFFFFFF);
+		ctx->OMSetDepthStencilState(g_res.depthState.get(), 0);
+		ctx->RSSetState(g_res.rasterizerState.get());
+		ID3D11SamplerState* samp = g_res.sampler.get();
+		ctx->PSSetSamplers(0, 1, &samp);
+
+		std::vector<InstanceData> instances;
+
+		for (const auto& client : worldClients) {
+			if (!client.texture)
+				continue;
+			auto* srv = GetOrCreateHUDSRV(client.client_id, client.texture.get());
+			if (!srv)
+				continue;
+			D3D11_TEXTURE2D_DESC texDesc;
+			client.texture->GetDesc(&texDesc);
+			const float texW = static_cast<float>(texDesc.Width);
+			const float texH = static_cast<float>(texDesc.Height);
+
+			instances.clear();
+			instances.reserve(client.quads.size());
+			for (const auto& q : client.quads) {
+				// Reject non-finite inputs so NaN/Inf never reach the transform or UVs.
+				if (!std::isfinite(q.u0) || !std::isfinite(q.u1) || !std::isfinite(q.v0) ||
+					!std::isfinite(q.v1) || !std::isfinite(q.height_m) ||
+					!std::isfinite(q.pos[0]) || !std::isfinite(q.pos[1]) || !std::isfinite(q.pos[2]))
+					continue;
+				const float du = q.u1 - q.u0;
+				const float dv = q.v1 - q.v0;
+				if (du <= 0.0f || dv <= 0.0f || q.height_m <= 0.0f || texH <= 0.0f)
+					continue;
+				// Width from the requested height via the sub-rect's pixel aspect.
+				const float aspect = (du * texW) / (dv * texH);
+				const float height = q.height_m;
+				const float width = height * aspect;
+				if (!std::isfinite(width))
+					continue;  // pathological sub-rect (dv near zero) blew up the aspect
+
+				const Vector3 center(q.pos[0], q.pos[1], q.pos[2]);
+				Vector3 forward = hmdPos - center;
+				if (forward.LengthSquared() < 1e-6f)
+					continue;
+				forward.Normalize();
+				Vector3 right = Vector3(0.0f, 1.0f, 0.0f).Cross(forward);
+				if (right.LengthSquared() < 1e-6f)
+					right = Vector3(1.0f, 0.0f, 0.0f);  // looking straight up/down
+				right.Normalize();
+				const Vector3 up = forward.Cross(right);
+
+				// Rotation rows map local axes (x=right, y=up, z=forward) to world,
+				// so the unit quad (XY plane, +Z normal) faces the HMD, upright and
+				// un-mirrored.
+				Matrix rot = Matrix::Identity;
+				rot._11 = right.x;
+				rot._12 = right.y;
+				rot._13 = right.z;
+				rot._21 = up.x;
+				rot._22 = up.y;
+				rot._23 = up.z;
+				rot._31 = forward.x;
+				rot._32 = forward.y;
+				rot._33 = forward.z;
+
+				const Matrix model = Matrix::CreateScale(width, height, 1.0f) * rot *
+				                     Matrix::CreateTranslation(center);
+
+				// Cull quads behind the camera (clip w <= 0) so we drop them from the instance
+				// batch rather than relying on the GPU to clip them. The client is expected to
+				// cull off-screen content too; this guards clients that don't.
+				const Vector4 clip = Vector4::Transform(Vector4(center.x, center.y, center.z, 1.0f), matrices.vpWorldSpace);
+				if (clip.w <= 0.0f)
+					continue;
+
+				InstanceData inst;
+				inst.wvp = (model * matrices.vpWorldSpace).Transpose();
+				inst.uvScale[0] = du;
+				inst.uvScale[1] = dv;
+				inst.uvOffset[0] = q.u0;
+				inst.uvOffset[1] = q.v0;
+				instances.push_back(inst);
+			}
+
+			if (instances.empty())
+				continue;
+
+			// Grow the per-instance buffer if this client needs more than the current capacity.
+			if (instances.size() > g_res.instanceCapacity) {
+				uint32_t newCap = g_res.instanceCapacity ? g_res.instanceCapacity : 256u;
+				while (newCap < instances.size())
+					newCap *= 2u;
+				D3D11_BUFFER_DESC instBufDesc = {};
+				instBufDesc.Usage = D3D11_USAGE_DYNAMIC;
+				instBufDesc.ByteWidth = static_cast<UINT>(sizeof(InstanceData) * newCap);
+				instBufDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+				instBufDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+				winrt::com_ptr<ID3D11Buffer> grown;
+				if (FAILED(device->CreateBuffer(&instBufDesc, nullptr, grown.put())))
+					continue;  // keep the old buffer; skip this client this frame
+				g_res.instanceBuffer = grown;
+				g_res.instanceCapacity = newCap;
+			}
+
+			// Upload this client's instances and draw them all in one instanced call.
+			D3D11_MAPPED_SUBRESOURCE mapped;
+			if (FAILED(ctx->Map(g_res.instanceBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+				continue;
+			std::memcpy(mapped.pData, instances.data(), sizeof(InstanceData) * instances.size());
+			ctx->Unmap(g_res.instanceBuffer.get(), 0);
+
+			ID3D11Buffer* vbs[2] = { g_res.vb.get(), g_res.instanceBuffer.get() };
+			UINT strides[2] = { sizeof(VT), sizeof(InstanceData) };
+			UINT offsets[2] = { 0, 0 };
+			ctx->IASetVertexBuffers(0, 2, vbs, strides, offsets);
+			ctx->PSSetShaderResources(0, 1, &srv);
+			ctx->DrawIndexedInstanced(6, static_cast<UINT>(instances.size()), 0, 0, 0);
+		}
+	}
+
 	void RenderForEye(vr::EVREye eye, ID3D11Texture2D* targetTexture,
 		const vr::VRTextureBounds_t* bounds)
 	{
@@ -759,6 +1022,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// the whole frame.
 		const uint32_t focused = HelperImpl::GetSingleton().GetFocusedClientId();
 		auto hudClients = HelperImpl::GetSingleton().SnapshotHUDClients();
+		auto worldClients = HelperImpl::GetSingleton().SnapshotWorldQuadClients();
 
 		// Focused panel-mode client gate (existing semantics).
 		ID3D11Texture2D* menuTex = nullptr;
@@ -768,7 +1032,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 			wantPanelPass = (menuTex != nullptr);
 		}
 
-		if (!wantPanelPass && hudClients.empty())
+		if (!wantPanelPass && hudClients.empty() && worldClients.empty())
 			return;
 
 		if (!InitResources())
@@ -803,15 +1067,16 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// this same thing — composites onto a virtual plane at a fixed
 		// distance, per-eye projection.
 		EyeMatrices matrices;
-		if (wantPanelPass || !hudClients.empty()) {
+		if (wantPanelPass || !hudClients.empty() || !worldClients.empty()) {
 			matrices = ComputeEyeMatrices(eye);
 			if (!matrices.valid) {
 				wantPanelPass = false;
 				hudClients.clear();
+				worldClients.clear();
 			}
 		}
 
-		if (!wantPanelPass && hudClients.empty())
+		if (!wantPanelPass && hudClients.empty() && worldClients.empty())
 			return;
 
 		// Save current render state so we don't clobber Skyrim's submit.
@@ -836,6 +1101,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 		}
 		vp.MaxDepth = 1.0f;
 		ctx->RSSetViewports(1, &vp);
+
+		// World-anchored billboards first (they sit in the scene), then the
+		// head-locked HUD/panel surfaces on top.
+		RenderWorldQuadPass(ctx, matrices, worldClients);
 
 		RenderHUDPass(ctx, matrices, s, hudClients);
 
