@@ -569,8 +569,11 @@ namespace ImGuiVRHelper
 			return;
 		auto& list = it->second.worldQuads;
 		list.clear();
+		// Cap the per-client list so a malformed count can't drive a huge alloc/copy; far
+		// above any real subtitle/damage-number scene. Kept in sync with the API doc comment.
+		constexpr std::size_t kMaxWorldQuads = 4096;
 		if (quads && count > 0)
-			list.assign(quads, quads + count);
+			list.assign(quads, quads + std::min(count, kMaxWorldQuads));
 	}
 
 	std::vector<HelperImpl::WorldQuadClientSnapshot> HelperImpl::SnapshotWorldQuadClients()

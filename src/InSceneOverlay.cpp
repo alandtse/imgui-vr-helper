@@ -190,6 +190,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 			if (!Globals::IsReady())
 				return false;
 
+			// Release anything a prior failed attempt left behind so the com_ptr .put() calls
+			// below overwrite null and do not leak earlier references when we retry.
+			g_res = Resources{};
+
 			auto& d3d = Globals::GetD3D();
 			auto* device = d3d.device;
 
@@ -911,6 +915,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 				const float aspect = (du * texW) / (dv * texH);
 				const float height = q.height_m;
 				const float width = height * aspect;
+				if (!std::isfinite(width))
+					continue;  // pathological sub-rect (dv near zero) blew up the aspect
 
 				const Vector3 center(q.pos[0], q.pos[1], q.pos[2]);
 				Vector3 forward = hmdPos - center;

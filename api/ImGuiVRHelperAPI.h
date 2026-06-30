@@ -264,7 +264,8 @@ namespace ImGuiVRHelperPluginAPI
 		/// `pos` (OpenVR standing-space meters). Call every frame the client wants
 		/// its quads shown; a frame with no call keeps the prior list, so clients
 		/// that go idle should submit `count == 0`. No-op for unknown ids or
-		/// clients that didn't set kClientFlag_WorldQuad.
+		/// clients that didn't set kClientFlag_WorldQuad. The helper caps the list
+		/// at 4096 quads per client; any beyond that are ignored.
 		virtual void SubmitWorldQuads(uint32_t client_id, const WorldQuad* quads,
 			std::size_t count) = 0;
 	};
