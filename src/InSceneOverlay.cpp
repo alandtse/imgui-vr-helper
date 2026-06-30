@@ -79,6 +79,36 @@ PS_INPUT main(VS_INPUT input)
 }
 )";
 
+		// Instanced variant of the vertex shader. The wvp matrix (4 rows) and uv-transform arrive
+		// as per-instance vertex data (slot 1) instead of the constant buffer, so a whole client's
+		// billboards draw in one DrawIndexedInstanced. Same packing as the single-quad path: the
+		// rows are (model*vpWorldSpace).Transpose(), transposed back here so mul(pos, wvp) matches.
+		constexpr const char* kInstancedVertexShader = R"(
+struct VS_INPUT
+{
+	float3 pos: POSITION;
+	float2 uv: TEXCOORD0;
+	float4 wvp0: TEXCOORD1;
+	float4 wvp1: TEXCOORD2;
+	float4 wvp2: TEXCOORD3;
+	float4 wvp3: TEXCOORD4;
+	float4 uvxform: TEXCOORD5;  // uvScale.xy, uvOffset.xy
+};
+struct PS_INPUT
+{
+	float4 pos: SV_POSITION;
+	float2 uv: TEXCOORD0;
+};
+PS_INPUT main(VS_INPUT input)
+{
+	PS_INPUT output;
+	matrix wvp = transpose(matrix(input.wvp0, input.wvp1, input.wvp2, input.wvp3));
+	output.pos = mul(float4(input.pos, 1.0f), wvp);
+	output.uv = input.uv * input.uvxform.xy + input.uvxform.zw;
+	return output;
+}
+)";
+
 		constexpr const char* kPixelShader = R"(
 Texture2D shaderTexture : register(t0);
 SamplerState sampleType : register(s0);
@@ -102,6 +132,15 @@ float4 main(PS_INPUT input) : SV_TARGET
 			float uvOffset[2] = { 0.0f, 0.0f };
 		};
 
+		// Per-instance data for the instanced world-quad path; layout must match the
+		// slot-1 input elements (4 wvp rows -> TEXCOORD1..4, uv transform -> TEXCOORD5).
+		struct InstanceData
+		{
+			Matrix wvp;                          // (model * vpWorldSpace).Transpose()
+			float uvScale[2] = { 1.0f, 1.0f };   // TEXCOORD5.xy
+			float uvOffset[2] = { 0.0f, 0.0f };  // TEXCOORD5.zw
+		};
+
 		struct Resources
 		{
 			winrt::com_ptr<ID3D11VertexShader> vs;
@@ -114,6 +153,14 @@ float4 main(PS_INPUT input) : SV_TARGET
 			winrt::com_ptr<ID3D11DepthStencilState> depthState;
 			winrt::com_ptr<ID3D11RasterizerState> rasterizerState;
 			winrt::com_ptr<ID3D11SamplerState> sampler;
+
+			// Instanced world-quad path: a client's billboards draw in one
+			// DrawIndexedInstanced. Per-instance data (wvp rows + uv transform)
+			// lives in instanceBuffer (slot 1), grown on demand.
+			winrt::com_ptr<ID3D11VertexShader> instancedVS;
+			winrt::com_ptr<ID3D11InputLayout> instancedInputLayout;
+			winrt::com_ptr<ID3D11Buffer> instanceBuffer;
+			uint32_t instanceCapacity = 0;
 
 			// Cached per-eye RTVs keyed by target texture pointer (rebuilt
 			// when SteamVR rotates eye textures).
@@ -194,6 +241,40 @@ float4 main(PS_INPUT input) : SV_TARGET
 				return false;
 			}
 
+			// Instanced world-quad pipeline: per-vertex POSITION/TEXCOORD0 from slot 0 (the unit
+			// quad VB), per-instance wvp rows + uv transform from slot 1 (instanceBuffer).
+			winrt::com_ptr<ID3DBlob> instVsBlob;
+			errorBlob = nullptr;
+			hr = D3DCompile(
+				kInstancedVertexShader, std::strlen(kInstancedVertexShader), "InSceneOverlay.inst.vs",
+				nullptr, nullptr, "main", "vs_5_0",
+				D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
+				instVsBlob.put(), errorBlob.put());
+			if (FAILED(hr)) {
+				logs::error("InSceneOverlay instanced VS compile failed: {}",
+					errorBlob ? static_cast<const char*>(errorBlob->GetBufferPointer()) : "<no message>");
+				return false;
+			}
+			if (FAILED(device->CreateVertexShader(instVsBlob->GetBufferPointer(),
+					instVsBlob->GetBufferSize(), nullptr, g_res.instancedVS.put()))) {
+				logs::error("InSceneOverlay: CreateVertexShader (instanced) failed");
+				return false;
+			}
+			D3D11_INPUT_ELEMENT_DESC instLayout[7] = {
+				{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+				{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+				{ "TEXCOORD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+				{ "TEXCOORD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+				{ "TEXCOORD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+				{ "TEXCOORD", 4, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+				{ "TEXCOORD", 5, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+			};
+			if (FAILED(device->CreateInputLayout(instLayout, 7, instVsBlob->GetBufferPointer(),
+					instVsBlob->GetBufferSize(), g_res.instancedInputLayout.put()))) {
+				logs::error("InSceneOverlay: CreateInputLayout (instanced) failed");
+				return false;
+			}
+
 			// Quad vertices (XY plane, z=0, size=1).
 			struct VertexType
 			{
@@ -236,6 +317,21 @@ float4 main(PS_INPUT input) : SV_TARGET
 			if (FAILED(device->CreateBuffer(&cbDesc, nullptr, g_res.cb.put()))) {
 				logs::error("InSceneOverlay: constant buffer creation failed");
 				return false;
+			}
+
+			// Dynamic per-instance buffer for the world-quad pass; grown on demand in the pass.
+			{
+				constexpr uint32_t kInitialInstances = 256;
+				D3D11_BUFFER_DESC instBufDesc = {};
+				instBufDesc.Usage = D3D11_USAGE_DYNAMIC;
+				instBufDesc.ByteWidth = sizeof(InstanceData) * kInitialInstances;
+				instBufDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+				instBufDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+				if (FAILED(device->CreateBuffer(&instBufDesc, nullptr, g_res.instanceBuffer.put()))) {
+					logs::error("InSceneOverlay: instance buffer creation failed");
+					return false;
+				}
+				g_res.instanceCapacity = kInitialInstances;
 			}
 
 			// Blend state: standard alpha blending so the menu doesn't paint
@@ -762,33 +858,31 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// vpWorldSpace differs); a per-eye yaw would break stereo fusion.
 		const Vector3 hmdPos = matrices.hmdPos;
 
-		// Bind the invariant quad pipeline ONCE for the whole pass. DrawQuad() re-binds shaders,
-		// buffers, input layout, blend/depth/raster, and sampler on every call — wasted work when
-		// a client submits many quads (e.g. floating damage numbers). Here only the constant
-		// buffer and the per-client SRV change per quad; the caller's StateBackup restores after.
+		auto* device = Globals::GetD3D().device;
+		if (!device)
+			return;
+
+		// Bind the instanced quad pipeline ONCE for the pass. Slot 0 = the unit-quad VB
+		// (per-vertex); slot 1 = the per-instance buffer (wvp rows + uv transform), bound per
+		// client below since it can be regrown. Each client's billboards then draw in a single
+		// DrawIndexedInstanced. State is restored by the caller's StateBackup.
+		struct VT
 		{
-			struct VT
-			{
-				XMFLOAT3 p;
-				XMFLOAT2 t;
-			};
-			ctx->VSSetShader(g_res.vs.get(), nullptr, 0);
-			ctx->PSSetShader(g_res.ps.get(), nullptr, 0);
-			ID3D11Buffer* cbuf = g_res.cb.get();
-			ctx->VSSetConstantBuffers(0, 1, &cbuf);
-			UINT stride = sizeof(VT);
-			UINT offset = 0;
-			ID3D11Buffer* vb = g_res.vb.get();
-			ctx->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
-			ctx->IASetIndexBuffer(g_res.ib.get(), DXGI_FORMAT_R32_UINT, 0);
-			ctx->IASetInputLayout(g_res.inputLayout.get());
-			ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-			ctx->OMSetBlendState(g_res.blendState.get(), nullptr, 0xFFFFFFFF);
-			ctx->OMSetDepthStencilState(g_res.depthState.get(), 0);
-			ctx->RSSetState(g_res.rasterizerState.get());
-			ID3D11SamplerState* samp = g_res.sampler.get();
-			ctx->PSSetSamplers(0, 1, &samp);
-		}
+			XMFLOAT3 p;
+			XMFLOAT2 t;
+		};
+		ctx->VSSetShader(g_res.instancedVS.get(), nullptr, 0);
+		ctx->PSSetShader(g_res.ps.get(), nullptr, 0);
+		ctx->IASetIndexBuffer(g_res.ib.get(), DXGI_FORMAT_R32_UINT, 0);
+		ctx->IASetInputLayout(g_res.instancedInputLayout.get());
+		ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		ctx->OMSetBlendState(g_res.blendState.get(), nullptr, 0xFFFFFFFF);
+		ctx->OMSetDepthStencilState(g_res.depthState.get(), 0);
+		ctx->RSSetState(g_res.rasterizerState.get());
+		ID3D11SamplerState* samp = g_res.sampler.get();
+		ctx->PSSetSamplers(0, 1, &samp);
+
+		std::vector<InstanceData> instances;
 
 		for (const auto& client : worldClients) {
 			if (!client.texture)
@@ -796,12 +890,13 @@ float4 main(PS_INPUT input) : SV_TARGET
 			auto* srv = GetOrCreateHUDSRV(client.client_id, client.texture.get());
 			if (!srv)
 				continue;
-			ctx->PSSetShaderResources(0, 1, &srv);  // once per client; all its quads share it
 			D3D11_TEXTURE2D_DESC texDesc;
 			client.texture->GetDesc(&texDesc);
 			const float texW = static_cast<float>(texDesc.Width);
 			const float texH = static_cast<float>(texDesc.Height);
 
+			instances.clear();
+			instances.reserve(client.quads.size());
 			for (const auto& q : client.quads) {
 				// Reject non-finite inputs so NaN/Inf never reach the transform or UVs.
 				if (!std::isfinite(q.u0) || !std::isfinite(q.u1) || !std::isfinite(q.v0) ||
@@ -845,27 +940,55 @@ float4 main(PS_INPUT input) : SV_TARGET
 				const Matrix model = Matrix::CreateScale(width, height, 1.0f) * rot *
 				                     Matrix::CreateTranslation(center);
 
-				// Cull quads behind the camera (clip w <= 0) so we skip the CB upload and draw
-				// call entirely rather than relying on the GPU to clip them. The client is
-				// expected to cull off-screen content too; this guards clients that don't.
+				// Cull quads behind the camera (clip w <= 0) so we drop them from the instance
+				// batch rather than relying on the GPU to clip them. The client is expected to
+				// cull off-screen content too; this guards clients that don't.
 				const Vector4 clip = Vector4::Transform(Vector4(center.x, center.y, center.z, 1.0f), matrices.vpWorldSpace);
 				if (clip.w <= 0.0f)
 					continue;
 
-				ConstantBufferData cb;
-				cb.wvp = (model * matrices.vpWorldSpace).Transpose();
-				cb.uvScale[0] = du;
-				cb.uvScale[1] = dv;
-				cb.uvOffset[0] = q.u0;
-				cb.uvOffset[1] = q.v0;
-				// Pipeline state + SRV are already bound for this pass — only update the CB and draw.
-				D3D11_MAPPED_SUBRESOURCE mapped;
-				if (SUCCEEDED(ctx->Map(g_res.cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-					std::memcpy(mapped.pData, &cb, sizeof(cb));
-					ctx->Unmap(g_res.cb.get(), 0);
-				}
-				ctx->DrawIndexed(6, 0, 0);
+				InstanceData inst;
+				inst.wvp = (model * matrices.vpWorldSpace).Transpose();
+				inst.uvScale[0] = du;
+				inst.uvScale[1] = dv;
+				inst.uvOffset[0] = q.u0;
+				inst.uvOffset[1] = q.v0;
+				instances.push_back(inst);
 			}
+
+			if (instances.empty())
+				continue;
+
+			// Grow the per-instance buffer if this client needs more than the current capacity.
+			if (instances.size() > g_res.instanceCapacity) {
+				uint32_t newCap = g_res.instanceCapacity ? g_res.instanceCapacity : 256u;
+				while (newCap < instances.size())
+					newCap *= 2u;
+				D3D11_BUFFER_DESC instBufDesc = {};
+				instBufDesc.Usage = D3D11_USAGE_DYNAMIC;
+				instBufDesc.ByteWidth = static_cast<UINT>(sizeof(InstanceData) * newCap);
+				instBufDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+				instBufDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+				winrt::com_ptr<ID3D11Buffer> grown;
+				if (FAILED(device->CreateBuffer(&instBufDesc, nullptr, grown.put())))
+					continue;  // keep the old buffer; skip this client this frame
+				g_res.instanceBuffer = grown;
+				g_res.instanceCapacity = newCap;
+			}
+
+			// Upload this client's instances and draw them all in one instanced call.
+			D3D11_MAPPED_SUBRESOURCE mapped;
+			if (FAILED(ctx->Map(g_res.instanceBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+				continue;
+			std::memcpy(mapped.pData, instances.data(), sizeof(InstanceData) * instances.size());
+			ctx->Unmap(g_res.instanceBuffer.get(), 0);
+
+			ID3D11Buffer* vbs[2] = { g_res.vb.get(), g_res.instanceBuffer.get() };
+			UINT strides[2] = { sizeof(VT), sizeof(InstanceData) };
+			UINT offsets[2] = { 0, 0 };
+			ctx->IASetVertexBuffers(0, 2, vbs, strides, offsets);
+			ctx->PSSetShaderResources(0, 1, &srv);
+			ctx->DrawIndexedInstanced(6, static_cast<UINT>(instances.size()), 0, 0, 0);
 		}
 	}
 
