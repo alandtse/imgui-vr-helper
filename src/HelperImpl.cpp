@@ -89,8 +89,11 @@ namespace
 	// Shaders' original pause-only menu), opening an overlay from nothing is
 	// blocked during live gameplay so menus never affect it. Once something is
 	// already shown (currentFocus != 0), switching/closing stays allowed.
-	bool OverlayOpenAllowed(uint32_t currentFocus)
+	bool OverlayOpenAllowed(uint32_t currentFocus, uint32_t focusedClientFlags = 0)
 	{
+		// Live-tool clients run unpaused by contract -- always allow.
+		if (currentFocus != 0 && (focusedClientFlags & ImGuiVRHelperPluginAPI::kClientFlag_LiveTool))
+			return true;
 		const auto& s = ImGuiVRHelper::Overlay::State::GetSingleton().settings;
 		if (!s.onlyOpenWhilePaused)
 			return true;
@@ -166,6 +169,7 @@ namespace ImGuiVRHelper
 		}
 		if (m_focused_client == client_id) {
 			m_focused_client = 0;
+			m_focused_client_flags = 0u;
 		}
 	}
 
@@ -826,6 +830,7 @@ namespace ImGuiVRHelper
 		std::scoped_lock lk{ m_mutex };
 		if (m_clients.contains(client_id)) {
 			m_focused_client = client_id;
+			m_focused_client_flags = m_clients.at(client_id).flags;
 			// Remember the last client overlay so the open combo can reopen it.
 			// The helper's own settings UI has its own toggle, so it's excluded.
 			if (client_id != m_self_client_id)
@@ -838,6 +843,7 @@ namespace ImGuiVRHelper
 		std::scoped_lock lk{ m_mutex };
 		if (m_focused_client == client_id) {
 			m_focused_client = 0;
+			m_focused_client_flags = 0u;
 		}
 	}
 
@@ -971,8 +977,11 @@ namespace ImGuiVRHelper
 		// Self-toggle combo (bound via "Rebind toggle"; default is Shift+F4 in
 		// OnKeyboardToggle). Latches rising edges → fires once per held cycle.
 		if (m_self_toggle_combo != 0 && ComboFired(m_self_toggle_combo)) {
-			// Gate opening on pause (closing is always allowed).
-			if (SettingsUI::IsVisible() || OverlayOpenAllowed(m_focused_client)) {
+			// Live-tool client holds exclusive focus -- suppress picker/shell.
+			if (m_focused_client_flags & ImGuiVRHelperPluginAPI::kClientFlag_LiveTool) {
+				logs::info("Controller toggle combo ignored: live-tool client holds exclusive focus");
+				// TODO: show a "release the tool first" toast here.
+			} else if (SettingsUI::IsVisible() || OverlayOpenAllowed(m_focused_client, m_focused_client_flags)) {
 				SettingsUI::Toggle();
 				logs::info("Controller toggle combo: settings UI now {}",
 					SettingsUI::IsVisible() ? "VISIBLE" : "hidden");
@@ -987,7 +996,9 @@ namespace ImGuiVRHelper
 		// releases focus. Switching between open overlays is the cycle shortcut's
 		// job, so open is a no-op while one is already focused.
 		if (m_open_menu_combo != 0 && ComboFired(m_open_menu_combo)) {
-			if (m_focused_client == 0 && OverlayOpenAllowed(0)) {
+			if (m_focused_client_flags & ImGuiVRHelperPluginAPI::kClientFlag_LiveTool) {
+				logs::info("Open-menu combo ignored: live-tool client holds exclusive focus");
+			} else if (m_focused_client == 0 && OverlayOpenAllowed(0, 0)) {
 				if (const uint32_t target = PickOpenTarget(); target != 0) {
 					RequestFocus(target);
 					logs::info("Open-menu combo: focusing overlay {}", target);
