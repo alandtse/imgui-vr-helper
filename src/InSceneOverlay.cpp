@@ -144,7 +144,9 @@ cbuffer DepthCB : register(b0)
 	float  helperFar;       // helper projection far (metres)
 	float  depthBias;       // metres of slack to avoid z-fighting on contact
 	float  depthTestEnable; // 1 = occlude against the scene, 0 = passthrough
-	float3 _pad;
+	float2 depthScale;      // sceneDepth texel size / submit texel size (upscaling can leave the
+	                        // depth buffer at a lower internal resolution than the submit target)
+	float  _pad;
 };
 struct PS_INPUT
 {
@@ -155,7 +157,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 {
 	float4 col = shaderTexture.Sample(sampleType, input.uv);
 	if (depthTestEnable > 0.5f) {
-		float sd = sceneDepth.Load(int3(int2(input.pos.xy), 0));
+		float sd = sceneDepth.Load(int3(int2(input.pos.xy * depthScale), 0));
 		float sceneMetres = (cameraData.w / (cameraData.x - sd * cameraData.z)) * gameToMeter;
 		float billMetres = (helperNear * helperFar) / (helperFar - input.pos.z * (helperFar - helperNear));
 		if (billMetres > sceneMetres + depthBias)
@@ -192,7 +194,9 @@ float4 main(PS_INPUT input) : SV_TARGET
 			float helperFar = 1000.0f;                         // must match ComputeEyeMatrices farZ
 			float depthBias = 0.02f;                           // metres of contact slack
 			float depthTestEnable = 0.0f;
-			float pad[3] = { 0.0f, 0.0f, 0.0f };
+			// sceneDepth texel size / submit texel size — see the SceneDepthInfo comment below.
+			float depthScale[2] = { 1.0f, 1.0f };
+			float pad = 0.0f;
 		};
 
 		struct Resources
@@ -933,15 +937,20 @@ float4 main(PS_INPUT input) : SV_TARGET
 		}
 	}
 
-	// Scene depth for world-quad occlusion. kMAIN is the game's live main depth, upscaled to the
-	// submit resolution in VR (verified in RenderDoc), so a billboard pixel maps to it 1:1 with no
-	// dynamic-resolution rescale. camNear/camFar come from the game camera for standard-Z
-	// linearization (offsets per open-shaders' GetCameraData).
+	// Scene depth for world-quad occlusion. kMAIN is the game's live main depth. Its resolution is
+	// NOT always the submit target's: an upscaling pipeline (e.g. an FSR performance tier) can
+	// leave depth at the lower internal render resolution while only color gets upscaled for the
+	// final submit (confirmed via RenderDoc — a 1.5x mismatch cut billboards off incorrectly), so
+	// depthW/depthH (the SRV's actual resource size) must be read each frame, not assumed 1:1.
+	// camNear/camFar come from the game camera for standard-Z linearization (offsets per
+	// open-shaders' GetCameraData).
 	struct SceneDepthInfo
 	{
 		ID3D11ShaderResourceView* srv = nullptr;
 		float camNear = 0.0f;
 		float camFar = 0.0f;
+		float depthW = 0.0f;
+		float depthH = 0.0f;
 	};
 	SceneDepthInfo GetSceneDepthInfo()
 	{
@@ -953,6 +962,27 @@ float4 main(PS_INPUT input) : SV_TARGET
 		static REL::Relocation<std::uintptr_t> cameraData{ REL::RelocationID(517032, 403540) };
 		info.camNear = *reinterpret_cast<const float*>(cameraData.address() + 0x40);
 		info.camFar = *reinterpret_cast<const float*>(cameraData.address() + 0x44);
+		if (info.srv) {
+			// The underlying resource's dimensions don't change without the SRV pointer itself
+			// changing (a new resource on an upscale-mode/resolution switch), so cache by pointer
+			// instead of paying GetResource+QueryInterface+GetDesc every eye, every frame.
+			static ID3D11ShaderResourceView* cachedSRV = nullptr;
+			static float cachedW = 0.0f, cachedH = 0.0f;
+			if (info.srv != cachedSRV) {
+				winrt::com_ptr<ID3D11Resource> res;
+				info.srv->GetResource(res.put());
+				winrt::com_ptr<ID3D11Texture2D> tex;
+				if (res && SUCCEEDED(res->QueryInterface(IID_PPV_ARGS(tex.put())))) {
+					D3D11_TEXTURE2D_DESC desc;
+					tex->GetDesc(&desc);
+					cachedW = static_cast<float>(desc.Width);
+					cachedH = static_cast<float>(desc.Height);
+				}
+				cachedSRV = info.srv;
+			}
+			info.depthW = cachedW;
+			info.depthH = cachedH;
+		}
 		return info;
 	}
 
@@ -1007,7 +1037,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 	// against the game's scene depth (worldQuadDepthPS), so a billboard behind world geometry is
 	// correctly hidden.
 	void RenderWorldQuadPass(ID3D11DeviceContext* ctx, const EyeMatrices& matrices,
-		const std::vector<HelperImpl::WorldQuadClientSnapshot>& worldClients)
+		const std::vector<HelperImpl::WorldQuadClientSnapshot>& worldClients, float submitW, float submitH)
 	{
 		ZoneScopedN("InScene::WorldQuadPass");
 		if (worldClients.empty())
@@ -1063,7 +1093,13 @@ float4 main(PS_INPUT input) : SV_TARGET
 			// Game unit -> OpenVR metre, scaled by the same room-scale factor skyrimXf's invScale
 			// already carries, so the depth compare matches how billboards are positioned.
 			depthParams.gameToMeter = kSkyrimUnitToMeter * skyrimXf.invScale;
-			depthParams.depthTestEnable = 1.0f;
+			// sceneDepth's actual resource size vs the submit target's — an upscaling pipeline can
+			// leave depth at a lower internal render resolution (see the SceneDepthInfo comment).
+			if (depthInfo.depthW > 0.0f && depthInfo.depthH > 0.0f && submitW > 0.0f && submitH > 0.0f) {
+				depthParams.depthScale[0] = depthInfo.depthW / submitW;
+				depthParams.depthScale[1] = depthInfo.depthH / submitH;
+				depthParams.depthTestEnable = 1.0f;
+			}
 		}
 		D3D11_MAPPED_SUBRESOURCE depthMap;
 		if (SUCCEEDED(ctx->Map(g_res.depthCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &depthMap))) {
@@ -1300,7 +1336,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		// World-anchored billboards first (they sit in the scene), then the
 		// head-locked HUD/panel surfaces on top.
-		RenderWorldQuadPass(ctx, matrices, worldClients);
+		RenderWorldQuadPass(ctx, matrices, worldClients, static_cast<float>(texDesc.Width), static_cast<float>(texDesc.Height));
 
 		RenderHUDPass(ctx, matrices, s, hudClients);
 
