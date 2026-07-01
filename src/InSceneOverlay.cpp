@@ -23,6 +23,9 @@
 #include "internal/VRUtils.h"
 
 #include <RE/B/BSOpenVR.h>
+#include <RE/B/BSShaderRenderTargets.h>
+#include <RE/P/PlayerCharacter.h>
+#include <RE/R/Renderer.h>
 
 #include <DirectXMath.h>
 #include <SimpleMath.h>
@@ -31,7 +34,9 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <exception>
+#include <optional>
 
 #pragma comment(lib, "d3dcompiler.lib")
 
@@ -123,6 +128,48 @@ float4 main(PS_INPUT input) : SV_TARGET
 }
 )";
 
+		// World-quad pixel shader with scene-depth occlusion. Samples the game's kMAIN depth at
+		// the billboard pixel (scaled by depthScale — see the SceneDepthInfo comment, since an
+		// upscaling pipeline can leave depth at a lower resolution than the submit target) and
+		// discards the pixel when the billboard sits behind the scene. Both depths are linearized
+		// to view-space metres — the scene from its standard-Z game projection (cameraData), the
+		// billboard from the helper's OpenVR projection (helperNear/Far) — so the compare is
+		// unit-consistent.
+		constexpr const char* kWorldQuadDepthPixelShader = R"(
+Texture2D shaderTexture : register(t0);
+Texture2D<float> sceneDepth : register(t1);
+SamplerState sampleType : register(s0);
+cbuffer DepthCB : register(b0)
+{
+	float4 cameraData;      // x=far y=near z=far-near w=far*near  (game units)
+	float  gameToMeter;     // game units -> metres
+	float  helperNear;      // helper projection near (metres)
+	float  helperFar;       // helper projection far (metres)
+	float  depthBias;       // metres of slack to avoid z-fighting on contact
+	float  depthTestEnable; // 1 = occlude against the scene, 0 = passthrough
+	float2 depthScale;      // sceneDepth texel size / submit texel size (upscaling can leave the
+	                        // depth buffer at a lower internal resolution than the submit target)
+	float  _pad;
+};
+struct PS_INPUT
+{
+	float4 pos: SV_POSITION;
+	float2 uv: TEXCOORD0;
+};
+float4 main(PS_INPUT input) : SV_TARGET
+{
+	float4 col = shaderTexture.Sample(sampleType, input.uv);
+	if (depthTestEnable > 0.5f) {
+		float sd = sceneDepth.Load(int3(int2(input.pos.xy * depthScale), 0));
+		float sceneMetres = (cameraData.w / (cameraData.x - sd * cameraData.z)) * gameToMeter;
+		float billMetres = (helperNear * helperFar) / (helperFar - input.pos.z * (helperFar - helperNear));
+		if (billMetres > sceneMetres + depthBias)
+			discard;
+	}
+	return col;
+}
+)";
+
 		struct ConstantBufferData
 		{
 			Matrix wvp;
@@ -139,6 +186,20 @@ float4 main(PS_INPUT input) : SV_TARGET
 			Matrix wvp;                          // (model * vpWorldSpace).Transpose()
 			float uvScale[2] = { 1.0f, 1.0f };   // TEXCOORD5.xy
 			float uvOffset[2] = { 0.0f, 0.0f };  // TEXCOORD5.zw
+		};
+
+		// Mirrors the DepthCB cbuffer in kWorldQuadDepthPixelShader (48 bytes, 16-byte aligned).
+		struct WorldQuadDepthParams
+		{
+			float cameraData[4] = { 0.0f, 0.0f, 0.0f, 0.0f };  // far, near, far-near, far*near (game units)
+			float gameToMeter = 0.01428f;                      // Skyrim game unit -> metres
+			float helperNear = 0.1f;                           // must match ComputeEyeMatrices nearZ
+			float helperFar = 1000.0f;                         // must match ComputeEyeMatrices farZ
+			float depthBias = 0.02f;                           // metres of contact slack
+			float depthTestEnable = 0.0f;
+			// sceneDepth texel size / submit texel size — see the SceneDepthInfo comment below.
+			float depthScale[2] = { 1.0f, 1.0f };
+			float pad = 0.0f;
 		};
 
 		struct Resources
@@ -162,6 +223,22 @@ float4 main(PS_INPUT input) : SV_TARGET
 			winrt::com_ptr<ID3D11Buffer> instanceBuffer;
 			uint32_t instanceCapacity = 0;
 
+			// Scene-depth occlusion for the world-quad pass. Separate PS so the HUD/panel passes
+			// keep the plain sampler; depthCB feeds it the linearization params.
+			winrt::com_ptr<ID3D11PixelShader> worldQuadDepthPS;
+			winrt::com_ptr<ID3D11Buffer> depthCB;
+
+			// GPU debug markers (RenderDoc/PIX event browser) for the passes below. Cached once
+			// via QueryInterface; null (and every marker a no-op) on a device without D3D11.1.
+			// Both this and tracyCtx below only exist in a --tracy=y build (see GPUMarker /
+			// HELPER_GPU_PASS) — zero cost in the shipped mod.
+#if defined(IMGUI_VR_HELPER_TRACY)
+			winrt::com_ptr<ID3DUserDefinedAnnotation> annotation;
+			// GPU-side timestamp queries per pass, visible in Tracy's GPU timeline — separate from
+			// the CPU-side ZoneScopedN dispatch-cost zones already at each call site.
+			TracyD3D11Ctx tracyCtx = nullptr;
+#endif
+
 			// Cached per-eye RTVs keyed by target texture pointer (rebuilt
 			// when SteamVR rotates eye textures).
 			struct CachedRTV
@@ -181,6 +258,48 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		Resources g_res;
 
+#if defined(IMGUI_VR_HELPER_TRACY)
+		// RAII scope fanning one pass name to both RenderDoc/PIX (ID3DUserDefinedAnnotation, so a
+		// capture's event list reads "WorldQuadPass" / "HUDPass" / client names instead of requiring
+		// a blind search by shader/resource signature) and Tracy's GPU timeline (real GPU-side pass
+		// cost, not just the CPU dispatch cost the existing ZoneScopedN zones already cover). Gated
+		// on the same build flag as those CPU zones, so the shipped mod pays zero cost — use via the
+		// HELPER_GPU_PASS(name) macro so __LINE__/__FILE__ are captured at the call site.
+		struct GPUMarker
+		{
+			ID3DUserDefinedAnnotation* anno;
+			std::optional<tracy::D3D11ZoneScope> gpuZone;
+			GPUMarker(const char* name, uint32_t line, const char* file, size_t fileSz) :
+				anno(g_res.annotation.get())
+			{
+				const size_t nameLen = std::strlen(name);
+				if (anno) {
+					// Naive ASCII widen: pass names are compile-time literals or client-registration
+					// names, expected ASCII; a non-ASCII name just mangles this debug-only label.
+					const std::wstring wname(name, name + nameLen);
+					anno->BeginEvent(wname.c_str());
+				}
+				if (g_res.tracyCtx) {
+					gpuZone.emplace(g_res.tracyCtx, line, file, fileSz, "GPUMarker",
+						sizeof("GPUMarker") - 1, name, nameLen, 0, true);
+				}
+			}
+			~GPUMarker()
+			{
+				if (anno)
+					anno->EndEvent();
+			}
+			GPUMarker(const GPUMarker&) = delete;
+			GPUMarker& operator=(const GPUMarker&) = delete;
+		};
+#	define HELPER_GPU_PASS_CONCAT_IMPL(a, b) a##b
+#	define HELPER_GPU_PASS_CONCAT(a, b) HELPER_GPU_PASS_CONCAT_IMPL(a, b)
+#	define HELPER_GPU_PASS(name) \
+		GPUMarker HELPER_GPU_PASS_CONCAT(_gpuMarker_, __LINE__)(name, __LINE__, __FILE__, sizeof(__FILE__) - 1)
+#else
+#	define HELPER_GPU_PASS(name)
+#endif
+
 		// ---- Resource init ----------------------------------------------
 
 		bool InitResources()
@@ -192,10 +311,25 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 			// Release anything a prior failed attempt left behind so the com_ptr .put() calls
 			// below overwrite null and do not leak earlier references when we retry.
+#if defined(IMGUI_VR_HELPER_TRACY)
+			// TracyD3D11Ctx isn't RAII-owned by a com_ptr — destroy it explicitly before the
+			// blanket reset below, or a retry after a partial failure leaks its GPU query pool.
+			if (g_res.tracyCtx)
+				TracyD3D11Destroy(g_res.tracyCtx);
+#endif
 			g_res = Resources{};
 
 			auto& d3d = Globals::GetD3D();
 			auto* device = d3d.device;
+
+#if defined(IMGUI_VR_HELPER_TRACY)
+			// GPU debug markers + Tracy GPU timeline (see GPUMarker). Fine if either fails —
+			// annotation/tracyCtx stay null and markers become no-ops.
+			if (d3d.context) {
+				d3d.context->QueryInterface(IID_PPV_ARGS(g_res.annotation.put()));
+				g_res.tracyCtx = TracyD3D11Context(device, d3d.context);
+			}
+#endif
 
 			// Compile shaders from embedded strings.
 			winrt::com_ptr<ID3DBlob> vsBlob, psBlob, errorBlob;
@@ -277,6 +411,36 @@ float4 main(PS_INPUT input) : SV_TARGET
 					instVsBlob->GetBufferSize(), g_res.instancedInputLayout.put()))) {
 				logs::error("InSceneOverlay: CreateInputLayout (instanced) failed");
 				return false;
+			}
+
+			// World-quad depth-occlusion pixel shader + its params buffer.
+			winrt::com_ptr<ID3DBlob> depthPsBlob;
+			errorBlob = nullptr;
+			hr = D3DCompile(
+				kWorldQuadDepthPixelShader, std::strlen(kWorldQuadDepthPixelShader), "InSceneOverlay.depth.ps",
+				nullptr, nullptr, "main", "ps_5_0",
+				D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
+				depthPsBlob.put(), errorBlob.put());
+			if (FAILED(hr)) {
+				logs::error("InSceneOverlay depth PS compile failed: {}",
+					errorBlob ? static_cast<const char*>(errorBlob->GetBufferPointer()) : "<no message>");
+				return false;
+			}
+			if (FAILED(device->CreatePixelShader(depthPsBlob->GetBufferPointer(), depthPsBlob->GetBufferSize(),
+					nullptr, g_res.worldQuadDepthPS.put()))) {
+				logs::error("InSceneOverlay: CreatePixelShader (depth) failed");
+				return false;
+			}
+			{
+				D3D11_BUFFER_DESC dcbDesc = {};
+				dcbDesc.Usage = D3D11_USAGE_DYNAMIC;
+				dcbDesc.ByteWidth = sizeof(WorldQuadDepthParams);
+				dcbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+				dcbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+				if (FAILED(device->CreateBuffer(&dcbDesc, nullptr, g_res.depthCB.put()))) {
+					logs::error("InSceneOverlay: depth constant buffer creation failed");
+					return false;
+				}
 			}
 
 			// Quad vertices (XY plane, z=0, size=1).
@@ -718,6 +882,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		const std::vector<HelperImpl::HUDClientSnapshot>& hudClients)
 	{
 		ZoneScopedN("InScene::HUDPass");
+		HELPER_GPU_PASS("ImGuiVRHelper::HUDPass");
 		const float hudDepth = std::max(0.3f, s.hudDepth);  // sanity floor
 		const float coverage = std::clamp(s.hudCoverage, Overlay::Config::kMinHUDCoverage, Overlay::Config::kMaxHUDCoverage);
 
@@ -756,6 +921,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		const Overlay::Settings& s)
 	{
 		ZoneScopedN("InScene::RebindPass");
+		HELPER_GPU_PASS("ImGuiVRHelper::RebindPass");
 		auto* tex = HelperImpl::GetSingleton().GetActiveRebindTexture();
 		if (!tex)
 			return;
@@ -784,6 +950,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		const Overlay::State& overlayState, ID3D11ShaderResourceView* panelSRV)
 	{
 		ZoneScopedN("InScene::PanelPass");
+		HELPER_GPU_PASS("ImGuiVRHelper::PanelPass");
 		// HMD-attached.
 		if (s.attachMode == Overlay::AttachMode::HMDOnly ||
 			s.attachMode == Overlay::AttachMode::Both) {
@@ -844,16 +1011,118 @@ float4 main(PS_INPUT input) : SV_TARGET
 		}
 	}
 
-	// World-quad pass: each kClientFlag_WorldQuad client's submitted billboards,
-	// drawn at their world positions (OpenVR standing space) facing the HMD, so they
-	// stay anchored in the scene instead of swimming on the head-locked HUD. Depth is
-	// off like every other helper surface, so there's no scene occlusion — clients
-	// occlude at their own level.
+	// Scene depth for world-quad occlusion. kMAIN is the game's live main depth. Its resolution is
+	// NOT always the submit target's: an upscaling pipeline (e.g. an FSR performance tier) can
+	// leave depth at the lower internal render resolution while only color gets upscaled for the
+	// final submit (confirmed via RenderDoc — a 1.5x mismatch cut billboards off incorrectly), so
+	// depthW/depthH (the SRV's actual resource size) must be read each frame, not assumed 1:1.
+	// camNear/camFar come from the game camera for standard-Z linearization (offsets per
+	// open-shaders' GetCameraData).
+	struct SceneDepthInfo
+	{
+		ID3D11ShaderResourceView* srv = nullptr;
+		float camNear = 0.0f;
+		float camFar = 0.0f;
+		float depthW = 0.0f;
+		float depthH = 0.0f;
+	};
+	SceneDepthInfo GetSceneDepthInfo()
+	{
+		SceneDepthInfo info;
+		auto* renderer = RE::BSGraphics::Renderer::GetSingleton();
+		if (!renderer)
+			return info;
+		info.srv = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kMAIN].depthSRV;
+		static REL::Relocation<std::uintptr_t> cameraData{ REL::RelocationID(517032, 403540) };
+		info.camNear = *reinterpret_cast<const float*>(cameraData.address() + 0x40);
+		info.camFar = *reinterpret_cast<const float*>(cameraData.address() + 0x44);
+		if (info.srv) {
+			// The underlying resource's dimensions don't change without the SRV pointer itself
+			// changing (a new resource on an upscale-mode/resolution switch), so cache by pointer
+			// instead of paying GetResource+QueryInterface+GetDesc every eye, every frame.
+			static ID3D11ShaderResourceView* cachedSRV = nullptr;
+			static float cachedW = 0.0f, cachedH = 0.0f;
+			if (info.srv != cachedSRV) {
+				winrt::com_ptr<ID3D11Resource> res;
+				info.srv->GetResource(res.put());
+				winrt::com_ptr<ID3D11Texture2D> tex;
+				if (res && SUCCEEDED(res->QueryInterface(IID_PPV_ARGS(tex.put())))) {
+					D3D11_TEXTURE2D_DESC desc;
+					tex->GetDesc(&desc);
+					cachedW = static_cast<float>(desc.Width);
+					cachedH = static_cast<float>(desc.Height);
+				}
+				cachedSRV = info.srv;
+			}
+			info.depthW = cachedW;
+			info.depthH = cachedH;
+		}
+		return info;
+	}
+
+	// Skyrim-world -> OpenVR-tracking conversion for world-quad billboards, read fresh in this
+	// same pass (the same call that builds vpWorldSpace from a fresh compositor pose) rather than
+	// by the client at an earlier point in the frame. RoomNode's world transform (the play-space
+	// origin) moves every frame the player walks; a client-side conversion snapshotting it earlier
+	// desyncs from the pose vpWorldSpace uses and shows up as visible bobbing while moving.
+	struct SkyrimToTrackingXform
+	{
+		bool valid = false;
+		RE::NiPoint3 origin;
+		RE::NiMatrix3 rotate;
+		float invScale = 1.0f;
+	};
+	SkyrimToTrackingXform GetSkyrimToTrackingXform()
+	{
+		SkyrimToTrackingXform x;
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		auto* nodeData = player ? player->GetVRNodeData() : nullptr;
+		auto room = nodeData ? nodeData->RoomNode.get() : nullptr;
+		if (!room)
+			return x;
+		x.origin = room->world.translate;
+		x.rotate = room->world.rotate;
+		x.invScale = (room->world.scale > 0.0f) ? (1.0f / room->world.scale) : 1.0f;
+		x.valid = true;
+		return x;
+	}
+
+	// Skyrim world units -> metres. Must match FloatingSubtitles::ImGui::Renderer::kGameUnitToMeter.
+	constexpr float kSkyrimUnitToMeter = 0.01428f;
+
+	// Room-local (world-aligned, x-right/y-forward/z-up) -> OpenVR tracking (x-right/y-up/
+	// z-toward-user) is an axis swap (x, z, -y); the room origin is the OpenVR standing origin, so
+	// this is the tracking-space position directly once in room-local units.
+	Vector3 SkyrimToTracking(const SkyrimToTrackingXform& x, const float pos[3])
+	{
+		const float relx = pos[0] - x.origin.x;
+		const float rely = pos[1] - x.origin.y;
+		const float relz = pos[2] - x.origin.z;
+		const auto& r = x.rotate.entry;
+		const float rx = (r[0][0] * relx + r[1][0] * rely + r[2][0] * relz) * x.invScale;
+		const float ry = (r[0][1] * relx + r[1][1] * rely + r[2][1] * relz) * x.invScale;
+		const float rz = (r[0][2] * relx + r[1][2] * rely + r[2][2] * relz) * x.invScale;
+		return Vector3(rx, rz, -ry) * kSkyrimUnitToMeter;
+	}
+
+	// World-quad pass: each kClientFlag_WorldQuad client's submitted billboards, drawn at their
+	// Skyrim world positions (converted to tracking space above) facing the HMD, so they stay
+	// anchored in the scene instead of swimming on the head-locked HUD. Occlusion is per-pixel
+	// against the game's scene depth (worldQuadDepthPS), so a billboard behind world geometry is
+	// correctly hidden.
 	void RenderWorldQuadPass(ID3D11DeviceContext* ctx, const EyeMatrices& matrices,
-		const std::vector<HelperImpl::WorldQuadClientSnapshot>& worldClients)
+		const std::vector<HelperImpl::WorldQuadClientSnapshot>& worldClients, float submitW, float submitH)
 	{
 		ZoneScopedN("InScene::WorldQuadPass");
 		if (worldClients.empty())
+			return;
+		HELPER_GPU_PASS("ImGuiVRHelper::WorldQuadPass");
+
+		// Read fresh in this same pass — same call, same instant as matrices.hmdPos/vpWorldSpace
+		// below — so client billboards and the eye projection are never built from room-transform
+		// snapshots taken at different points in the frame.
+		const SkyrimToTrackingXform skyrimXf = GetSkyrimToTrackingXform();
+		if (!skyrimXf.valid)
 			return;
 
 		// HMD position (standing space) for billboard facing — reuse the SAME pose
@@ -876,7 +1145,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 			XMFLOAT2 t;
 		};
 		ctx->VSSetShader(g_res.instancedVS.get(), nullptr, 0);
-		ctx->PSSetShader(g_res.ps.get(), nullptr, 0);
+		ctx->PSSetShader(g_res.worldQuadDepthPS.get(), nullptr, 0);
 		ctx->IASetIndexBuffer(g_res.ib.get(), DXGI_FORMAT_R32_UINT, 0);
 		ctx->IASetInputLayout(g_res.instancedInputLayout.get());
 		ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -886,11 +1155,49 @@ float4 main(PS_INPUT input) : SV_TARGET
 		ID3D11SamplerState* samp = g_res.sampler.get();
 		ctx->PSSetSamplers(0, 1, &samp);
 
+		// Scene-depth occlusion: bind the game depth (t1) + linearization params (b0) for the whole
+		// pass. Disabled gracefully (params.depthTestEnable stays 0) if the depth SRV isn't ready or
+		// the camera near/far look invalid, so the billboards still draw un-occluded.
+		SceneDepthInfo depthInfo = GetSceneDepthInfo();
+		WorldQuadDepthParams depthParams;
+		if (depthInfo.srv && depthInfo.camNear > 0.0f && depthInfo.camFar > depthInfo.camNear) {
+			depthParams.cameraData[0] = depthInfo.camFar;
+			depthParams.cameraData[1] = depthInfo.camNear;
+			depthParams.cameraData[2] = depthInfo.camFar - depthInfo.camNear;
+			depthParams.cameraData[3] = depthInfo.camFar * depthInfo.camNear;
+			// Game unit -> OpenVR metre, scaled by the same room-scale factor skyrimXf's invScale
+			// already carries, so the depth compare matches how billboards are positioned.
+			depthParams.gameToMeter = kSkyrimUnitToMeter * skyrimXf.invScale;
+			// sceneDepth's actual resource size vs the submit target's — an upscaling pipeline can
+			// leave depth at a lower internal render resolution (see the SceneDepthInfo comment).
+			if (depthInfo.depthW > 0.0f && depthInfo.depthH > 0.0f && submitW > 0.0f && submitH > 0.0f) {
+				depthParams.depthScale[0] = depthInfo.depthW / submitW;
+				depthParams.depthScale[1] = depthInfo.depthH / submitH;
+				depthParams.depthTestEnable = 1.0f;
+			}
+		}
+		D3D11_MAPPED_SUBRESOURCE depthMap;
+		if (SUCCEEDED(ctx->Map(g_res.depthCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &depthMap))) {
+			std::memcpy(depthMap.pData, &depthParams, sizeof(depthParams));
+			ctx->Unmap(g_res.depthCB.get(), 0);
+		}
+		ID3D11Buffer* dcb = g_res.depthCB.get();
+		ctx->PSSetConstantBuffers(0, 1, &dcb);
+		if (depthParams.depthTestEnable > 0.5f) {
+			ID3D11ShaderResourceView* dsrv = depthInfo.srv;
+			ctx->PSSetShaderResources(1, 1, &dsrv);  // t1 = scene depth (t0 = panel, set per client)
+		}
+
 		std::vector<InstanceData> instances;
 
 		for (const auto& client : worldClients) {
 			if (!client.texture)
 				continue;
+			// The temporary string's .c_str() is safe here: it lives through the whole
+			// declaration-with-initializer full-expression, which encompasses the entire
+			// GPUMarker constructor call — and that constructor consumes the name synchronously
+			// (BeginEvent by COM contract; Tracy's AllocSourceLocation memcpy's it immediately).
+			HELPER_GPU_PASS(("WorldQuad:" + client.name).c_str());
 			auto* srv = GetOrCreateHUDSRV(client.client_id, client.texture.get());
 			if (!srv)
 				continue;
@@ -918,7 +1225,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 				if (!std::isfinite(width))
 					continue;  // pathological sub-rect (dv near zero) blew up the aspect
 
-				const Vector3 center(q.pos[0], q.pos[1], q.pos[2]);
+				const Vector3 center = SkyrimToTracking(skyrimXf, q.pos);
 				Vector3 forward = hmdPos - center;
 				if (forward.LengthSquared() < 1e-6f)
 					continue;
@@ -996,6 +1303,11 @@ float4 main(PS_INPUT input) : SV_TARGET
 			ctx->PSSetShaderResources(0, 1, &srv);
 			ctx->DrawIndexedInstanced(6, static_cast<UINT>(instances.size()), 0, 0, 0);
 		}
+
+		// Release the scene-depth SRV so the game can rebind kMAIN as a depth target next frame
+		// without a bind conflict on our leftover t1 binding.
+		ID3D11ShaderResourceView* nullSRV = nullptr;
+		ctx->PSSetShaderResources(1, 1, &nullSRV);
 	}
 
 	void RenderForEye(vr::EVREye eye, ID3D11Texture2D* targetTexture,
@@ -1004,6 +1316,13 @@ float4 main(PS_INPUT input) : SV_TARGET
 		ZoneScopedN("InScene::RenderForEye");
 		if (!targetTexture)
 			return;
+		HELPER_GPU_PASS(eye == vr::Eye_Left ? "ImGuiVRHelper::RenderForEye(Left)" : "ImGuiVRHelper::RenderForEye(Right)");
+#if defined(IMGUI_VR_HELPER_TRACY)
+		// Drain completed GPU timestamp queries. Called once per eye (twice per frame); harmless
+		// to call more than strictly once per frame, just means slightly more eager collection.
+		if (g_res.tracyCtx)
+			TracyD3D11Collect(g_res.tracyCtx);
+#endif
 
 		auto& overlayState = Overlay::State::GetSingleton();
 		const auto& s = overlayState.settings;
@@ -1104,7 +1423,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		// World-anchored billboards first (they sit in the scene), then the
 		// head-locked HUD/panel surfaces on top.
-		RenderWorldQuadPass(ctx, matrices, worldClients);
+		RenderWorldQuadPass(ctx, matrices, worldClients, static_cast<float>(texDesc.Width), static_cast<float>(texDesc.Height));
 
 		RenderHUDPass(ctx, matrices, s, hudClients);
 

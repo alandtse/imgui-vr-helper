@@ -236,27 +236,31 @@ namespace ImGuiVRHelperPluginAPI
 		/// billboards anchored at caller-supplied WORLD positions, rendered with
 		/// the in-scene world-space projection so they stay fixed in the world.
 		///
-		/// Submit the per-frame billboard list via SubmitWorldQuads(). Positions
-		/// are OpenVR standing-space meters, so a game client must convert its own
-		/// world coordinates into tracking space before submitting. The client
-		/// still renders into its normal panel RTV; each WorldQuad references a
-		/// sub-rect of that panel as its texture.
+		/// Submit the per-frame billboard list via SubmitWorldQuads(). Positions are Skyrim
+		/// world-space (game units) — the helper converts to OpenVR tracking space itself at
+		/// Submit time, so don't convert client-side. The client still renders into its normal
+		/// panel RTV; each WorldQuad references a sub-rect of that panel as its texture.
 		///
 		/// Drawn at the OpenVR Submit hook like every other helper surface — no
-		/// game-render-pipeline injection — so there is no bound scene depth and
-		/// thus no per-pixel occlusion; occlude at the client level if needed.
+		/// game-render-pipeline injection — but the helper binds the game's scene
+		/// depth for this pass, so billboards are per-pixel occluded by world geometry.
 		kClientFlag_WorldQuad = 1u << 6,
 	};
 
 	/// One world-anchored billboard for a kClientFlag_WorldQuad client. The helper
 	/// samples the client's panel texture over [u0,v0]..[u1,v1] (0..1 panel UV) and
-	/// draws it as a camera-facing quad centered at `pos` (OpenVR standing-space
-	/// meters), `height_m` meters tall; width follows the sub-rect's aspect ratio.
+	/// draws it as a camera-facing quad centered at `pos`, `height_m` meters tall;
+	/// width follows the sub-rect's aspect ratio.
 	struct WorldQuad
 	{
 		float u0, v0, u1, v1;  ///< source sub-rect in the client's panel, 0..1 UV
-		float pos[3];          ///< billboard center, OpenVR standing space, meters
-		float height_m;        ///< billboard height in meters (width = height * uvAspect)
+		/// Billboard center, Skyrim world-space (game units), NOT OpenVR tracking space. The
+		/// helper converts this itself at Submit time (using the same fresh pose it builds the
+		/// eye projection from), so the client shouldn't do its own world->tracking conversion —
+		/// doing so from an earlier point in the frame is a source of visible jitter while the
+		/// player is moving.
+		float pos[3];
+		float height_m;  ///< billboard height in meters (width = height * uvAspect)
 	};
 
 }  // namespace ImGuiVRHelperPluginAPI

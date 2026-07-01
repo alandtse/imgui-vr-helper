@@ -109,6 +109,7 @@ namespace ImGuiVRHelper
 		struct WorldQuadClientSnapshot
 		{
 			uint32_t client_id;
+			std::string name;  // for GPU debug markers (RenderDoc/PIX event browser)
 			// Strong ref so the panel texture can't be released by an UnregisterClient
 			// on another thread between snapshot (m_mutex held) and use in RenderForEye.
 			winrt::com_ptr<ID3D11Texture2D> texture;

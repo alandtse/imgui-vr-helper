@@ -587,7 +587,7 @@ namespace ImGuiVRHelper
 				continue;  // nothing submitted this frame → nothing to draw
 			if (!EnsureClientTextureLocked(rec))
 				continue;
-			out.push_back({ id, rec.texture, rec.worldQuads });
+			out.push_back({ id, rec.name, rec.texture, rec.worldQuads });
 		}
 		return out;
 	}
