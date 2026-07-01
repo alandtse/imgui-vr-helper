@@ -261,7 +261,8 @@ namespace ImGuiVRHelperPluginAPI
 		/// (quads may be null) clears it so nothing draws. Each WorldQuad samples
 		/// a sub-rect of the client's own panel texture (rendered as usual via
 		/// GetPanel / RenderToPanel) and is drawn as a camera-facing billboard at
-		/// `pos` (OpenVR standing-space meters). Call every frame the client wants
+		/// `pos` (Skyrim world-space, game units — the helper converts to OpenVR
+		/// tracking space itself at Submit time). Call every frame the client wants
 		/// its quads shown; a frame with no call keeps the prior list, so clients
 		/// that go idle should submit `count == 0`. No-op for unknown ids or
 		/// clients that didn't set kClientFlag_WorldQuad. The helper caps the list

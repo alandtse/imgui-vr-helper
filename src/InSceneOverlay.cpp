@@ -187,7 +187,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		struct WorldQuadDepthParams
 		{
 			float cameraData[4] = { 0.0f, 0.0f, 0.0f, 0.0f };  // far, near, far-near, far*near (game units)
-			float gameToMeter = 0.0142875f;                    // Skyrim game unit -> metres
+			float gameToMeter = 0.01428f;                      // Skyrim game unit -> metres
 			float helperNear = 0.1f;                           // must match ComputeEyeMatrices nearZ
 			float helperFar = 1000.0f;                         // must match ComputeEyeMatrices farZ
 			float depthBias = 0.02f;                           // metres of contact slack
@@ -956,16 +956,68 @@ float4 main(PS_INPUT input) : SV_TARGET
 		return info;
 	}
 
-	// World-quad pass: each kClientFlag_WorldQuad client's submitted billboards,
-	// drawn at their world positions (OpenVR standing space) facing the HMD, so they
-	// stay anchored in the scene instead of swimming on the head-locked HUD. Occlusion is
-	// per-pixel against the game's scene depth (worldQuadDepthPS), so a billboard behind
-	// world geometry is correctly hidden.
+	// Skyrim-world -> OpenVR-tracking conversion for world-quad billboards, read fresh in this
+	// same pass (the same call that builds vpWorldSpace from a fresh compositor pose) rather than
+	// by the client at an earlier point in the frame. RoomNode's world transform (the play-space
+	// origin) moves every frame the player walks; a client-side conversion snapshotting it earlier
+	// desyncs from the pose vpWorldSpace uses and shows up as visible bobbing while moving.
+	struct SkyrimToTrackingXform
+	{
+		bool valid = false;
+		RE::NiPoint3 origin;
+		RE::NiMatrix3 rotate;
+		float invScale = 1.0f;
+	};
+	SkyrimToTrackingXform GetSkyrimToTrackingXform()
+	{
+		SkyrimToTrackingXform x;
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		auto* nodeData = player ? player->GetVRNodeData() : nullptr;
+		auto room = nodeData ? nodeData->RoomNode.get() : nullptr;
+		if (!room)
+			return x;
+		x.origin = room->world.translate;
+		x.rotate = room->world.rotate;
+		x.invScale = (room->world.scale > 0.0f) ? (1.0f / room->world.scale) : 1.0f;
+		x.valid = true;
+		return x;
+	}
+
+	// Skyrim world units -> metres. Must match FloatingSubtitles::ImGui::Renderer::kGameUnitToMeter.
+	constexpr float kSkyrimUnitToMeter = 0.01428f;
+
+	// Room-local (world-aligned, x-right/y-forward/z-up) -> OpenVR tracking (x-right/y-up/
+	// z-toward-user) is an axis swap (x, z, -y); the room origin is the OpenVR standing origin, so
+	// this is the tracking-space position directly once in room-local units.
+	Vector3 SkyrimToTracking(const SkyrimToTrackingXform& x, const float pos[3])
+	{
+		const float relx = pos[0] - x.origin.x;
+		const float rely = pos[1] - x.origin.y;
+		const float relz = pos[2] - x.origin.z;
+		const auto& r = x.rotate.entry;
+		const float rx = (r[0][0] * relx + r[1][0] * rely + r[2][0] * relz) * x.invScale;
+		const float ry = (r[0][1] * relx + r[1][1] * rely + r[2][1] * relz) * x.invScale;
+		const float rz = (r[0][2] * relx + r[1][2] * rely + r[2][2] * relz) * x.invScale;
+		return Vector3(rx, rz, -ry) * kSkyrimUnitToMeter;
+	}
+
+	// World-quad pass: each kClientFlag_WorldQuad client's submitted billboards, drawn at their
+	// Skyrim world positions (converted to tracking space above) facing the HMD, so they stay
+	// anchored in the scene instead of swimming on the head-locked HUD. Occlusion is per-pixel
+	// against the game's scene depth (worldQuadDepthPS), so a billboard behind world geometry is
+	// correctly hidden.
 	void RenderWorldQuadPass(ID3D11DeviceContext* ctx, const EyeMatrices& matrices,
 		const std::vector<HelperImpl::WorldQuadClientSnapshot>& worldClients)
 	{
 		ZoneScopedN("InScene::WorldQuadPass");
 		if (worldClients.empty())
+			return;
+
+		// Read fresh in this same pass — same call, same instant as matrices.hmdPos/vpWorldSpace
+		// below — so client billboards and the eye projection are never built from room-transform
+		// snapshots taken at different points in the frame.
+		const SkyrimToTrackingXform skyrimXf = GetSkyrimToTrackingXform();
+		if (!skyrimXf.valid)
 			return;
 
 		// HMD position (standing space) for billboard facing — reuse the SAME pose
@@ -1008,16 +1060,9 @@ float4 main(PS_INPUT input) : SV_TARGET
 			depthParams.cameraData[1] = depthInfo.camNear;
 			depthParams.cameraData[2] = depthInfo.camFar - depthInfo.camNear;
 			depthParams.cameraData[3] = depthInfo.camFar * depthInfo.camNear;
-			// Game unit -> OpenVR metre. FloatingSubtitles anchors quads with kGameUnitToMeter
-			// divided by the player's VR room scale, so the depth compare must use the same factor
-			// or the occlusion distance drifts with the world scale.
-			float roomScale = 1.0f;
-			if (auto* player = RE::PlayerCharacter::GetSingleton())
-				if (auto* nodeData = player->GetVRNodeData())
-					if (auto room = nodeData->RoomNode.get())
-						if (room->world.scale > 0.0f)
-							roomScale = room->world.scale;
-			depthParams.gameToMeter = 0.0142875f / roomScale;
+			// Game unit -> OpenVR metre, scaled by the same room-scale factor skyrimXf's invScale
+			// already carries, so the depth compare matches how billboards are positioned.
+			depthParams.gameToMeter = kSkyrimUnitToMeter * skyrimXf.invScale;
 			depthParams.depthTestEnable = 1.0f;
 		}
 		D3D11_MAPPED_SUBRESOURCE depthMap;
@@ -1064,7 +1109,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 				if (!std::isfinite(width))
 					continue;  // pathological sub-rect (dv near zero) blew up the aspect
 
-				const Vector3 center(q.pos[0], q.pos[1], q.pos[2]);
+				const Vector3 center = SkyrimToTracking(skyrimXf, q.pos);
 				Vector3 forward = hmdPos - center;
 				if (forward.LengthSquared() < 1e-6f)
 					continue;

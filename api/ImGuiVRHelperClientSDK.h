@@ -219,9 +219,12 @@ namespace ImGuiVRHelperPluginAPI
 		/// Submit this frame's world-billboard list (kClientFlag_WorldQuad clients).
 		/// Replaces the previous frame's list; pass count==0 to clear. Each WorldQuad
 		/// names a sub-rect of THIS client's panel (render it via RenderToPanel /
-		/// GetPanel as usual) and a world position in OpenVR standing space (meters) —
-		/// convert game-world coordinates to tracking space before calling. No-op when
-		/// disconnected or the helper predates interface 004.
+		/// GetPanel as usual) and a Skyrim world-space position (game units, e.g. a
+		/// node's world.translate) — the helper converts to OpenVR tracking space
+		/// itself at Submit time; don't do that conversion client-side (an earlier,
+		/// client-side conversion desyncs from the pose the eye projection uses once
+		/// the player is moving, and shows up as jitter). No-op when disconnected or
+		/// the helper predates interface 004.
 		void SubmitWorldQuads(const ImGuiVRHelperPluginAPI::WorldQuad* quads, std::size_t count)
 		{
 			if (!m_helper004 || !IsConnected())
