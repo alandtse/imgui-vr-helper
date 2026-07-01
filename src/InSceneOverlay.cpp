@@ -23,6 +23,9 @@
 #include "internal/VRUtils.h"
 
 #include <RE/B/BSOpenVR.h>
+#include <RE/B/BSShaderRenderTargets.h>
+#include <RE/P/PlayerCharacter.h>
+#include <RE/R/Renderer.h>
 
 #include <DirectXMath.h>
 #include <SimpleMath.h>
@@ -123,6 +126,45 @@ float4 main(PS_INPUT input) : SV_TARGET
 }
 )";
 
+		// World-quad pixel shader with scene-depth occlusion. Samples the game's full-res
+		// kMAIN depth at the billboard pixel (identity Load: VR upscales depth to the submit
+		// resolution, so no dynamic-resolution UV scaling is needed) and discards the pixel when
+		// the billboard sits behind the scene. Both depths are linearized to view-space metres —
+		// the scene from its standard-Z game projection (cameraData), the billboard from the
+		// helper's OpenVR projection (helperNear/Far) — so the compare is unit-consistent.
+		constexpr const char* kWorldQuadDepthPixelShader = R"(
+Texture2D shaderTexture : register(t0);
+Texture2D<float> sceneDepth : register(t1);
+SamplerState sampleType : register(s0);
+cbuffer DepthCB : register(b0)
+{
+	float4 cameraData;      // x=far y=near z=far-near w=far*near  (game units)
+	float  gameToMeter;     // game units -> metres
+	float  helperNear;      // helper projection near (metres)
+	float  helperFar;       // helper projection far (metres)
+	float  depthBias;       // metres of slack to avoid z-fighting on contact
+	float  depthTestEnable; // 1 = occlude against the scene, 0 = passthrough
+	float3 _pad;
+};
+struct PS_INPUT
+{
+	float4 pos: SV_POSITION;
+	float2 uv: TEXCOORD0;
+};
+float4 main(PS_INPUT input) : SV_TARGET
+{
+	float4 col = shaderTexture.Sample(sampleType, input.uv);
+	if (depthTestEnable > 0.5f) {
+		float sd = sceneDepth.Load(int3(int2(input.pos.xy), 0));
+		float sceneMetres = (cameraData.w / (cameraData.x - sd * cameraData.z)) * gameToMeter;
+		float billMetres = (helperNear * helperFar) / (helperFar - input.pos.z * (helperFar - helperNear));
+		if (billMetres > sceneMetres + depthBias)
+			discard;
+	}
+	return col;
+}
+)";
+
 		struct ConstantBufferData
 		{
 			Matrix wvp;
@@ -139,6 +181,18 @@ float4 main(PS_INPUT input) : SV_TARGET
 			Matrix wvp;                          // (model * vpWorldSpace).Transpose()
 			float uvScale[2] = { 1.0f, 1.0f };   // TEXCOORD5.xy
 			float uvOffset[2] = { 0.0f, 0.0f };  // TEXCOORD5.zw
+		};
+
+		// Mirrors the DepthCB cbuffer in kWorldQuadDepthPixelShader (48 bytes, 16-byte aligned).
+		struct WorldQuadDepthParams
+		{
+			float cameraData[4] = { 0.0f, 0.0f, 0.0f, 0.0f };  // far, near, far-near, far*near (game units)
+			float gameToMeter = 0.0142875f;                    // Skyrim game unit -> metres
+			float helperNear = 0.1f;                           // must match ComputeEyeMatrices nearZ
+			float helperFar = 1000.0f;                         // must match ComputeEyeMatrices farZ
+			float depthBias = 0.02f;                           // metres of contact slack
+			float depthTestEnable = 0.0f;
+			float pad[3] = { 0.0f, 0.0f, 0.0f };
 		};
 
 		struct Resources
@@ -161,6 +215,11 @@ float4 main(PS_INPUT input) : SV_TARGET
 			winrt::com_ptr<ID3D11InputLayout> instancedInputLayout;
 			winrt::com_ptr<ID3D11Buffer> instanceBuffer;
 			uint32_t instanceCapacity = 0;
+
+			// Scene-depth occlusion for the world-quad pass (interface 005). Separate PS so the
+			// HUD/panel passes keep the plain sampler; depthCB feeds it the linearization params.
+			winrt::com_ptr<ID3D11PixelShader> worldQuadDepthPS;
+			winrt::com_ptr<ID3D11Buffer> depthCB;
 
 			// Cached per-eye RTVs keyed by target texture pointer (rebuilt
 			// when SteamVR rotates eye textures).
@@ -277,6 +336,36 @@ float4 main(PS_INPUT input) : SV_TARGET
 					instVsBlob->GetBufferSize(), g_res.instancedInputLayout.put()))) {
 				logs::error("InSceneOverlay: CreateInputLayout (instanced) failed");
 				return false;
+			}
+
+			// World-quad depth-occlusion pixel shader + its params buffer (interface 005).
+			winrt::com_ptr<ID3DBlob> depthPsBlob;
+			errorBlob = nullptr;
+			hr = D3DCompile(
+				kWorldQuadDepthPixelShader, std::strlen(kWorldQuadDepthPixelShader), "InSceneOverlay.depth.ps",
+				nullptr, nullptr, "main", "ps_5_0",
+				D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
+				depthPsBlob.put(), errorBlob.put());
+			if (FAILED(hr)) {
+				logs::error("InSceneOverlay depth PS compile failed: {}",
+					errorBlob ? static_cast<const char*>(errorBlob->GetBufferPointer()) : "<no message>");
+				return false;
+			}
+			if (FAILED(device->CreatePixelShader(depthPsBlob->GetBufferPointer(), depthPsBlob->GetBufferSize(),
+					nullptr, g_res.worldQuadDepthPS.put()))) {
+				logs::error("InSceneOverlay: CreatePixelShader (depth) failed");
+				return false;
+			}
+			{
+				D3D11_BUFFER_DESC dcbDesc = {};
+				dcbDesc.Usage = D3D11_USAGE_DYNAMIC;
+				dcbDesc.ByteWidth = sizeof(WorldQuadDepthParams);
+				dcbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+				dcbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+				if (FAILED(device->CreateBuffer(&dcbDesc, nullptr, g_res.depthCB.put()))) {
+					logs::error("InSceneOverlay: depth constant buffer creation failed");
+					return false;
+				}
 			}
 
 			// Quad vertices (XY plane, z=0, size=1).
@@ -844,11 +933,34 @@ float4 main(PS_INPUT input) : SV_TARGET
 		}
 	}
 
+	// Scene depth for world-quad occlusion. kMAIN is the game's live main depth, upscaled to the
+	// submit resolution in VR (verified in RenderDoc), so a billboard pixel maps to it 1:1 with no
+	// dynamic-resolution rescale. camNear/camFar come from the game camera for standard-Z
+	// linearization (offsets per open-shaders' GetCameraData).
+	struct SceneDepthInfo
+	{
+		ID3D11ShaderResourceView* srv = nullptr;
+		float camNear = 0.0f;
+		float camFar = 0.0f;
+	};
+	SceneDepthInfo GetSceneDepthInfo()
+	{
+		SceneDepthInfo info;
+		auto* renderer = RE::BSGraphics::Renderer::GetSingleton();
+		if (!renderer)
+			return info;
+		info.srv = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kMAIN].depthSRV;
+		static REL::Relocation<std::uintptr_t> cameraData{ REL::RelocationID(517032, 403540) };
+		info.camNear = *reinterpret_cast<const float*>(cameraData.address() + 0x40);
+		info.camFar = *reinterpret_cast<const float*>(cameraData.address() + 0x44);
+		return info;
+	}
+
 	// World-quad pass: each kClientFlag_WorldQuad client's submitted billboards,
 	// drawn at their world positions (OpenVR standing space) facing the HMD, so they
-	// stay anchored in the scene instead of swimming on the head-locked HUD. Depth is
-	// off like every other helper surface, so there's no scene occlusion — clients
-	// occlude at their own level.
+	// stay anchored in the scene instead of swimming on the head-locked HUD. Occlusion is
+	// per-pixel against the game's scene depth (worldQuadDepthPS), so a billboard behind
+	// world geometry is correctly hidden.
 	void RenderWorldQuadPass(ID3D11DeviceContext* ctx, const EyeMatrices& matrices,
 		const std::vector<HelperImpl::WorldQuadClientSnapshot>& worldClients)
 	{
@@ -876,7 +988,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 			XMFLOAT2 t;
 		};
 		ctx->VSSetShader(g_res.instancedVS.get(), nullptr, 0);
-		ctx->PSSetShader(g_res.ps.get(), nullptr, 0);
+		ctx->PSSetShader(g_res.worldQuadDepthPS.get(), nullptr, 0);
 		ctx->IASetIndexBuffer(g_res.ib.get(), DXGI_FORMAT_R32_UINT, 0);
 		ctx->IASetInputLayout(g_res.instancedInputLayout.get());
 		ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -885,6 +997,40 @@ float4 main(PS_INPUT input) : SV_TARGET
 		ctx->RSSetState(g_res.rasterizerState.get());
 		ID3D11SamplerState* samp = g_res.sampler.get();
 		ctx->PSSetSamplers(0, 1, &samp);
+
+		// Scene-depth occlusion: bind the game depth (t1) + linearization params (b0) for the whole
+		// pass. Disabled gracefully (params.depthTestEnable stays 0) if the depth SRV isn't ready or
+		// the camera near/far look invalid, so the billboards still draw un-occluded.
+		SceneDepthInfo depthInfo = GetSceneDepthInfo();
+		WorldQuadDepthParams depthParams;
+		if (depthInfo.srv && depthInfo.camNear > 0.0f && depthInfo.camFar > depthInfo.camNear) {
+			depthParams.cameraData[0] = depthInfo.camFar;
+			depthParams.cameraData[1] = depthInfo.camNear;
+			depthParams.cameraData[2] = depthInfo.camFar - depthInfo.camNear;
+			depthParams.cameraData[3] = depthInfo.camFar * depthInfo.camNear;
+			// Game unit -> OpenVR metre. FloatingSubtitles anchors quads with kGameUnitToMeter
+			// divided by the player's VR room scale, so the depth compare must use the same factor
+			// or the occlusion distance drifts with the world scale.
+			float roomScale = 1.0f;
+			if (auto* player = RE::PlayerCharacter::GetSingleton())
+				if (auto* nodeData = player->GetVRNodeData())
+					if (auto room = nodeData->RoomNode.get())
+						if (room->world.scale > 0.0f)
+							roomScale = room->world.scale;
+			depthParams.gameToMeter = 0.0142875f / roomScale;
+			depthParams.depthTestEnable = 1.0f;
+		}
+		D3D11_MAPPED_SUBRESOURCE depthMap;
+		if (SUCCEEDED(ctx->Map(g_res.depthCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &depthMap))) {
+			std::memcpy(depthMap.pData, &depthParams, sizeof(depthParams));
+			ctx->Unmap(g_res.depthCB.get(), 0);
+		}
+		ID3D11Buffer* dcb = g_res.depthCB.get();
+		ctx->PSSetConstantBuffers(0, 1, &dcb);
+		if (depthParams.depthTestEnable > 0.5f) {
+			ID3D11ShaderResourceView* dsrv = depthInfo.srv;
+			ctx->PSSetShaderResources(1, 1, &dsrv);  // t1 = scene depth (t0 = panel, set per client)
+		}
 
 		std::vector<InstanceData> instances;
 
@@ -996,6 +1142,11 @@ float4 main(PS_INPUT input) : SV_TARGET
 			ctx->PSSetShaderResources(0, 1, &srv);
 			ctx->DrawIndexedInstanced(6, static_cast<UINT>(instances.size()), 0, 0, 0);
 		}
+
+		// Release the scene-depth SRV so the game can rebind kMAIN as a depth target next frame
+		// without a bind conflict on our leftover t1 binding.
+		ID3D11ShaderResourceView* nullSRV = nullptr;
+		ctx->PSSetShaderResources(1, 1, &nullSRV);
 	}
 
 	void RenderForEye(vr::EVREye eye, ID3D11Texture2D* targetTexture,
