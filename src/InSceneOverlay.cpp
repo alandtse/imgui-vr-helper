@@ -19,8 +19,8 @@
 #include "OverlayTinter.h"
 #include "internal/Detour.h"
 #include "internal/HUDGeometry.h"
-#include "internal/VRMath.h"
 #include "internal/Profiler.h"
+#include "internal/VRMath.h"
 #include "internal/VRUtils.h"
 
 #include <RE/B/BSOpenVR.h>
@@ -244,11 +244,11 @@ float4 main(PS_INPUT input) : SV_TARGET
 			winrt::com_ptr<ID3D11Buffer> cylinderVB;
 			winrt::com_ptr<ID3D11Buffer> cylinderIB;
 			uint32_t cylinderIndexCount = 0;
-			int      cylinderSegments   = 0;
-			float    cylinderDepth      = 0.0f;
-			float    cylinderCoverage   = 0.0f;
-			float    cylinderProjL[4]   = {};
-			float    cylinderProjR[4]   = {};
+			int cylinderSegments = 0;
+			float cylinderDepth = 0.0f;
+			float cylinderCoverage = 0.0f;
+			float cylinderProjL[4] = {};
+			float cylinderProjR[4] = {};
 
 			// Cached per-eye RTVs keyed by target texture pointer (rebuilt
 			// when SteamVR rotates eye textures).
@@ -779,7 +779,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 			float hudDepth, float coverage, int segments)
 		{
 			std::vector<HUDVertex> verts;
-			std::vector<uint32_t>  idxs;
+			std::vector<uint32_t> idxs;
 			ComputeCylinderMesh(projL, projR, hudDepth, coverage, segments, verts, idxs);
 
 			if (verts.empty() || idxs.empty())
@@ -790,7 +790,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 			// Vertex buffer
 			g_res.cylinderVB = nullptr;
 			D3D11_BUFFER_DESC vbDesc = {};
-			vbDesc.Usage     = D3D11_USAGE_DEFAULT;
+			vbDesc.Usage = D3D11_USAGE_DEFAULT;
 			vbDesc.ByteWidth = static_cast<UINT>(verts.size() * sizeof(HUDVertex));
 			vbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
 			D3D11_SUBRESOURCE_DATA vbData = { verts.data() };
@@ -802,7 +802,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 			// Index buffer
 			g_res.cylinderIB = nullptr;
 			D3D11_BUFFER_DESC ibDesc = {};
-			ibDesc.Usage     = D3D11_USAGE_DEFAULT;
+			ibDesc.Usage = D3D11_USAGE_DEFAULT;
 			ibDesc.ByteWidth = static_cast<UINT>(idxs.size() * sizeof(uint32_t));
 			ibDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
 			D3D11_SUBRESOURCE_DATA ibData = { idxs.data() };
@@ -812,9 +812,9 @@ float4 main(PS_INPUT input) : SV_TARGET
 			}
 
 			g_res.cylinderIndexCount = static_cast<uint32_t>(idxs.size());
-			g_res.cylinderSegments   = segments;
-			g_res.cylinderDepth      = hudDepth;
-			g_res.cylinderCoverage   = coverage;
+			g_res.cylinderSegments = segments;
+			g_res.cylinderDepth = hudDepth;
+			g_res.cylinderCoverage = coverage;
 			std::copy(projL, projL + 4, g_res.cylinderProjL);
 			std::copy(projR, projR + 4, g_res.cylinderProjR);
 			return true;
@@ -986,15 +986,12 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// For cylinder mode, build/rebuild mesh if segments, depth or coverage changed.
 		if (useCylinder) {
 			float projL[4], projR[4];
-			Util::CachedProjectionRaw(vr::Eye_Left,  projL[0], projL[1], projL[2], projL[3]);
+			Util::CachedProjectionRaw(vr::Eye_Left, projL[0], projL[1], projL[2], projL[3]);
 			Util::CachedProjectionRaw(vr::Eye_Right, projR[0], projR[1], projR[2], projR[3]);
 			// Clamp to [2, 64] — prevents arbitrarily large CPU/D3D allocations
 			// from untrusted config values on the hot Submit path.
 			const int segs = std::clamp(s.hudCylinderSegments, 2, 64);
-			const bool needsRebuild = !g_res.cylinderVB || !g_res.cylinderIB
-				|| g_res.cylinderSegments != segs
-				|| g_res.cylinderDepth    != hudDepth
-				|| g_res.cylinderCoverage != coverage;
+			const bool needsRebuild = !g_res.cylinderVB || !g_res.cylinderIB || g_res.cylinderSegments != segs || g_res.cylinderDepth != hudDepth || g_res.cylinderCoverage != coverage;
 			if (needsRebuild) {
 				if (!BuildCylinderBuffers(projL, projR, hudDepth, coverage, segs)) {
 					logs::warn("InSceneOverlay: cylinder mesh build failed, falling back to flat");
@@ -1008,15 +1005,17 @@ float4 main(PS_INPUT input) : SV_TARGET
 			cylinderCB.wvp = matrices.vpHeadSpace.Transpose();
 
 			for (const auto& hud : hudClients) {
-				if (!hud.texture) continue;
+				if (!hud.texture)
+					continue;
 				auto* hudSRV = GetOrCreateHUDSRV(hud.client_id, hud.texture);
-				if (!hudSRV) continue;
+				if (!hudSRV)
+					continue;
 				DrawCylinder(ctx, cylinderCB, hudSRV);
 			}
 			return;
 		}
 
-		flat_hud:
+flat_hud:
 		{
 			const Matrix hudModel =
 				Matrix::CreateScale(hudQuad.width, hudQuad.height, 1.0f) *
