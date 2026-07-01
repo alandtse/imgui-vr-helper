@@ -247,6 +247,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 			int      cylinderSegments   = 0;
 			float    cylinderDepth      = 0.0f;
 			float    cylinderCoverage   = 0.0f;
+			float    cylinderProjL[4]   = {};
+			float    cylinderProjR[4]   = {};
 
 			// Cached per-eye RTVs keyed by target texture pointer (rebuilt
 			// when SteamVR rotates eye textures).
@@ -813,6 +815,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 			g_res.cylinderSegments   = segments;
 			g_res.cylinderDepth      = hudDepth;
 			g_res.cylinderCoverage   = coverage;
+			std::copy(projL, projL + 4, g_res.cylinderProjL);
+			std::copy(projR, projR + 4, g_res.cylinderProjR);
 			return true;
 		}
 
