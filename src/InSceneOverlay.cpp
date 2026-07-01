@@ -128,12 +128,13 @@ float4 main(PS_INPUT input) : SV_TARGET
 }
 )";
 
-		// World-quad pixel shader with scene-depth occlusion. Samples the game's full-res
-		// kMAIN depth at the billboard pixel (identity Load: VR upscales depth to the submit
-		// resolution, so no dynamic-resolution UV scaling is needed) and discards the pixel when
-		// the billboard sits behind the scene. Both depths are linearized to view-space metres —
-		// the scene from its standard-Z game projection (cameraData), the billboard from the
-		// helper's OpenVR projection (helperNear/Far) — so the compare is unit-consistent.
+		// World-quad pixel shader with scene-depth occlusion. Samples the game's kMAIN depth at
+		// the billboard pixel (scaled by depthScale — see the SceneDepthInfo comment, since an
+		// upscaling pipeline can leave depth at a lower resolution than the submit target) and
+		// discards the pixel when the billboard sits behind the scene. Both depths are linearized
+		// to view-space metres — the scene from its standard-Z game projection (cameraData), the
+		// billboard from the helper's OpenVR projection (helperNear/Far) — so the compare is
+		// unit-consistent.
 		constexpr const char* kWorldQuadDepthPixelShader = R"(
 Texture2D shaderTexture : register(t0);
 Texture2D<float> sceneDepth : register(t1);
@@ -1192,6 +1193,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 		for (const auto& client : worldClients) {
 			if (!client.texture)
 				continue;
+			// The temporary string's .c_str() is safe here: it lives through the whole
+			// declaration-with-initializer full-expression, which encompasses the entire
+			// GPUMarker constructor call — and that constructor consumes the name synchronously
+			// (BeginEvent by COM contract; Tracy's AllocSourceLocation memcpy's it immediately).
 			HELPER_GPU_PASS(("WorldQuad:" + client.name).c_str());
 			auto* srv = GetOrCreateHUDSRV(client.client_id, client.texture.get());
 			if (!srv)
