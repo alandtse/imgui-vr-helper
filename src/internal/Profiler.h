@@ -16,6 +16,7 @@
 
 #if defined(IMGUI_VR_HELPER_TRACY)
 #	include <tracy/Tracy.hpp>
+#	include <tracy/TracyD3D11.hpp>
 #else
 #	define ZoneScoped
 #	define ZoneScopedN(name)

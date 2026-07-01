@@ -34,7 +34,9 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <exception>
+#include <optional>
 
 #pragma comment(lib, "d3dcompiler.lib")
 
@@ -220,10 +222,21 @@ float4 main(PS_INPUT input) : SV_TARGET
 			winrt::com_ptr<ID3D11Buffer> instanceBuffer;
 			uint32_t instanceCapacity = 0;
 
-			// Scene-depth occlusion for the world-quad pass (interface 005). Separate PS so the
-			// HUD/panel passes keep the plain sampler; depthCB feeds it the linearization params.
+			// Scene-depth occlusion for the world-quad pass. Separate PS so the HUD/panel passes
+			// keep the plain sampler; depthCB feeds it the linearization params.
 			winrt::com_ptr<ID3D11PixelShader> worldQuadDepthPS;
 			winrt::com_ptr<ID3D11Buffer> depthCB;
+
+			// GPU debug markers (RenderDoc/PIX event browser) for the passes below. Cached once
+			// via QueryInterface; null (and every marker a no-op) on a device without D3D11.1.
+			// Both this and tracyCtx below only exist in a --tracy=y build (see GPUMarker /
+			// HELPER_GPU_PASS) — zero cost in the shipped mod.
+#if defined(IMGUI_VR_HELPER_TRACY)
+			winrt::com_ptr<ID3DUserDefinedAnnotation> annotation;
+			// GPU-side timestamp queries per pass, visible in Tracy's GPU timeline — separate from
+			// the CPU-side ZoneScopedN dispatch-cost zones already at each call site.
+			TracyD3D11Ctx tracyCtx = nullptr;
+#endif
 
 			// Cached per-eye RTVs keyed by target texture pointer (rebuilt
 			// when SteamVR rotates eye textures).
@@ -244,6 +257,48 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		Resources g_res;
 
+#if defined(IMGUI_VR_HELPER_TRACY)
+		// RAII scope fanning one pass name to both RenderDoc/PIX (ID3DUserDefinedAnnotation, so a
+		// capture's event list reads "WorldQuadPass" / "HUDPass" / client names instead of requiring
+		// a blind search by shader/resource signature) and Tracy's GPU timeline (real GPU-side pass
+		// cost, not just the CPU dispatch cost the existing ZoneScopedN zones already cover). Gated
+		// on the same build flag as those CPU zones, so the shipped mod pays zero cost — use via the
+		// HELPER_GPU_PASS(name) macro so __LINE__/__FILE__ are captured at the call site.
+		struct GPUMarker
+		{
+			ID3DUserDefinedAnnotation* anno;
+			std::optional<tracy::D3D11ZoneScope> gpuZone;
+			GPUMarker(const char* name, uint32_t line, const char* file, size_t fileSz) :
+				anno(g_res.annotation.get())
+			{
+				const size_t nameLen = std::strlen(name);
+				if (anno) {
+					// Naive ASCII widen: pass names are compile-time literals or client-registration
+					// names, expected ASCII; a non-ASCII name just mangles this debug-only label.
+					const std::wstring wname(name, name + nameLen);
+					anno->BeginEvent(wname.c_str());
+				}
+				if (g_res.tracyCtx) {
+					gpuZone.emplace(g_res.tracyCtx, line, file, fileSz, "GPUMarker",
+						sizeof("GPUMarker") - 1, name, nameLen, 0, true);
+				}
+			}
+			~GPUMarker()
+			{
+				if (anno)
+					anno->EndEvent();
+			}
+			GPUMarker(const GPUMarker&) = delete;
+			GPUMarker& operator=(const GPUMarker&) = delete;
+		};
+#	define HELPER_GPU_PASS_CONCAT_IMPL(a, b) a##b
+#	define HELPER_GPU_PASS_CONCAT(a, b) HELPER_GPU_PASS_CONCAT_IMPL(a, b)
+#	define HELPER_GPU_PASS(name) \
+		GPUMarker HELPER_GPU_PASS_CONCAT(_gpuMarker_, __LINE__)(name, __LINE__, __FILE__, sizeof(__FILE__) - 1)
+#else
+#	define HELPER_GPU_PASS(name)
+#endif
+
 		// ---- Resource init ----------------------------------------------
 
 		bool InitResources()
@@ -255,10 +310,25 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 			// Release anything a prior failed attempt left behind so the com_ptr .put() calls
 			// below overwrite null and do not leak earlier references when we retry.
+#if defined(IMGUI_VR_HELPER_TRACY)
+			// TracyD3D11Ctx isn't RAII-owned by a com_ptr — destroy it explicitly before the
+			// blanket reset below, or a retry after a partial failure leaks its GPU query pool.
+			if (g_res.tracyCtx)
+				TracyD3D11Destroy(g_res.tracyCtx);
+#endif
 			g_res = Resources{};
 
 			auto& d3d = Globals::GetD3D();
 			auto* device = d3d.device;
+
+#if defined(IMGUI_VR_HELPER_TRACY)
+			// GPU debug markers + Tracy GPU timeline (see GPUMarker). Fine if either fails —
+			// annotation/tracyCtx stay null and markers become no-ops.
+			if (d3d.context) {
+				d3d.context->QueryInterface(IID_PPV_ARGS(g_res.annotation.put()));
+				g_res.tracyCtx = TracyD3D11Context(device, d3d.context);
+			}
+#endif
 
 			// Compile shaders from embedded strings.
 			winrt::com_ptr<ID3DBlob> vsBlob, psBlob, errorBlob;
@@ -342,7 +412,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 				return false;
 			}
 
-			// World-quad depth-occlusion pixel shader + its params buffer (interface 005).
+			// World-quad depth-occlusion pixel shader + its params buffer.
 			winrt::com_ptr<ID3DBlob> depthPsBlob;
 			errorBlob = nullptr;
 			hr = D3DCompile(
@@ -811,6 +881,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		const std::vector<HelperImpl::HUDClientSnapshot>& hudClients)
 	{
 		ZoneScopedN("InScene::HUDPass");
+		HELPER_GPU_PASS("ImGuiVRHelper::HUDPass");
 		const float hudDepth = std::max(0.3f, s.hudDepth);  // sanity floor
 		const float coverage = std::clamp(s.hudCoverage, Overlay::Config::kMinHUDCoverage, Overlay::Config::kMaxHUDCoverage);
 
@@ -849,6 +920,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		const Overlay::Settings& s)
 	{
 		ZoneScopedN("InScene::RebindPass");
+		HELPER_GPU_PASS("ImGuiVRHelper::RebindPass");
 		auto* tex = HelperImpl::GetSingleton().GetActiveRebindTexture();
 		if (!tex)
 			return;
@@ -877,6 +949,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		const Overlay::State& overlayState, ID3D11ShaderResourceView* panelSRV)
 	{
 		ZoneScopedN("InScene::PanelPass");
+		HELPER_GPU_PASS("ImGuiVRHelper::PanelPass");
 		// HMD-attached.
 		if (s.attachMode == Overlay::AttachMode::HMDOnly ||
 			s.attachMode == Overlay::AttachMode::Both) {
@@ -1042,6 +1115,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		ZoneScopedN("InScene::WorldQuadPass");
 		if (worldClients.empty())
 			return;
+		HELPER_GPU_PASS("ImGuiVRHelper::WorldQuadPass");
 
 		// Read fresh in this same pass — same call, same instant as matrices.hmdPos/vpWorldSpace
 		// below — so client billboards and the eye projection are never built from room-transform
@@ -1118,6 +1192,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		for (const auto& client : worldClients) {
 			if (!client.texture)
 				continue;
+			HELPER_GPU_PASS(("WorldQuad:" + client.name).c_str());
 			auto* srv = GetOrCreateHUDSRV(client.client_id, client.texture.get());
 			if (!srv)
 				continue;
@@ -1236,6 +1311,13 @@ float4 main(PS_INPUT input) : SV_TARGET
 		ZoneScopedN("InScene::RenderForEye");
 		if (!targetTexture)
 			return;
+		HELPER_GPU_PASS(eye == vr::Eye_Left ? "ImGuiVRHelper::RenderForEye(Left)" : "ImGuiVRHelper::RenderForEye(Right)");
+#if defined(IMGUI_VR_HELPER_TRACY)
+		// Drain completed GPU timestamp queries. Called once per eye (twice per frame); harmless
+		// to call more than strictly once per frame, just means slightly more eager collection.
+		if (g_res.tracyCtx)
+			TracyD3D11Collect(g_res.tracyCtx);
+#endif
 
 		auto& overlayState = Overlay::State::GetSingleton();
 		const auto& s = overlayState.settings;
