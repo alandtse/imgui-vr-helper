@@ -1363,7 +1363,18 @@ namespace ImGuiVRHelper
 		if (m_inputSettling &&
 			(baseFrame.left.buttons_held | baseFrame.right.buttons_held) == 0)
 			m_inputSettling = false;
-		const bool maskInput = recording || m_inputSettling;
+
+		// Overlay reposition drag is the other modal grip-driven gesture: mask clients the same way
+		// while it's active, and through the same clear-once settling window after grip releases.
+		const bool dragging = Overlay::State::GetSingleton().dragState.dragging;
+		if (m_prevDragging && !dragging)
+			m_dragInputSettling = true;
+		m_prevDragging = dragging;
+		if (m_dragInputSettling &&
+			(baseFrame.left.buttons_held | baseFrame.right.buttons_held) == 0)
+			m_dragInputSettling = false;
+
+		const bool maskInput = recording || m_inputSettling || dragging || m_dragInputSettling;
 
 		for (const auto& sn : snapshot) {
 			ImGuiVRHelperPluginAPI::Frame perClient = baseFrame;
