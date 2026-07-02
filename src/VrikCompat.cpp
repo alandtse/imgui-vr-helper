@@ -21,6 +21,8 @@
 
 #include "../third_party/vrikinterface/vrikinterface001.h"
 
+#include <cmath>
+
 namespace ImGuiVRHelper::VrikCompat
 {
 	namespace
@@ -74,7 +76,15 @@ namespace ImGuiVRHelper::VrikCompat
 			// not a hardware access violation from a genuine vtable/ABI mismatch, which this
 			// build isn't compiled with /EHa to catch. That's an accepted, pre-existing tradeoff
 			// in this project (see hk_Present's DispatchFrame catch), not special-cased here.
-			return g_vrik->getFinalCameraOffsettingAmount();
+			const auto offset = g_vrik->getFinalCameraOffsettingAmount();
+			// Untrusted external output: a NaN/Inf here would flow straight into origin.z and
+			// then per-billboard math whose own isfinite guards (InSceneOverlay.cpp) only cover
+			// client-supplied positions, not this compensation term.
+			if (!std::isfinite(offset.x) || !std::isfinite(offset.y) || !std::isfinite(offset.z)) {
+				logs::warn("VrikCompat: getFinalCameraOffsettingAmount returned a non-finite value");
+				return RE::NiPoint3::Zero();
+			}
+			return offset;
 		} catch (...) {
 			g_vrik = nullptr;
 			logs::error("VrikCompat: getFinalCameraOffsettingAmount threw; disabling VRIK compat");

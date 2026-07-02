@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-Modding-Exception
+// Copyright (c) 2025 ImGuiVRHelper contributors. See COPYING and EXCEPTIONS.md.
+
 #pragma once
 // Compat shim so third_party/vrikinterface/vrikinterface001.h (VRIK's unmodified public SDK
 // header) can be #included as-is; see PluginAPI.h in this directory for the full rationale.
