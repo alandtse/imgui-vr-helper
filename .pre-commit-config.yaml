@@ -4,11 +4,14 @@ repos:
     hooks:
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]
+        exclude: ^(lib|third_party)/
       - id: mixed-line-ending
         args: [--fix=lf]
+        exclude: ^(lib|third_party)/
       - id: check-yaml
       - id: check-added-large-files
       - id: end-of-file-fixer
+        exclude: ^(lib|third_party)/
 
   - repo: https://github.com/pre-commit/mirrors-clang-format
     rev: v22.1.4
@@ -17,7 +20,7 @@ repos:
         args: [--style=file]
         types_or: [file]
         files: \.(h|hpp|c|cpp)$
-        exclude: ^lib/
+        exclude: ^(lib|third_party)/
 
   - repo: https://github.com/JohnnyMorganz/stylua
     rev: v2.3.1

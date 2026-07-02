@@ -12,6 +12,7 @@
 #include "OpenVRDetection.h"
 #include "Overlay.h"
 #include "PluginVersion.h"
+#include "VrikCompat.h"
 
 namespace
 {
@@ -118,6 +119,10 @@ namespace
 					info.hasCompositorInterface);
 
 				ImGuiVRHelper::Hooks::Install();
+
+				// All plugins have finished loading by kPostPostLoad, so the handshake reaches
+				// VRIK regardless of load order. Safe no-op if VRIK isn't installed.
+				ImGuiVRHelper::VrikCompat::TryFetchInterface();
 			}
 			break;
 
@@ -153,9 +158,14 @@ namespace
 			msg->sender ? msg->sender : "<null>",
 			msg->dataLen);
 
-		// Handshake from a client requesting our API surface.
+		// Handshake from a client requesting our API surface. Gated on IsVR so a client on flat
+		// Skyrim sees "not installed" (client()->IsConnected() stays false — GetApiFunction is
+		// never left null, so it can't return a real interface either) rather than a false
+		// "connected" that Hooks::Install() (also IsVR-gated) never actually backs with a
+		// working render path — a hybrid SE/AE/VR client would otherwise believe a fully broken
+		// helper is live and skip its own working flat-native fallback.
 		if (msg->type == Message::kMessage_GetInterface &&
-			msg->dataLen >= sizeof(Message*)) {
+			msg->dataLen >= sizeof(Message*) && REL::Module::IsVR()) {
 			auto* req = static_cast<Message*>(msg->data);
 			req->GetApiFunction = &GetApiFunction;
 			logs::info("Handshake from '{}' -> GetApiFunction installed",
