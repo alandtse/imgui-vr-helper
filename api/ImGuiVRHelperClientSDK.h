@@ -509,7 +509,31 @@ namespace ImGuiVRHelperPluginAPI
 				suppressForwarding = m_suppressForwarding;
 			}
 
+			// Releases that happen to land while inactive or while the VR keyboard owns the wand used to
+			// be lost outright: these early-outs advanced m_prevHeld without forwarding anything, so a
+			// button that let go during one of these windows left ImGui's io.MouseDown/KeysDown stuck
+			// true forever (the exact same "swallowed edge" class as the off-panel case, just gated by
+			// a different condition). Forward release-only edges here before bailing so a button can
+			// never end up logically stuck down just because it happened to release at the wrong moment.
+			const auto forceReleases = [this, held]() {
+				ImGuiIO& io = ImGui::GetIO();
+				const uint32_t released = m_prevHeld & ~held;
+				if (!released)
+					return;
+				const auto onRelease = [&](Button b, auto&& fn) {
+					if (released & (1u << static_cast<uint32_t>(b)))
+						fn(false);
+				};
+				onRelease(Button::TriggerClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Left, d); });
+				onRelease(Button::GripClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Right, d); });
+				onRelease(Button::PadClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
+				onRelease(Button::StickClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
+				onRelease(Button::BY, [&](bool d) { io.AddKeyEvent(ImGuiKey_Tab, d); });
+				onRelease(Button::AX, [&](bool d) { io.AddKeyEvent(ImGuiKey_Enter, d); });
+			};
+
 			if (!active) {
+				forceReleases();
 				m_prevHeld = held;  // stay current so the next open edge-detects cleanly
 				return;
 			}
@@ -522,6 +546,7 @@ namespace ImGuiVRHelperPluginAPI
 			// dismiss cooldown extends this so the OK-trigger release can't click the
 			// field and immediately re-open the keyboard.
 			if (m_kbShown || m_kbDismissCooldown > 0) {
+				forceReleases();
 				m_pointerInPanel = true;  // the keyboard owns the wand; suppress off-panel client shortcuts
 				m_prevHeld = held;        // keep edges current for when it closes
 				return;
