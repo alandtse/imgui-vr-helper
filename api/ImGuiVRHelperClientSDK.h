@@ -69,6 +69,22 @@
 
 namespace ImGuiVRHelperPluginAPI
 {
+	/// ImGui's InputText rework (docking, ~1.91) renamed
+	/// ImGuiInputTextState::CurLenA to TextLen. This header compiles inside
+	/// each client's own TU against that client's ImGui, so pick whichever
+	/// member exists rather than hard-coding one vintage.
+	template <typename T>
+	concept HasTextLenMember = requires(T& t) { t.TextLen; };
+
+	template <typename T>
+	[[nodiscard]] inline int InputTextStateLen(T& state)
+	{
+		if constexpr (HasTextLenMember<T>)
+			return state.TextLen;
+		else
+			return state.CurLenA;
+	}
+
 	/// Per-controller color encoding, matching the helper's controller-map UI:
 	/// Primary = yellow, Secondary = blue, Both = green, anything else = white.
 	inline ImVec4 DeviceColor(InputDeviceType device)
@@ -331,10 +347,10 @@ namespace ImGuiVRHelperPluginAPI
 				if (io.WantTextInput && m_kbDismissCooldown == 0) {
 					std::string seed;
 					if (ImGuiContext* g = ImGui::GetCurrentContext();
-						g && g->InputTextState.ID != 0 && g->InputTextState.ID == g->ActiveId &&
-						g->InputTextState.TextLen > 0)
-						seed.assign(g->InputTextState.TextA.Data,
-							static_cast<std::size_t>(g->InputTextState.TextLen));
+						g && g->InputTextState.ID != 0 && g->InputTextState.ID == g->ActiveId) {
+						if (const int len = InputTextStateLen(g->InputTextState); len > 0)
+							seed.assign(g->InputTextState.TextA.Data, static_cast<std::size_t>(len));
+					}
 					m_kbShown = true;
 					m_kbDelivered = seed;
 					m_helper002->SetKeyboardActive(m_id, true, seed.c_str());
