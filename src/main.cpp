@@ -12,6 +12,7 @@
 #include "OpenVRDetection.h"
 #include "Overlay.h"
 #include "PluginVersion.h"
+#include "VrikCompat.h"
 
 namespace
 {
@@ -118,6 +119,10 @@ namespace
 					info.hasCompositorInterface);
 
 				ImGuiVRHelper::Hooks::Install();
+
+				// All plugins have finished loading by kPostPostLoad, so the handshake reaches
+				// VRIK regardless of load order. Safe no-op if VRIK isn't installed.
+				ImGuiVRHelper::VrikCompat::TryFetchInterface();
 			}
 			break;
 

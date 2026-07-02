@@ -17,6 +17,7 @@
 #include "HelperImpl.h"
 #include "Overlay.h"
 #include "OverlayTinter.h"
+#include "VrikCompat.h"
 #include "internal/Detour.h"
 #include "internal/HUDGeometry.h"
 #include "internal/Profiler.h"
@@ -1083,6 +1084,17 @@ float4 main(PS_INPUT input) : SV_TARGET
 		x.origin = room->world.translate;
 		x.rotate = room->world.rotate;
 		x.invScale = (room->world.scale > 0.0f) ? (1.0f / room->world.scale) : 1.0f;
+
+		// VRIK's head-bob shifts its camera node's local Z each frame to make Skyrim's own scene
+		// render sway (see VrikCompat.h) — it never touches RoomNode or the real OpenVR pose
+		// (confirmed: origin/rotate above are provably stable through active movement even with
+		// VRIK's head-bob on). Add VRIK's offset to origin.z: since relz = pos.z - origin.z below,
+		// increasing origin.z by the same amount the camera rose decreases every anchor's relz by
+		// that amount too — matching how a fixed world point appears to sink, from the camera's
+		// perspective, when the camera itself rises. A no-op (offset is zero) without VRIK, or
+		// with VRIK's head-bob disabled.
+		x.origin.z += VrikCompat::GetCameraOffset().z;
+
 		x.valid = true;
 		return x;
 	}
