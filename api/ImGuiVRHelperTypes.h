@@ -91,6 +91,12 @@ namespace ImGuiVRHelperPluginAPI
 		kFrameFlag_HasFocus = 1u << 0,        ///< the helper routed in-scene focus to this client
 		kFrameFlag_OverlayVisible = 1u << 1,  ///< any client overlay is currently shown
 		kFrameFlag_PointerInPanel = 1u << 2,  ///< this client's wand pointer is on its panel
+		/// A helper-owned modal gesture (e.g. an overlay reposition drag) is in progress. The client
+		/// SDK's PumpInput uses this to skip forwarding wand buttons into ImGui as clicks/keys for the
+		/// duration -- raw controller state (buttons_held/trigger/grip/stick) is UNCHANGED and still
+		/// genuine, so anything reading it directly (IsButtonHeld, a client's own off-panel shortcuts)
+		/// keeps working normally. This only suppresses the ImGui-forwarding step, not input delivery.
+		kFrameFlag_SuppressInputForwarding = 1u << 3,
 	};
 
 	/// Helper-owned render target the client renders its ImGui frame into.

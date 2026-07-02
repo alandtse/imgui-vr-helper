@@ -500,11 +500,13 @@ namespace ImGuiVRHelperPluginAPI
 
 			uint32_t held = 0;
 			float stickX = 0.0f, stickY = 0.0f;
+			bool suppressForwarding = false;
 			{
 				std::scoped_lock lk{ m_mutex };
 				held = m_heldMask;
 				stickX = m_stickX;
 				stickY = m_stickY;
+				suppressForwarding = m_suppressForwarding;
 			}
 
 			if (!active) {
@@ -565,12 +567,20 @@ namespace ImGuiVRHelperPluginAPI
 					return;
 				fn(down);
 			};
-			onEdge(Button::TriggerClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Left, d); });
-			onEdge(Button::GripClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Right, d); });
-			onEdge(Button::PadClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
-			onEdge(Button::StickClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
-			onEdge(Button::BY, [&](bool d) { io.AddKeyEvent(ImGuiKey_Tab, d); });
-			onEdge(Button::AX, [&](bool d) { io.AddKeyEvent(ImGuiKey_Enter, d); });
+			// Suppressed while a helper-owned modal gesture (e.g. an overlay reposition drag) is in
+			// progress -- grip both drives that drag and maps to a client right-click below, so without
+			// this a wand ray sweeping onto the panel mid-drag would forward the still-held grip as an
+			// unintended click. m_prevHeld still advances every frame regardless (see below), so a
+			// button already held when suppression lifts requires a fresh release+press to register as
+			// a genuine new click, rather than firing a phantom edge the instant forwarding resumes.
+			if (!suppressForwarding) {
+				onEdge(Button::TriggerClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Left, d); });
+				onEdge(Button::GripClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Right, d); });
+				onEdge(Button::PadClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
+				onEdge(Button::StickClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
+				onEdge(Button::BY, [&](bool d) { io.AddKeyEvent(ImGuiKey_Tab, d); });
+				onEdge(Button::AX, [&](bool d) { io.AddKeyEvent(ImGuiKey_Enter, d); });
+			}
 			m_prevHeld = held;
 
 			// Recovery watchdog: a wand click's press/release edges are inherently noisier than a real
@@ -930,6 +940,7 @@ namespace ImGuiVRHelperPluginAPI
 			const float sy = (std::abs(f->left.stick_y) >= std::abs(f->right.stick_y)) ? f->left.stick_y : f->right.stick_y;
 			std::scoped_lock lk{ self->m_mutex };
 			self->m_heldMask = f->left.buttons_held | f->right.buttons_held;
+			self->m_suppressForwarding = (f->flags & kFrameFlag_SuppressInputForwarding) != 0;
 			self->m_stickX = sx;
 			self->m_stickY = sy;
 			if (f->struct_size >= offsetof(Frame, hud_coverage) + sizeof(float)) {
@@ -1059,6 +1070,10 @@ namespace ImGuiVRHelperPluginAPI
 		// OnFrame snapshot (frame thread → render thread).
 		mutable std::mutex m_mutex;
 		uint32_t m_heldMask = 0;
+		// kFrameFlag_SuppressInputForwarding mirror -- a helper-owned modal gesture (e.g. an overlay
+		// drag) is in progress. buttons_held above still reflects genuine raw state; only the
+		// ImGui-forwarding step in PumpInput stands down while this is set.
+		bool m_suppressForwarding = false;
 		float m_stickX = 0.0f;
 		float m_stickY = 0.0f;
 		float m_hudDepth = 1.0f;

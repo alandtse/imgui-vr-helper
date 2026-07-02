@@ -1364,8 +1364,15 @@ namespace ImGuiVRHelper
 			(baseFrame.left.buttons_held | baseFrame.right.buttons_held) == 0)
 			m_inputSettling = false;
 
-		// Overlay reposition drag is the other modal grip-driven gesture: mask clients the same way
-		// while it's active, and through the same clear-once settling window after grip releases.
+		const bool maskInput = recording || m_inputSettling;
+
+		// Overlay reposition drag is the other modal grip-driven gesture: grip both starts the drag and
+		// maps to a client's right-click, so without this a wand ray sweeping onto a client's panel
+		// mid-drag would forward the still-held grip as an unintended right-click, and the drag's
+		// eventual release could leak in as a spurious click of its own. Unlike the rebind mask above,
+		// this must NOT zero raw controller state -- a client's own off-panel shortcuts or IsButtonHeld
+		// reads still need the genuine grip/trigger state during a drag; only the client SDK's ImGui
+		// forwarding step should stand down, via kFrameFlag_SuppressInputForwarding.
 		const bool dragging = Overlay::State::GetSingleton().dragState.dragging;
 		if (m_prevDragging && !dragging)
 			m_dragInputSettling = true;
@@ -1373,8 +1380,7 @@ namespace ImGuiVRHelper
 		if (m_dragInputSettling &&
 			(baseFrame.left.buttons_held | baseFrame.right.buttons_held) == 0)
 			m_dragInputSettling = false;
-
-		const bool maskInput = recording || m_inputSettling || dragging || m_dragInputSettling;
+		const bool suppressForwarding = dragging || m_dragInputSettling;
 
 		for (const auto& sn : snapshot) {
 			ImGuiVRHelperPluginAPI::Frame perClient = baseFrame;
@@ -1393,6 +1399,10 @@ namespace ImGuiVRHelper
 					h->trigger = h->grip = 0.0f;
 					h->stick_x = h->stick_y = h->pad_x = h->pad_y = 0.0f;
 				}
+			}
+
+			if (suppressForwarding) {
+				perClient.flags |= ImGuiVRHelperPluginAPI::kFrameFlag_SuppressInputForwarding;
 			}
 
 			if (sn.on_frame) {
