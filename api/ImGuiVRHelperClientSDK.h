@@ -573,6 +573,31 @@ namespace ImGuiVRHelperPluginAPI
 			onEdge(Button::AX, [&](bool d) { io.AddKeyEvent(ImGuiKey_Enter, d); });
 			m_prevHeld = held;
 
+			// Recovery watchdog: a wand click's press/release edges are inherently noisier than a real
+			// mouse's (analog trigger threshold jitter, the ray drifting off/onto the panel mid-drag),
+			// and something in that noise can occasionally leave ImGui's ActiveId pinned to a widget
+			// after the client's own MouseDown has already and correctly gone false -- observed as a
+			// drag slider that can never be clicked away from until an unrelated nav event (e.g. Tab)
+			// clears focus. Rather than chase the exact noise pattern (a fixed release-debounce window
+			// just traded this bug for "never releases" under sustained chatter), force it loose once
+			// MouseDown has been confirmed false for longer than any real release ever takes. Safe by
+			// construction: it can only fire when the client's own input state already agrees nothing
+			// is held.
+			if (const auto activeId = ImGui::GetActiveID()) {
+				constexpr float kStuckActiveIdSeconds = 0.3f;
+				if (!io.MouseDown[ImGuiMouseButton_Left]) {
+					m_stuckActiveIdTimer += io.DeltaTime;
+					if (m_stuckActiveIdTimer >= kStuckActiveIdSeconds) {
+						ImGui::ClearActiveID();
+						m_stuckActiveIdTimer = 0.0f;
+					}
+				} else {
+					m_stuckActiveIdTimer = 0.0f;
+				}
+			} else {
+				m_stuckActiveIdTimer = 0.0f;
+			}
+
 			// Thumbstick → discrete wheel ticks.
 			constexpr float kScrollAccumRate = 0.1f;
 			constexpr float kScrollTickThreshold = 0.3f;
@@ -1049,6 +1074,9 @@ namespace ImGuiVRHelperPluginAPI
 		bool m_prevMenuOpen = false;  // ReconcileFocus edge state
 		float m_accumX = 0.0f;
 		float m_accumY = 0.0f;
+		// Seconds ImGui's ActiveId has been non-zero while this client's own MouseDown reads false --
+		// see the recovery-watchdog comment in PumpInput.
+		float m_stuckActiveIdTimer = 0.0f;
 
 		bool m_panelWasShowing = false;  // RenderToPanel clear-once
 
