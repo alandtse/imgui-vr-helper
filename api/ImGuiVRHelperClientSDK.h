@@ -904,27 +904,7 @@ namespace ImGuiVRHelperPluginAPI
 			const float sx = (std::abs(f->left.stick_x) >= std::abs(f->right.stick_x)) ? f->left.stick_x : f->right.stick_x;
 			const float sy = (std::abs(f->left.stick_y) >= std::abs(f->right.stick_y)) ? f->left.stick_y : f->right.stick_y;
 			std::scoped_lock lk{ self->m_mutex };
-			// Debounce releases only: a trigger held right at its digital click threshold (e.g. while
-			// precisely dragging a slider) can flicker open for a frame or two without the user actually
-			// letting go. Committing every raw release immediately re-armed the client's drag/click state
-			// on each spurious re-press, which could leave the client's ActiveId-equivalent stuck long
-			// after the real, final release. Presses still apply immediately -- only releases wait out a
-			// short stability window, so a genuine press never feels delayed.
-			constexpr float kReleaseDebounceSeconds = 0.05f;
-			const uint32_t raw = f->left.buttons_held | f->right.buttons_held;
-			for (uint32_t bit = 0; bit < 16; ++bit) {
-				const uint32_t mask = 1u << bit;
-				if (raw & mask) {
-					self->m_heldMask |= mask;
-					self->m_releasePending[bit] = 0.0f;
-				} else if (self->m_heldMask & mask) {
-					self->m_releasePending[bit] += f->dt;
-					if (self->m_releasePending[bit] >= kReleaseDebounceSeconds) {
-						self->m_heldMask &= ~mask;
-						self->m_releasePending[bit] = 0.0f;
-					}
-				}
-			}
+			self->m_heldMask = f->left.buttons_held | f->right.buttons_held;
 			self->m_stickX = sx;
 			self->m_stickY = sy;
 			if (f->struct_size >= offsetof(Frame, hud_coverage) + sizeof(float)) {
@@ -1054,9 +1034,6 @@ namespace ImGuiVRHelperPluginAPI
 		// OnFrame snapshot (frame thread → render thread).
 		mutable std::mutex m_mutex;
 		uint32_t m_heldMask = 0;
-		// Per-bit time spent seeing a raw release while m_heldMask still reports the button held --
-		// see the debounce comment in OnFrameThunk.
-		float m_releasePending[16] = {};
 		float m_stickX = 0.0f;
 		float m_stickY = 0.0f;
 		float m_hudDepth = 1.0f;
