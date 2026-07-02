@@ -550,19 +550,27 @@ namespace ImGuiVRHelperPluginAPI
 			const uint32_t changed = held ^ m_prevHeld;
 			const auto onEdge = [&](Button b, auto&& fn) {
 				const uint32_t bit = 1u << static_cast<uint32_t>(b);
-				if (changed & bit)
-					fn((held & bit) != 0);
+				if (!(changed & bit))
+					return;
+				const bool down = (held & bit) != 0;
+				// Presses drive the UI only while the wand is on the panel (off-panel belongs to the
+				// client's own shortcuts, read via IsButtonHeld) -- but releases always forward
+				// regardless of onPanel. A press that starts on the panel and ends after the wand
+				// drifts off it (e.g. a drag that moves the hand far enough to slip the ray off the
+				// panel edge) used to have its release edge gated the same as the press: skipped
+				// entirely when onPanel was false that frame, with m_prevHeld still updated to match,
+				// so the edge was lost forever. ImGui then believed the button was held down with no
+				// way to un-stick it short of an unrelated nav event clearing ActiveId.
+				if (down && !onPanel)
+					return;
+				fn(down);
 			};
-			if (onPanel) {
-				// Button input drives the UI only while the wand is on the panel. Off-panel the
-				// buttons belong to the client (read via IsButtonHeld) for its own shortcuts.
-				onEdge(Button::TriggerClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Left, d); });
-				onEdge(Button::GripClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Right, d); });
-				onEdge(Button::PadClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
-				onEdge(Button::StickClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
-				onEdge(Button::BY, [&](bool d) { io.AddKeyEvent(ImGuiKey_Tab, d); });
-				onEdge(Button::AX, [&](bool d) { io.AddKeyEvent(ImGuiKey_Enter, d); });
-			}
+			onEdge(Button::TriggerClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Left, d); });
+			onEdge(Button::GripClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Right, d); });
+			onEdge(Button::PadClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
+			onEdge(Button::StickClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
+			onEdge(Button::BY, [&](bool d) { io.AddKeyEvent(ImGuiKey_Tab, d); });
+			onEdge(Button::AX, [&](bool d) { io.AddKeyEvent(ImGuiKey_Enter, d); });
 			m_prevHeld = held;
 
 			// Thumbstick → discrete wheel ticks.
