@@ -615,12 +615,16 @@ namespace ImGuiVRHelperPluginAPI
 			// drag slider that can never be clicked away from until an unrelated nav event (e.g. Tab)
 			// clears focus. Rather than chase the exact noise pattern (a fixed release-debounce window
 			// just traded this bug for "never releases" under sustained chatter), force it loose once
-			// MouseDown has been confirmed false for longer than any real release ever takes. Safe by
-			// construction: it can only fire when the client's own input state already agrees nothing
-			// is held.
+			// MouseDown has been confirmed false for longer than any real release ever takes.
+			//
+			// Gated on !io.WantTextInput: an active InputText (or a drag slider's temp numeric-entry
+			// mode) legitimately holds ActiveId with MouseDown false for as long as the user is typing,
+			// which isn't chatter -- without this the watchdog would yank focus out from under someone
+			// mid-edit every 300ms. WantTextInput is exactly the signal ImGui itself already uses to
+			// mean "a text-editing widget wants keyboard focus right now".
 			if (const auto activeId = ImGui::GetActiveID()) {
 				constexpr float kStuckActiveIdSeconds = 0.3f;
-				if (!io.MouseDown[ImGuiMouseButton_Left]) {
+				if (!io.MouseDown[ImGuiMouseButton_Left] && !io.WantTextInput) {
 					m_stuckActiveIdTimer += io.DeltaTime;
 					if (m_stuckActiveIdTimer >= kStuckActiveIdSeconds) {
 						ImGui::ClearActiveID();

@@ -19,11 +19,20 @@ namespace ImGuiVRHelper
 	// ships with the helper, so this falls back to bundled-Windows system fonts
 	// (always present, no new asset to ship). Sister project FloatingDamageNG hit
 	// the same issue for its floating numbers and fixed it the same way.
-	inline void LoadHudFont(ImGuiIO& io)
+	//
+	// Baked at 48px -- the size CreateHudContext's own 1.5x FontGlobalScale would
+	// otherwise have stretched a 32px bake to -- because applying that scale on top
+	// of an already-rasterized real font just re-introduces the same blur this is
+	// meant to fix. Returns whether a real font loaded, so the caller can skip
+	// FontGlobalScale in that case and only keep it as a fallback multiplier for the
+	// embedded bitmap font.
+	inline bool LoadHudFont(ImGuiIO& io)
 	{
 		std::vector<std::string> paths;
+		// GetEnvironmentVariableA("WINDIR", ...) isn't guaranteed to be set (it can be unset or
+		// overridden in unusual environments); GetWindowsDirectoryA is the actual WinAPI guarantee.
 		char windir[MAX_PATH]{};
-		if (GetEnvironmentVariableA("WINDIR", windir, MAX_PATH) > 0) {
+		if (GetWindowsDirectoryA(windir, MAX_PATH) > 0) {
 			paths.push_back(std::format("{}\\Fonts\\segoeui.ttf", windir));
 			paths.push_back(std::format("{}\\Fonts\\arial.ttf", windir));
 		}
@@ -31,12 +40,13 @@ namespace ImGuiVRHelper
 			if (GetFileAttributesA(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
 				continue;
 			}
-			if (ImFont* font = io.Fonts->AddFontFromFileTTF(path.c_str(), 32.0f)) {
+			if (ImFont* font = io.Fonts->AddFontFromFileTTF(path.c_str(), 48.0f)) {
 				io.FontDefault = font;
-				return;
+				return true;
 			}
 		}
 		logs::warn("No TTF font found; HUD text falls back to the embedded bitmap font (will look pixelated when scaled).");
+		return false;
 	}
 
 	// Creates a dedicated, non-interactive ImGui context for one HUD layer and
@@ -56,11 +66,14 @@ namespace ImGuiVRHelper
 		io.IniFilename = nullptr;
 		io.LogFilename = nullptr;
 		ApplyHudDisplayMetrics(io);
-		LoadHudFont(io);
+		const bool realFontLoaded = LoadHudFont(io);
 
 		Theme::Apply(ImGui::GetStyle());
 		ImGui::GetStyle().ScaleAllSizes(2.0f);
-		io.FontGlobalScale = 1.5f;
+		// The real TTF is already baked at the intended on-screen size (see LoadHudFont); stretching
+		// it further via FontGlobalScale would just blur it again. Keep the multiplier only as a
+		// fallback for the tiny embedded bitmap font when no system font could be found.
+		io.FontGlobalScale = realFontLoaded ? 1.0f : 1.5f;
 
 		auto& d3d = Globals::GetD3D();
 		if (!ImGui_ImplDX11_Init(d3d.device, d3d.context)) {
