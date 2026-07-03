@@ -245,7 +245,8 @@ namespace ImGuiVRHelper
 			m_combos;
 		ImGuiVRHelperPluginAPI::ComboId m_next_combo_id = 1;
 		uint32_t m_focused_client = 0;
-		uint64_t m_frameCounter = 0;  ///< ++ each DispatchFrame; HUD-idle skipping uses it
+		uint32_t m_focused_client_flags = 0;  /// flags of the currently focused client (0 when none)
+		uint64_t m_frameCounter = 0;          ///< ++ each DispatchFrame; HUD-idle skipping uses it
 
 		/// Allocate (or return existing) per-client overlay texture
 		/// resources. Returns true on success, false if D3D isn't ready
