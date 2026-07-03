@@ -932,10 +932,15 @@ namespace ImGuiVRHelper::SettingsUI
 			const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
 			ImGui::SetNextWindowPos(ImVec2(displaySize.x * 0.5f, displaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 
-			// Set some nice styling for the quick select box
-			ImGui::SetNextWindowSize(ImVec2(600.0f, 400.0f));
+			// Auto-size to whatever the title/list/footer actually need at the current font size,
+			// instead of a fixed 600x400 that assumed the old stretched-bitmap font -- with a real TTF
+			// baked at a much larger native size, that box was too small the moment there was more than
+			// a couple of overlay entries, clipping the list. Capped at 80% of the display height so an
+			// unusually long client list scrolls (see the child region below) rather than growing the
+			// window off-screen.
+			ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ImVec2(FLT_MAX, displaySize.y * 0.8f));
 
-			ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
+			ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize;
 
 			// Custom colors & styles: transparent dark background, clean borders, rounded corners, large text
 			ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.02f, 0.02f, 0.02f, 0.90f));
@@ -955,26 +960,35 @@ namespace ImGuiVRHelper::SettingsUI
 				const int hoveredIdx = impl.GetQuickSelectHoveredIdx();
 
 				ImGui::SetWindowFontScale(1.4f);
-				for (int i = 0; i < static_cast<int>(order.size()); ++i) {
-					const bool isHovered = (i == hoveredIdx);
-					const uint32_t clientId = order[i].first;
-					const auto& clientName = order[i].second;
-					const std::string version = impl.GetClientVersion(clientId);
+				// Cap the visible list at ~10 rows (measured at the actual current font size, not a
+				// guessed pixel count) and let it scroll past that -- covers an unusually long client
+				// list without the whole window (and the footer below it) growing past the outer
+				// height constraint.
+				const float lineHeight = ImGui::GetTextLineHeightWithSpacing();
+				const float listHeight = std::min(lineHeight * static_cast<float>(order.size()), lineHeight * 10.0f);
+				if (ImGui::BeginChild("##QuickSelectList", ImVec2(0.0f, listHeight))) {
+					for (int i = 0; i < static_cast<int>(order.size()); ++i) {
+						const bool isHovered = (i == hoveredIdx);
+						const uint32_t clientId = order[i].first;
+						const auto& clientName = order[i].second;
+						const std::string version = impl.GetClientVersion(clientId);
 
-					if (isHovered) {
-						if (!version.empty()) {
-							ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "  >  %s  (v%s)", clientName.c_str(), version.c_str());
+						if (isHovered) {
+							if (!version.empty()) {
+								ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "  >  %s  (v%s)", clientName.c_str(), version.c_str());
+							} else {
+								ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "  >  %s", clientName.c_str());
+							}
 						} else {
-							ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "  >  %s", clientName.c_str());
-						}
-					} else {
-						if (!version.empty()) {
-							ImGui::Text("     %s  (v%s)", clientName.c_str(), version.c_str());
-						} else {
-							ImGui::Text("     %s", clientName.c_str());
+							if (!version.empty()) {
+								ImGui::Text("     %s  (v%s)", clientName.c_str(), version.c_str());
+							} else {
+								ImGui::Text("     %s", clientName.c_str());
+							}
 						}
 					}
 				}
+				ImGui::EndChild();
 				ImGui::SetWindowFontScale(1.0f);
 
 				ImGui::Dummy(ImVec2(0.0f, 15.0f));
