@@ -500,14 +500,40 @@ namespace ImGuiVRHelperPluginAPI
 
 			uint32_t held = 0;
 			float stickX = 0.0f, stickY = 0.0f;
+			bool suppressForwarding = false;
 			{
 				std::scoped_lock lk{ m_mutex };
 				held = m_heldMask;
 				stickX = m_stickX;
 				stickY = m_stickY;
+				suppressForwarding = m_suppressForwarding;
 			}
 
+			// Releases that happen to land while inactive or while the VR keyboard owns the wand used to
+			// be lost outright: these early-outs advanced m_prevHeld without forwarding anything, so a
+			// button that let go during one of these windows left ImGui's io.MouseDown/KeysDown stuck
+			// true forever (the exact same "swallowed edge" class as the off-panel case, just gated by
+			// a different condition). Forward release-only edges here before bailing so a button can
+			// never end up logically stuck down just because it happened to release at the wrong moment.
+			const auto forceReleases = [this, held]() {
+				ImGuiIO& io = ImGui::GetIO();
+				const uint32_t released = m_prevHeld & ~held;
+				if (!released)
+					return;
+				const auto onRelease = [&](Button b, auto&& fn) {
+					if (released & (1u << static_cast<uint32_t>(b)))
+						fn(false);
+				};
+				onRelease(Button::TriggerClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Left, d); });
+				onRelease(Button::GripClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Right, d); });
+				onRelease(Button::PadClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
+				onRelease(Button::StickClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
+				onRelease(Button::BY, [&](bool d) { io.AddKeyEvent(ImGuiKey_Tab, d); });
+				onRelease(Button::AX, [&](bool d) { io.AddKeyEvent(ImGuiKey_Enter, d); });
+			};
+
 			if (!active) {
+				forceReleases();
 				m_prevHeld = held;  // stay current so the next open edge-detects cleanly
 				return;
 			}
@@ -520,6 +546,7 @@ namespace ImGuiVRHelperPluginAPI
 			// dismiss cooldown extends this so the OK-trigger release can't click the
 			// field and immediately re-open the keyboard.
 			if (m_kbShown || m_kbDismissCooldown > 0) {
+				forceReleases();
 				m_pointerInPanel = true;  // the keyboard owns the wand; suppress off-panel client shortcuts
 				m_prevHeld = held;        // keep edges current for when it closes
 				return;
@@ -550,12 +577,28 @@ namespace ImGuiVRHelperPluginAPI
 			const uint32_t changed = held ^ m_prevHeld;
 			const auto onEdge = [&](Button b, auto&& fn) {
 				const uint32_t bit = 1u << static_cast<uint32_t>(b);
-				if (changed & bit)
-					fn((held & bit) != 0);
+				if (!(changed & bit))
+					return;
+				const bool down = (held & bit) != 0;
+				// Presses drive the UI only while the wand is on the panel (off-panel belongs to the
+				// client's own shortcuts, read via IsButtonHeld) -- but releases always forward
+				// regardless of onPanel. A press that starts on the panel and ends after the wand
+				// drifts off it (e.g. a drag that moves the hand far enough to slip the ray off the
+				// panel edge) used to have its release edge gated the same as the press: skipped
+				// entirely when onPanel was false that frame, with m_prevHeld still updated to match,
+				// so the edge was lost forever. ImGui then believed the button was held down with no
+				// way to un-stick it short of an unrelated nav event clearing ActiveId.
+				if (down && !onPanel)
+					return;
+				fn(down);
 			};
-			if (onPanel) {
-				// Button input drives the UI only while the wand is on the panel. Off-panel the
-				// buttons belong to the client (read via IsButtonHeld) for its own shortcuts.
+			// Suppressed while a helper-owned modal gesture (e.g. an overlay reposition drag) is in
+			// progress -- grip both drives that drag and maps to a client right-click below, so without
+			// this a wand ray sweeping onto the panel mid-drag would forward the still-held grip as an
+			// unintended click. m_prevHeld still advances every frame regardless (see below), so a
+			// button already held when suppression lifts requires a fresh release+press to register as
+			// a genuine new click, rather than firing a phantom edge the instant forwarding resumes.
+			if (!suppressForwarding) {
 				onEdge(Button::TriggerClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Left, d); });
 				onEdge(Button::GripClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Right, d); });
 				onEdge(Button::PadClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
@@ -564,6 +607,35 @@ namespace ImGuiVRHelperPluginAPI
 				onEdge(Button::AX, [&](bool d) { io.AddKeyEvent(ImGuiKey_Enter, d); });
 			}
 			m_prevHeld = held;
+
+			// Recovery watchdog: a wand click's press/release edges are inherently noisier than a real
+			// mouse's (analog trigger threshold jitter, the ray drifting off/onto the panel mid-drag),
+			// and something in that noise can occasionally leave ImGui's ActiveId pinned to a widget
+			// after the client's own MouseDown has already and correctly gone false -- observed as a
+			// drag slider that can never be clicked away from until an unrelated nav event (e.g. Tab)
+			// clears focus. Rather than chase the exact noise pattern (a fixed release-debounce window
+			// just traded this bug for "never releases" under sustained chatter), force it loose once
+			// MouseDown has been confirmed false for longer than any real release ever takes.
+			//
+			// Gated on !io.WantTextInput: an active InputText (or a drag slider's temp numeric-entry
+			// mode) legitimately holds ActiveId with MouseDown false for as long as the user is typing,
+			// which isn't chatter -- without this the watchdog would yank focus out from under someone
+			// mid-edit every 300ms. WantTextInput is exactly the signal ImGui itself already uses to
+			// mean "a text-editing widget wants keyboard focus right now".
+			if (const auto activeId = ImGui::GetActiveID()) {
+				constexpr float kStuckActiveIdSeconds = 0.3f;
+				if (!io.MouseDown[ImGuiMouseButton_Left] && !io.WantTextInput) {
+					m_stuckActiveIdTimer += io.DeltaTime;
+					if (m_stuckActiveIdTimer >= kStuckActiveIdSeconds) {
+						ImGui::ClearActiveID();
+						m_stuckActiveIdTimer = 0.0f;
+					}
+				} else {
+					m_stuckActiveIdTimer = 0.0f;
+				}
+			} else {
+				m_stuckActiveIdTimer = 0.0f;
+			}
 
 			// Thumbstick → discrete wheel ticks.
 			constexpr float kScrollAccumRate = 0.1f;
@@ -897,6 +969,7 @@ namespace ImGuiVRHelperPluginAPI
 			const float sy = (std::abs(f->left.stick_y) >= std::abs(f->right.stick_y)) ? f->left.stick_y : f->right.stick_y;
 			std::scoped_lock lk{ self->m_mutex };
 			self->m_heldMask = f->left.buttons_held | f->right.buttons_held;
+			self->m_suppressForwarding = (f->flags & kFrameFlag_SuppressInputForwarding) != 0;
 			self->m_stickX = sx;
 			self->m_stickY = sy;
 			if (f->struct_size >= offsetof(Frame, hud_coverage) + sizeof(float)) {
@@ -1026,6 +1099,10 @@ namespace ImGuiVRHelperPluginAPI
 		// OnFrame snapshot (frame thread → render thread).
 		mutable std::mutex m_mutex;
 		uint32_t m_heldMask = 0;
+		// kFrameFlag_SuppressInputForwarding mirror -- a helper-owned modal gesture (e.g. an overlay
+		// drag) is in progress. buttons_held above still reflects genuine raw state; only the
+		// ImGui-forwarding step in PumpInput stands down while this is set.
+		bool m_suppressForwarding = false;
 		float m_stickX = 0.0f;
 		float m_stickY = 0.0f;
 		float m_hudDepth = 1.0f;
@@ -1041,6 +1118,9 @@ namespace ImGuiVRHelperPluginAPI
 		bool m_prevMenuOpen = false;  // ReconcileFocus edge state
 		float m_accumX = 0.0f;
 		float m_accumY = 0.0f;
+		// Seconds ImGui's ActiveId has been non-zero while this client's own MouseDown reads false --
+		// see the recovery-watchdog comment in PumpInput.
+		float m_stuckActiveIdTimer = 0.0f;
 
 		bool m_panelWasShowing = false;  // RenderToPanel clear-once
 

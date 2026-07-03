@@ -313,6 +313,13 @@ namespace ImGuiVRHelper
 		bool m_prevRecording = false;
 		bool m_inputSettling = false;
 
+		// Same masking treatment for an in-progress overlay reposition drag: grip both starts that
+		// drag and maps to a client's right-click, so if the wand ray sweeps onto the panel mid-drag
+		// the still-held grip would otherwise be forwarded as a right-click the user never intended,
+		// and the drag's eventual grip release could leak in as a spurious click of its own.
+		bool m_prevDragging = false;
+		bool m_dragInputSettling = false;
+
 		// Startup welcome banner (HUD-mode). Shows once at launch, then
 		// dismisses after a timeout, on entering the game, or if disabled.
 		uint32_t m_welcome_client_id = 0;
