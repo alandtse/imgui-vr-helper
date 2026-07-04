@@ -3,6 +3,18 @@
 Status as of 2026-07-04. Written for a fresh agent picking this up cold — includes raw data,
 not just conclusions, so you can check the reasoning or draw a different one.
 
+**Note:** this branch has had concurrent work land after this doc's raw data was captured
+(commits `bf7df8e`, `3de6cd7`, `15573ab` — a separate session, different from the one that wrote
+this doc). Notably: `kFrameFlag_SuppressInputForwarding` has been replaced by a new
+"route-on-press input leases" mechanism (`src/internal/InputLeases.h`) as the default path (the
+old latch logic this doc's item 4 below refers to is kept only as a `useInputLeases=false`
+fallback); the cursor marker gained a seam fix; and the `TriggerPress NDC` diagnostic was demoted
+from `logs::info` to `logs::debug` (so you'll need to bump the configured log level to see it
+now). None of this changes the pointer-divergence findings below — the marker/UV math this doc
+is about wasn't touched by those commits — but check current source before assuming anything
+about the input-forwarding path specifically, since that subsystem was substantially rewritten
+out from under this doc.
+
 ## Symptom (as reported by the user, verbatim characterization)
 
 Testing in Skyrim VR across several client mods that all use this helper (PhotoMode,
@@ -156,9 +168,10 @@ rate — was the same shape as the table above).
 
 - `src/InSceneOverlay.cpp`, `RenderCursorPass`: `TriggerPress NDC` log, edge-gated on either
   controller's trigger via `RE::BSOpenVRControllerDevice::Keys::kTrigger`. Flagged in PR #19
-  review (Copilot) as a potential log-spam concern; deliberately left as-is and unresolved in
-  that PR — it's bounded by real clicks (not periodic) and still needed for this investigation.
-  **Remove or downgrade to debug level once this is root-caused.**
+  review (Copilot) as a potential log-spam concern. As of commit `3de6cd7` this is now
+  `logs::debug` (was `logs::info` when the raw data below was captured) — bump the configured
+  log level to see it in a fresh capture. Still needed for this investigation; remove once
+  root-caused.
 - DialogueHistory (sibling repo, not here): `src/ImGui/Renderer.cpp`, `Client click` log in
   `RenderMenuFrame`, gated on `ImGui::IsMouseClicked(ImGuiMouseButton_Left)`. Same
   remove-before-ship caveat.
