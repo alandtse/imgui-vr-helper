@@ -1031,6 +1031,47 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 	// Panel pass: the focused panel-mode client as a 3D quad, attached to the
 	// HMD and/or the controller per the user's attachMode.
+	// Resolves the anchor (world matrix, BEFORE Config::CreateScaleMatrix(menuScale) is applied)
+	// and the view-projection to render/hit-test against, for whichever attach point (HMD or
+	// controller) is requested. Shared by RenderPanelPass and RenderCursorPass so "which anchor
+	// for which attach mode" lives in exactly one place — this pair used to be hand-duplicated
+	// between the two passes, which is exactly the kind of drift that caused the marker/panel
+	// divergence investigation. Returns false if the requested attach point's tracking data isn't
+	// available this frame (caller should skip its draw).
+	bool ResolveAnchor(Overlay::OverlayType type, const Overlay::Settings& s,
+		const Overlay::State& overlayState, const EyeMatrices& matrices,
+		Matrix& outAnchor, Matrix& outVpMat)
+	{
+		if (type == Overlay::OverlayType::HMD) {
+			if (s.positioningMethod == Overlay::PositioningMethod::FixedWorld) {
+				outAnchor = overlayState.fixedWorld.m;
+				outVpMat = matrices.vpWorldSpace;
+			} else {
+				outAnchor = Matrix::CreateTranslation(s.hmdOffsetX, s.hmdOffsetY, s.hmdOffsetZ);
+				outVpMat = matrices.vpHeadSpace;
+			}
+			return true;
+		}
+
+		const auto attachIdx = Util::GetControllerIndexForDevice(
+			s.attachController, overlayState.lastKnownLeftHandedMode);
+		if (attachIdx == vr::k_unTrackedDeviceIndexInvalid)
+			return false;
+
+		vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount];
+		if (!Util::GetDeviceToAbsoluteTrackingPoseCompatible(
+				vr::TrackingUniverseStanding, 0, poses, vr::k_unMaxTrackedDeviceCount) ||
+			!poses[attachIdx].bPoseIsValid)
+			return false;
+
+		Matrix controllerWorld = Util::HmdMatrix34ToMatrix(poses[attachIdx].mDeviceToAbsoluteTracking);
+		Matrix offset = Matrix::CreateTranslation(
+			s.controllerOffsetX, s.controllerOffsetY, s.controllerOffsetZ);
+		outAnchor = offset * controllerWorld;
+		outVpMat = matrices.vpWorldSpace;
+		return true;
+	}
+
 	void RenderPanelPass(ID3D11DeviceContext* ctx, vr::EVREye eye,
 		const EyeMatrices& matrices, const Overlay::Settings& s,
 		const Overlay::State& overlayState, ID3D11ShaderResourceView* panelSRV)
@@ -1040,19 +1081,13 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// HMD-attached.
 		if (s.attachMode == Overlay::AttachMode::HMDOnly ||
 			s.attachMode == Overlay::AttachMode::Both) {
-			Matrix model;
-			Matrix vpMat;
-			if (s.positioningMethod == Overlay::PositioningMethod::FixedWorld) {
-				model = Overlay::Config::CreateScaleMatrix(s.menuScale) * overlayState.fixedWorld.m;
-				vpMat = matrices.vpWorldSpace;
-			} else {
-				Matrix offset = Matrix::CreateTranslation(s.hmdOffsetX, s.hmdOffsetY, s.hmdOffsetZ);
-				model = Overlay::Config::CreateScaleMatrix(s.menuScale) * offset;
-				vpMat = matrices.vpHeadSpace;
+			Matrix anchor, vpMat;
+			if (ResolveAnchor(Overlay::OverlayType::HMD, s, overlayState, matrices, anchor, vpMat)) {
+				Matrix model = Overlay::Config::CreateScaleMatrix(s.menuScale) * anchor;
+				ConstantBufferData cb;
+				cb.wvp = (model * vpMat).Transpose();
+				DrawQuad(ctx, cb, panelSRV);
 			}
-			ConstantBufferData cb;
-			cb.wvp = (model * vpMat).Transpose();
-			DrawQuad(ctx, cb, panelSRV);
 		}
 
 		// Controller-attached (with backface culling).
@@ -1060,25 +1095,24 @@ float4 main(PS_INPUT input) : SV_TARGET
 			s.attachMode != Overlay::AttachMode::Both)
 			return;
 
+		Matrix anchor, vpMat;
+		if (!ResolveAnchor(Overlay::OverlayType::Controller, s, overlayState, matrices, anchor, vpMat))
+			return;
+		Matrix model = Overlay::Config::CreateScaleMatrix(s.menuScale) * anchor;
+
+		// Backface culling: hide the overlay when viewed from behind. Needs the controller/HMD
+		// poses again (ResolveAnchor doesn't expose them) — a second OpenVR pose query, not a
+		// re-derivation of the anchor math itself, so it doesn't reintroduce the drift risk above.
 		const auto attachIdx = Util::GetControllerIndexForDevice(
 			s.attachController, overlayState.lastKnownLeftHandedMode);
-		if (attachIdx == vr::k_unTrackedDeviceIndexInvalid)
-			return;
-
 		vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount];
-		if (!Util::GetDeviceToAbsoluteTrackingPoseCompatible(
+		if (attachIdx == vr::k_unTrackedDeviceIndexInvalid ||
+			!Util::GetDeviceToAbsoluteTrackingPoseCompatible(
 				vr::TrackingUniverseStanding, 0, poses, vr::k_unMaxTrackedDeviceCount) ||
 			!poses[attachIdx].bPoseIsValid)
 			return;
 
-		Matrix controllerWorld = Util::HmdMatrix34ToMatrix(poses[attachIdx].mDeviceToAbsoluteTracking);
-		Matrix offset = Matrix::CreateTranslation(
-			s.controllerOffsetX, s.controllerOffsetY, s.controllerOffsetZ);
-		Matrix model = Overlay::Config::CreateScaleMatrix(s.menuScale) * offset * controllerWorld;
-
-		// Backface culling: hide the overlay when viewed from behind.
-		Matrix overlayTransform = offset * controllerWorld;
-		Vector3 overlayNormal(overlayTransform._31, overlayTransform._32, overlayTransform._33);
+		Vector3 overlayNormal(anchor._31, anchor._32, anchor._33);
 		overlayNormal.Normalize();
 		Matrix hmdWorld = Util::HmdMatrix34ToMatrix(
 			poses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking);
@@ -1088,11 +1122,11 @@ float4 main(PS_INPUT input) : SV_TARGET
 		Util::CachedEyeToHead(eye, eyeToHeadRaw);
 		Matrix eyeToHead = Util::HmdMatrix34ToMatrix(eyeToHeadRaw);
 		Matrix eyeWorld = eyeToHead * hmdWorld;
-		Vector3 toEye = eyeWorld.Translation() - overlayTransform.Translation();
+		Vector3 toEye = eyeWorld.Translation() - anchor.Translation();
 		toEye.Normalize();
 		if (overlayNormal.Dot(toEye) > 0.0f) {
 			ConstantBufferData cb;
-			cb.wvp = (model * matrices.vpWorldSpace).Transpose();
+			cb.wvp = (model * vpMat).Transpose();
 			DrawQuad(ctx, cb, panelSRV);
 		}
 	}
@@ -1116,38 +1150,20 @@ float4 main(PS_INPUT input) : SV_TARGET
 		if (!wand.isIntersecting || !g_res.cursorSRV)
 			return;
 
-		Matrix anchor;
-		Matrix vpMat;
-		if (wand.matchedOverlayType == Overlay::OverlayType::HMD) {
-			if (s.attachMode != Overlay::AttachMode::HMDOnly && s.attachMode != Overlay::AttachMode::Both)
-				return;  // settings changed since the hit was computed this tick; skip rather than stale-draw
-			if (s.positioningMethod == Overlay::PositioningMethod::FixedWorld) {
-				anchor = overlayState.fixedWorld.m;
-				vpMat = matrices.vpWorldSpace;
-			} else {
-				anchor = Matrix::CreateTranslation(s.hmdOffsetX, s.hmdOffsetY, s.hmdOffsetZ);
-				vpMat = matrices.vpHeadSpace;
-			}
-		} else {
-			if (s.attachMode != Overlay::AttachMode::ControllerOnly && s.attachMode != Overlay::AttachMode::Both)
-				return;
-			const auto attachIdx = Util::GetControllerIndexForDevice(
-				s.attachController, overlayState.lastKnownLeftHandedMode);
-			if (attachIdx == vr::k_unTrackedDeviceIndexInvalid)
-				return;
-			vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount];
-			if (!Util::GetDeviceToAbsoluteTrackingPoseCompatible(
-					vr::TrackingUniverseStanding, 0, poses, vr::k_unMaxTrackedDeviceCount) ||
-				!poses[attachIdx].bPoseIsValid)
-				return;
-			Matrix controllerWorld = Util::HmdMatrix34ToMatrix(poses[attachIdx].mDeviceToAbsoluteTracking);
-			anchor = Matrix::CreateTranslation(s.controllerOffsetX, s.controllerOffsetY, s.controllerOffsetZ) *
-			         controllerWorld;
-			vpMat = matrices.vpWorldSpace;
-			// No backface cull here (unlike the panel quad): a hit was only recorded if the ray
-			// crossed the panel plane in front of the controller, which in practice means the
-			// same side the player is viewing from.
-		}
+		// Settings changed since the hit was computed this tick (e.g. attach mode switched
+		// mid-frame) — skip rather than resolve a stale anchor for a mode that's no longer active.
+		const bool attachStillValid = wand.matchedOverlayType == Overlay::OverlayType::HMD ?
+		                                  (s.attachMode == Overlay::AttachMode::HMDOnly || s.attachMode == Overlay::AttachMode::Both) :
+		                                  (s.attachMode == Overlay::AttachMode::ControllerOnly || s.attachMode == Overlay::AttachMode::Both);
+		if (!attachStillValid)
+			return;
+
+		Matrix anchor, vpMat;
+		if (!ResolveAnchor(wand.matchedOverlayType, s, overlayState, matrices, anchor, vpMat))
+			return;
+		// No backface cull here (unlike the panel quad): a hit was only recorded if the ray
+		// crossed the panel plane in front of the controller, which in practice means the same
+		// side the player is viewing from.
 
 		// Marker size as a fraction of panel local space, pre-compensated by the inverse of
 		// CreateScaleMatrix's Y stretch so composing it with that same scale yields a round dot
