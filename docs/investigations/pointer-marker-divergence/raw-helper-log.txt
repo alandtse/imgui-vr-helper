@@ -1,0 +1,162 @@
+[13:39:55.556] [185520] [I] ImGuiVRHelper v1-5-4-0
+[13:39:55.556] [185520] [I] ImGuiVRHelper 1.5.4 loading
+[13:39:55.556] [185520] [I] ImGuiVRHelper loaded
+[13:39:56.613] [185520] [I] SKSE lifecycle: type=0 sender='SKSE' dataLen=0
+[13:39:56.619] [185520] [I] Migrated legacy ImGuiVRHelper.json to in-memory settings; will save as .toml
+[13:39:56.620] [185520] [I] LoadSettings: loaded Data/SKSE/Plugins/ImGuiVRHelper.toml
+[13:39:56.620] [185520] [I] ApplyLogLevel: spdlog level set to 'info'
+[13:39:56.648] [185520] [I] Plugin message: type=3939183610 sender='CommunityShaders' dataLen=8
+[13:39:56.648] [185520] [I] Handshake from 'CommunityShaders' -> GetApiFunction installed
+[13:39:56.648] [185520] [I] RegisterClient(CommunityShaders v2.0.0) -> client_id=1 flags=0x8
+[13:39:56.648] [185520] [I] Plugin message: type=3939183610 sender='CommunityShaders' dataLen=8
+[13:39:56.648] [185520] [I] Handshake from 'CommunityShaders' -> GetApiFunction installed
+[13:39:56.655] [185520] [I] Plugin message: type=3939183610 sender='FloatingDamageNG' dataLen=8
+[13:39:56.655] [185520] [I] Handshake from 'FloatingDamageNG' -> GetApiFunction installed
+[13:39:56.655] [185520] [I] RegisterClient(FloatingDamageNG v1.2.0) -> client_id=2 flags=0x40
+[13:39:56.655] [185520] [I] Plugin message: type=3939183610 sender='FloatingDamageNG' dataLen=8
+[13:39:56.655] [185520] [I] Handshake from 'FloatingDamageNG' -> GetApiFunction installed
+[13:39:56.655] [185520] [I] Plugin message: type=3939183610 sender='FloatingDamageNG' dataLen=8
+[13:39:56.655] [185520] [I] Handshake from 'FloatingDamageNG' -> GetApiFunction installed
+[13:39:56.655] [185520] [I] Plugin message: type=3939183610 sender='FloatingDamageNG' dataLen=8
+[13:39:56.655] [185520] [I] Handshake from 'FloatingDamageNG' -> GetApiFunction installed
+[13:39:56.655] [185520] [I] RegisterClient(FloatingDamageNG-HUD v1.2.0) -> client_id=3 flags=0x2
+[13:39:56.656] [185520] [I] Plugin message: type=3939183610 sender='FUCK' dataLen=8
+[13:39:56.656] [185520] [I] Handshake from 'FUCK' -> GetApiFunction installed
+[13:39:56.656] [185520] [I] RegisterClient(FUCK v1.1.4) -> client_id=4 flags=0x8
+[13:39:56.656] [185520] [I] Plugin message: type=3939183610 sender='FUCK' dataLen=8
+[13:39:56.656] [185520] [I] Handshake from 'FUCK' -> GetApiFunction installed
+[13:39:56.656] [185520] [I] Plugin message: type=3939183610 sender='FUCK' dataLen=8
+[13:39:56.656] [185520] [I] Handshake from 'FUCK' -> GetApiFunction installed
+[13:39:56.656] [185520] [I] Plugin message: type=3939183610 sender='FUCK' dataLen=8
+[13:39:56.656] [185520] [I] Handshake from 'FUCK' -> GetApiFunction installed
+[13:39:56.656] [185520] [I] SKSE lifecycle: type=1 sender='SKSE' dataLen=0
+[13:39:56.656] [185520] [I] OpenVR runtime detection:
+[13:39:56.656] [185520] [I]   available=true compatible=false probing_ok=false
+[13:39:56.656] [185520] [I]   runtime=OpenComposite version=1.0.10.0 dll_size=598816
+[13:39:56.656] [185520] [I]   dll_path=E:\SteamLibrary\steamapps\common\SkyrimVR\openvr_api.dll
+[13:39:56.656] [185520] [I]   interfaces: system=false overlay=false compositor=false
+[13:39:56.656] [185520] [I] Hooks::Install - writing BSGraphics::Renderer::InitD3D thunk
+[13:39:56.656] [185520] [I] Hooks::Install - writing BSInputDeviceManager::PollInputDevices thunk
+[13:39:56.657] [185520] [I] VrikCompat: VRIK interface acquired (build 80400)
+[13:39:56.657] [185520] [I] Plugin message: type=3939183610 sender='DialogueHistory' dataLen=8
+[13:39:56.657] [185520] [I] Handshake from 'DialogueHistory' -> GetApiFunction installed
+[13:39:56.657] [185520] [I] RegisterClient(DialogueHistory.Conversation v2.3.3.0) -> client_id=5 flags=0x28
+[13:39:56.657] [185520] [I] Plugin message: type=3939183610 sender='DialogueHistory' dataLen=8
+[13:39:56.657] [185520] [I] Handshake from 'DialogueHistory' -> GetApiFunction installed
+[13:39:56.657] [185520] [I] Plugin message: type=3939183610 sender='DialogueHistory' dataLen=8
+[13:39:56.657] [185520] [I] Handshake from 'DialogueHistory' -> GetApiFunction installed
+[13:39:56.657] [185520] [I] Plugin message: type=3939183610 sender='DialogueHistory' dataLen=8
+[13:39:56.657] [185520] [I] Handshake from 'DialogueHistory' -> GetApiFunction installed
+[13:39:56.657] [185520] [I] Plugin message: type=3939183610 sender='DialogueHistory' dataLen=8
+[13:39:56.657] [185520] [I] Handshake from 'DialogueHistory' -> GetApiFunction installed
+[13:39:56.657] [185520] [I] RegisterClient(DialogueHistory v2.3.3.0) -> client_id=6 flags=0x8
+[13:39:56.657] [185520] [I] Plugin message: type=3939183610 sender='FloatingSubtitles' dataLen=8
+[13:39:56.657] [185520] [I] Handshake from 'FloatingSubtitles' -> GetApiFunction installed
+[13:39:56.657] [185520] [I] RegisterClient(FloatingSubtitles v3.3.3.0) -> client_id=7 flags=0x40
+[13:39:56.657] [185520] [I] Plugin message: type=3939183610 sender='FloatingSubtitles' dataLen=8
+[13:39:56.657] [185520] [I] Handshake from 'FloatingSubtitles' -> GetApiFunction installed
+[13:39:56.657] [185520] [I] Plugin message: type=3939183610 sender='FloatingSubtitles' dataLen=8
+[13:39:56.657] [185520] [I] Handshake from 'FloatingSubtitles' -> GetApiFunction installed
+[13:39:56.657] [185520] [I] Plugin message: type=3939183610 sender='FloatingSubtitles' dataLen=8
+[13:39:56.657] [185520] [I] Handshake from 'FloatingSubtitles' -> GetApiFunction installed
+[13:39:56.666] [185520] [I] Plugin message: type=3939183610 sender='KillFeed' dataLen=8
+[13:39:56.666] [185520] [I] Handshake from 'KillFeed' -> GetApiFunction installed
+[13:39:56.666] [185520] [I] RegisterClient(KillFeed v1.1.0.0) -> client_id=8 flags=0x2
+[13:39:56.666] [185520] [I] Plugin message: type=3939183610 sender='PhotoMode' dataLen=8
+[13:39:56.666] [185520] [I] Handshake from 'PhotoMode' -> GetApiFunction installed
+[13:39:56.666] [185520] [I] RegisterClient(PhotoMode v2.0.3.0) -> client_id=9 flags=0x8
+[13:39:56.666] [185520] [I] Plugin message: type=3939183610 sender='PhotoMode' dataLen=8
+[13:39:56.666] [185520] [I] Handshake from 'PhotoMode' -> GetApiFunction installed
+[13:39:56.666] [185520] [I] Plugin message: type=3939183610 sender='PhotoMode' dataLen=8
+[13:39:56.666] [185520] [I] Handshake from 'PhotoMode' -> GetApiFunction installed
+[13:39:56.666] [185520] [I] Plugin message: type=3939183610 sender='PhotoMode' dataLen=8
+[13:39:56.666] [185520] [I] Handshake from 'PhotoMode' -> GetApiFunction installed
+[13:39:56.666] [185520] [I] Plugin message: type=3939183610 sender='PhotoMode' dataLen=8
+[13:39:56.666] [185520] [I] Handshake from 'PhotoMode' -> GetApiFunction installed
+[13:39:56.666] [185520] [I] RegisterCombo(client=9, keys=1, timeout=0s) -> combo=1
+[13:39:56.666] [185520] [I] RegisterCombo(client=9, keys=1, timeout=0s) -> combo=2
+[13:39:56.666] [185520] [I] RegisterCombo(client=9, keys=1, timeout=0s) -> combo=3
+[13:39:56.666] [185520] [I] RegisterCombo(client=9, keys=1, timeout=0s) -> combo=4
+[13:39:56.666] [185520] [I] RegisterCombo(client=9, keys=1, timeout=0s) -> combo=5
+[13:39:56.666] [185520] [I] RegisterCombo(client=9, keys=1, timeout=0s) -> combo=6
+[13:39:56.667] [185520] [I] Plugin message: type=3939183610 sender='SKSEMenuFramework' dataLen=8
+[13:39:56.667] [185520] [I] Handshake from 'SKSEMenuFramework' -> GetApiFunction installed
+[13:39:56.667] [185520] [I] RegisterClient(SKSE Menu Framework v3.10.0) -> client_id=10 flags=0x8
+[13:39:56.667] [185520] [I] Plugin message: type=3939183610 sender='SKSEMenuFramework' dataLen=8
+[13:39:56.667] [185520] [I] Handshake from 'SKSEMenuFramework' -> GetApiFunction installed
+[13:39:56.667] [185520] [I] Plugin message: type=3939183610 sender='SKSEMenuFramework' dataLen=8
+[13:39:56.667] [185520] [I] Handshake from 'SKSEMenuFramework' -> GetApiFunction installed
+[13:39:56.667] [185520] [I] Plugin message: type=3939183610 sender='SKSEMenuFramework' dataLen=8
+[13:39:56.667] [185520] [I] Handshake from 'SKSEMenuFramework' -> GetApiFunction installed
+[13:39:56.667] [185520] [I] Plugin message: type=40008 sender='SkyrimVRTools' dataLen=128
+[13:40:09.468] [185520] [I] BSGraphics::Renderer::InitD3D - calling original
+[13:40:09.688] [185520] [I] D3D refs captured: device=0x20023589678, context=0x20034beb110, swapchain=0x200340c2ae0
+[13:40:09.688] [185520] [I] IDXGISwapChain::Present detour installed (original=0x7ffddba69d90)
+[13:40:09.715] [185520] [I] SKSE lifecycle: type=6 sender='SKSE' dataLen=0
+[13:40:16.315] [262684] [I] Allocated panel texture for client 'SKSE Menu Framework' (1920x1080 RGBA8)
+[13:40:16.383] [262684] [I] RegisterCombo(client=1, keys=1, timeout=0s) -> combo=7
+[13:40:16.383] [262684] [I] RegisterCombo(client=1, keys=1, timeout=0s) -> combo=8
+[13:40:16.385] [262684] [I] Allocated panel texture for client 'CommunityShaders' (1920x1080 RGBA8)
+[13:40:16.401] [262684] [I] RegisterClient(CommunityShaders.HUD v2.0.0) -> client_id=11 flags=0x2
+[13:40:16.401] [262684] [I] Allocated panel texture for client 'CommunityShaders.HUD' (3840x2160 RGBA8)
+[13:40:16.448] [262684] [I] Community Shaders detected: v2.0.0.0
+[13:40:16.711] [262684] [I] Community Shaders present but not hosting the in-scene overlay; installing imgui-vr-helper's overlay.
+[13:40:16.711] [262684] [I] InSceneOverlay: IVRCompositor::Submit detour installed (original=0x7ffddd642710)
+[13:40:16.715] [262684] [I] SettingsUI: WndProc hook installed (hwnd=0x4602ec)
+[13:40:16.715] [262684] [I] SettingsUI initialized (helper ImGui context @ 0x205fcb677f0)
+[13:40:16.715] [262684] [I] RegisterClient(ImGuiVRHelper.Settings) -> client_id=12 flags=0x8
+[13:40:16.715] [262684] [I] RegisterClient(ImGuiVRHelper.HUDDemo) -> client_id=13 flags=0x2
+[13:40:16.715] [262684] [I] RegisterClient(ImGuiVRHelper.Toast) -> client_id=14 flags=0x2
+[13:40:16.715] [262684] [I] RegisterClient(ImGuiVRHelper.Welcome) -> client_id=15 flags=0x2
+[13:40:16.715] [262684] [I] RegisterClient(ImGuiVRHelper.Rebind) -> client_id=16 flags=0x2
+[13:40:16.715] [262684] [I] RegisterCombo(client=12, keys=2, timeout=0s) -> combo=9
+[13:40:16.715] [262684] [I] RegisterCombo(client=12, keys=1, timeout=0s) -> combo=10
+[13:40:16.715] [262684] [I] Self-client registered: id=12 (toggle: Shift+F4; bind controller combo via settings)
+[13:40:16.720] [262684] [I] Allocated panel texture for client 'ImGuiVRHelper.Welcome' (3840x2160 RGBA8)
+[13:40:16.739] [262684] [I] InSceneOverlay resources initialized
+[13:40:38.796] [262472] [I] SKSE lifecycle: type=8 sender='SKSE' dataLen=0
+[13:40:45.889] [185520] [I] SKSE lifecycle: type=2 sender='SKSE' dataLen=86
+[13:40:46.089] [262684] [I] Allocated panel texture for client 'FloatingSubtitles' (1920x1080 RGBA8)
+[13:40:46.099] [262684] [I] Allocated panel texture for client 'FloatingDamageNG' (1920x1080 RGBA8)
+[13:40:46.106] [262684] [I] Allocated panel texture for client 'FloatingDamageNG-HUD' (3840x2160 RGBA8)
+[13:40:52.147] [185520] [I] SKSE lifecycle: type=3 sender='SKSE' dataLen=1
+[13:40:52.200] [185520] [I] Plugin message: type=1178861568 sender='powerofthree's Papyrus Extender' dataLen=8
+[13:40:52.200] [185520] [I] Plugin message: type=1145523712 sender='powerofthree's Papyrus Extender' dataLen=8
+[13:41:02.665] [185520] [I] Open-menu combo: focusing overlay 1
+[13:41:02.667] [185520] [I] OverlayTinter resources initialized
+[13:41:02.668] [185520] [I] Allocated panel texture for client 'ImGuiVRHelper.Toast' (3840x2160 RGBA8)
+[13:41:03.865] [185520] [I] Close-menu combo: releasing overlay 1
+[13:41:08.199] [185520] [I] Open-menu combo: focusing overlay 1
+[13:41:09.396] [185520] [I] CycleOverlay(1) -> client 4
+[13:41:09.396] [185520] [I] Allocated panel texture for client 'FUCK' (1920x1080 RGBA8)
+[13:41:12.420] [185520] [I] CycleOverlay(1) -> client 6
+[13:41:12.421] [185520] [I] Allocated panel texture for client 'DialogueHistory' (1920x1080 RGBA8)
+[13:41:14.548] [185520] [I] CycleOverlay(1) -> client 9
+[13:41:14.549] [185520] [I] Allocated panel texture for client 'PhotoMode' (1920x1080 RGBA8)
+[13:41:14.569] [185520] [I] RegisterClient(PhotoMode HUD v2.0.3.0) -> client_id=17 flags=0x2
+[13:41:14.570] [185520] [I] Allocated panel texture for client 'PhotoMode HUD' (3840x2160 RGBA8)
+[13:41:20.959] [185520] [I] TriggerPress NDC: uv=(0.501,0.157) local=(0.001,0.343) marker=(0.529,0.201) panelLeft=(-0.078,0.001) panelCenter=(0.512,0.002) panelRight=(0.931,0.003)
+[13:41:21.999] [185520] [I] TriggerPress NDC: uv=(0.430,0.288) local=(-0.070,0.212) marker=(0.483,0.145) panelLeft=(-0.056,0.022) panelCenter=(0.543,0.016) panelRight=(0.971,0.011)
+[13:41:25.884] [185520] [I] TriggerPress NDC: uv=(0.281,0.285) local=(-0.219,0.215) marker=(0.327,0.182) panelLeft=(-0.053,0.039) panelCenter=(0.589,0.037) panelRight=(1.138,0.035)
+[13:41:27.513] [185520] [I] TriggerPress NDC: uv=(0.420,0.309) local=(-0.080,0.191) marker=(0.440,0.152) panelLeft=(-0.101,0.032) panelCenter=(0.528,0.031) panelRight=(1.060,0.030)
+[13:41:29.679] [185520] [I] TriggerPress NDC: uv=(0.791,0.309) local=(0.291,0.191) marker=(0.802,0.131) panelLeft=(-0.137,0.025) panelCenter=(0.488,0.023) panelRight=(0.991,0.021)
+[13:41:30.493] [185520] [I] TriggerPress NDC: uv=(0.777,0.306) local=(0.277,0.194) marker=(0.787,0.135) panelLeft=(-0.140,0.028) panelCenter=(0.485,0.024) panelRight=(0.988,0.022)
+[13:41:31.719] [185520] [I] TriggerPress NDC: uv=(0.772,0.307) local=(0.272,0.193) marker=(0.782,0.131) panelLeft=(-0.137,0.029) panelCenter=(0.486,0.023) panelRight=(0.990,0.018)
+[13:41:32.297] [185520] [I] TriggerPress NDC: uv=(0.770,0.311) local=(0.270,0.189) marker=(0.217,0.130) panelLeft=(-0.710,0.028) panelCenter=(-0.079,0.023) panelRight=(0.428,0.020)
+[13:41:34.356] [185520] [I] TriggerPress NDC: uv=(0.421,0.288) local=(-0.079,0.212) marker=(0.407,0.152) panelLeft=(-0.139,0.027) panelCenter=(0.487,0.018) panelRight=(0.994,0.010)
+[13:41:36.221] [185520] [I] TriggerPress NDC: uv=(0.703,0.339) local=(0.203,0.161) marker=(0.573,0.143) panelLeft=(-0.286,0.037) panelCenter=(0.363,0.050) panelRight=(0.818,0.059)
+[13:41:39.433] [185520] [I] TriggerPress NDC: uv=(0.683,0.468) local=(0.183,0.032) marker=(0.620,0.049) panelLeft=(-0.205,0.032) panelCenter=(0.428,0.031) panelRight=(0.909,0.030)
+[13:41:42.622] [185520] [I] TriggerPress NDC: uv=(0.310,0.282) local=(-0.190,0.218) marker=(0.249,0.163) panelLeft=(-0.166,0.029) panelCenter=(0.458,0.021) panelRight=(0.947,0.015)
+[13:41:44.285] [185520] [I] TriggerPress NDC: uv=(0.416,0.283) local=(-0.084,0.217) marker=(0.294,0.168) panelLeft=(-0.267,0.032) panelCenter=(0.378,0.034) panelRight=(0.843,0.036)
+[13:41:45.549] [185520] [I] TriggerPress NDC: uv=(0.686,0.287) local=(0.186,0.213) marker=(0.570,0.151) panelLeft=(-0.266,0.031) panelCenter=(0.374,0.032) panelRight=(0.830,0.033)
+[13:41:47.094] [185520] [I] TriggerPress NDC: uv=(0.581,0.272) local=(0.081,0.228) marker=(0.471,0.169) panelLeft=(-0.269,0.035) panelCenter=(0.374,0.036) panelRight=(0.836,0.036)
+[13:42:12.160] [185520] [I] Close-menu combo: releasing overlay 9
+[13:42:12.177] [185520] [I] UnregisterClient(17)  // PhotoMode HUD
+[13:42:14.151] [185520] [I] Allocated panel texture for client 'DialogueHistory.Conversation' (1920x1080 RGBA8)
+[13:42:18.540] [185520] [I] TriggerPress NDC: uv=(0.609,0.434) local=(0.109,0.066) marker=(0.138,0.097) panelLeft=(-0.833,0.003) panelCenter=(0.024,0.054) panelRight=(0.429,0.078)
+[13:42:20.245] [185520] [I] TriggerPress NDC: uv=(0.117,0.127) local=(-0.383,0.373) marker=(0.044,0.213) panelLeft=(-0.112,-0.038) panelCenter=(0.496,-0.015) panelRight=(0.989,0.003)
+[13:42:20.829] [185520] [I] TriggerPress NDC: uv=(0.123,0.133) local=(-0.377,0.367) marker=(0.027,0.214) panelLeft=(-0.138,-0.035) panelCenter=(0.475,-0.009) panelRight=(0.965,0.011)
+[13:42:25.689] [185520] [I] TriggerPress NDC: uv=(0.124,0.123) local=(-0.376,0.377) marker=(0.015,0.229) panelLeft=(-0.143,-0.028) panelCenter=(0.462,0.014) panelRight=(0.936,0.046)
+[13:42:31.234] [185520] [I] TriggerPress NDC: uv=(0.116,0.125) local=(-0.384,0.375) marker=(0.039,0.254) panelLeft=(-0.119,-0.014) panelCenter=(0.518,0.018) panelRight=(1.020,0.043)
+[13:42:31.634] [185520] [I] TriggerPress NDC: uv=(0.117,0.113) local=(-0.383,0.387) marker=(0.011,0.266) panelLeft=(-0.151,-0.012) panelCenter=(0.488,0.024) panelRight=(0.976,0.052)
+[13:42:33.051] [185520] [I] TriggerPress NDC: uv=(0.943,0.902) local=(0.443,-0.402) marker=(0.360,-0.045) panelLeft=(-0.975,0.003) panelCenter=(-0.005,0.097) panelRight=(0.401,0.137)

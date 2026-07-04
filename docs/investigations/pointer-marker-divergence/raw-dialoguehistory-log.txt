@@ -1,0 +1,33 @@
+po3_DialogueHistory v2.3.3.0
+Game version : 1-4-15-1
+********************POST LOAD*********************
+Installed dialogue hooks
+******************POST POST LOAD******************
+Failed to obtain NND API
+Connected to ImGuiVRHelper (conversation + archive panels)
+Initializing ImGui...
+ImGui initialized.
+Registered DialogueHistory_MCM class
+*******************DATA LOADED********************
+Reading translations from Data\Interface\Translations\DialogueHistory_ENGLISH.txt...
+*******************FILE CLEANUP*******************
+DialogueHistory : Cleaned up 0 unused history files.
+ConversationHistory : Cleaned up 0 unused history files.
+********************LOAD GAME*********************
+Loading DialogueHistory file : E:\Documents\My Games\Skyrim VR\Saves\DialogueHistory\Quicksave0_00000000_0_5368657A617272696E65_WhiterunWorld_000000_20260703085524_1_1.json
+Loading ConversationHistory file : E:\Documents\My Games\Skyrim VR\Saves\ConversationHistory\Quicksave0_00000000_0_5368657A617272696E65_WhiterunWorld_000000_20260703085524_1_1.json
+VR state: globalOpen=true dialogueOpen=false globalFocus=true localFocus=false
+Reloading fonts...
+VR state: globalOpen=false dialogueOpen=false globalFocus=false localFocus=false
+VR state: globalOpen=false dialogueOpen=true globalFocus=false localFocus=false
+Reloading fonts...
+VR state: globalOpen=false dialogueOpen=true globalFocus=false localFocus=true
+Client click: mousePos=(1109.0,444.0) displaySize=(1820.4,1024.0) uv=(0.609,0.434) hoveredId=0 activeId=0
+Client click: mousePos=(212.0,130.0) displaySize=(1820.4,1024.0) uv=(0.116,0.127) hoveredId=704808852 activeId=704808852
+Client click: mousePos=(224.0,136.0) displaySize=(1820.4,1024.0) uv=(0.123,0.133) hoveredId=704808852 activeId=704808852
+Client click: mousePos=(226.0,126.0) displaySize=(1820.4,1024.0) uv=(0.124,0.123) hoveredId=704808852 activeId=704808852
+Client click: mousePos=(210.0,127.0) displaySize=(1820.4,1024.0) uv=(0.115,0.124) hoveredId=704808852 activeId=704808852
+Client click: mousePos=(214.0,120.0) displaySize=(1820.4,1024.0) uv=(0.118,0.117) hoveredId=704808852 activeId=704808852
+Client click: mousePos=(1717.0,923.0) displaySize=(1820.4,1024.0) uv=(0.943,0.901) hoveredId=0 activeId=0
+VR state: globalOpen=false dialogueOpen=false globalFocus=false localFocus=true
+VR state: globalOpen=false dialogueOpen=false globalFocus=false localFocus=false
