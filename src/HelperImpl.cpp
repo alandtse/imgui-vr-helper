@@ -608,6 +608,13 @@ namespace ImGuiVRHelper
 		return out;
 	}
 
+	uint32_t HelperImpl::GetClientFlags(uint32_t client_id)
+	{
+		std::scoped_lock lk{ m_mutex };
+		const auto it = m_clients.find(client_id);
+		return it != m_clients.end() ? it->second.flags : 0u;
+	}
+
 	uint32_t HelperImpl::GetFocusedClientId()
 	{
 		std::scoped_lock lk{ m_mutex };
@@ -807,12 +814,15 @@ namespace ImGuiVRHelper
 		// settings UI into the self-client RTV (DispatchFrame's
 		// SettingsUI::Render block), so it trivially honors the
 		// focus-render contract.
+		// HelperCursor: the settings UI has no styled ImGui software cursor of
+		// its own, so it keeps the composited wand dot.
 		m_self_client_id = RegisterClient(
 			kSelfClientName,
 			nullptr,
 			+[](const ImGuiVRHelperPluginAPI::Frame*, void*) { /* no-op */ },
 			nullptr,
-			ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus);
+			ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus |
+				ImGuiVRHelperPluginAPI::kClientFlag_HelperCursor);
 
 		// Synthetic HUD-mode client for the Settings::showHUDDemo smoke
 		// test. Always registered (zero overhead until showHUDDemo

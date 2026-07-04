@@ -1643,7 +1643,15 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		if (wantPanelPass) {
 			RenderPanelPass(ctx, eye, matrices, s, overlayState, panelSRV);
-			RenderCursorPass(ctx, matrices, s, overlayState);
+			// The composited dot is opt-in (kClientFlag_HelperCursor); by default
+			// the focused client's own ImGui software cursor is the pointer —
+			// matching what every shipped client SDK already renders.
+			auto& helper = HelperImpl::GetSingleton();
+			const uint32_t focusedId = helper.GetFocusedClientId();
+			if (focusedId && (helper.GetClientFlags(focusedId) &
+								 ImGuiVRHelperPluginAPI::kClientFlag_HelperCursor)) {
+				RenderCursorPass(ctx, matrices, s, overlayState);
+			}
 		}
 
 		// Drawn last so the rebind capture composites on top of the focused menu.

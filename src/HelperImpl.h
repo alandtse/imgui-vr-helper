@@ -158,6 +158,10 @@ namespace ImGuiVRHelper
 		/// panel to draw on each Submit.
 		uint32_t GetFocusedClientId();
 
+		/// Registered flags for a client (0 if unknown). Used by the cursor
+		/// pass to honor kClientFlag_OwnCursor without a full snapshot.
+		uint32_t GetClientFlags(uint32_t client_id);
+
 		/// Returns the registered client's version string.
 		std::string GetClientVersion(uint32_t client_id);
 
