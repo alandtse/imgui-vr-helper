@@ -588,12 +588,12 @@ namespace ImGuiVRHelperPluginAPI
 				const float y = std::clamp(v * io.DisplaySize.y, 0.0f, io.DisplaySize.y);
 				io.MousePos = ImVec2(x, y);
 				io.AddMousePosEvent(x, y);
-				// Cursor choice (kClientFlag_OwnCursor): by default the helper
-				// composites its wand dot over the panel, so ImGui's software
-				// cursor stays off to avoid a second pointer; a client that
-				// opted into drawing its own (context-aware arrow/I-beam/resize)
-				// gets it enabled here and the helper suppresses its dot.
-				io.MouseDrawCursor = (m_flags & kClientFlag_OwnCursor) != 0;
+				// Cursor choice (kClientFlag_HelperCursor): by default the client's
+				// own ImGui software cursor is the pointer (context-aware
+				// arrow/I-beam/resize — the shipped-SDK behavior); opting into the
+				// helper's composited dot turns it off here so there's no second
+				// pointer under the dot.
+				io.MouseDrawCursor = (m_flags & kClientFlag_HelperCursor) == 0;
 				io.WantSetMousePos = true;
 			} else {
 				// Explicitly false here rather than relying on it having already been consumed:
