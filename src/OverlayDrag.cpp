@@ -501,14 +501,17 @@ namespace ImGuiVRHelper::OverlayDrag
 
 	void Update()
 	{
-		if (!CanPerform())
-			return;
-
 		auto& state = Overlay::State::GetSingleton();
-		// Consume-once: the client must call RequestReposition again every frame it wants the
-		// drag to continue, so reset here regardless of which branch below runs.
+		// Consume-once ahead of the CanPerform() gate below: if this frame's request went
+		// unconsumed because CanPerform() was false (e.g. overlay briefly not visible), it would
+		// otherwise latch true and could start/continue a drag on a LATER frame the client never
+		// actually requested for -- the client's heartbeat contract is "this frame", not "since
+		// the last time Update() actually ran the rest of this function".
 		const bool clientRequestedThisFrame = state.repositionRequested;
 		state.repositionRequested = false;
+
+		if (!CanPerform())
+			return;
 
 		if (state.dragState.dragging) {
 			UpdateActiveDrag(clientRequestedThisFrame);

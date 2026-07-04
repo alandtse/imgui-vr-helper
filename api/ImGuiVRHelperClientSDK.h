@@ -588,25 +588,33 @@ namespace ImGuiVRHelperPluginAPI
 				io.AddMousePosEvent(x, y);
 				io.MouseDrawCursor = true;
 				io.WantSetMousePos = true;
-			} else if (ImGui::GetActiveID() == 0) {
-				// Wand off the panel and nothing is active: park the cursor off-screen so a click
-				// can't land on the last-hovered widget, and skip the pointer-click synthesis below
-				// — off-panel input belongs to the client (e.g. a tool shortcut, read via
-				// IsButtonHeld).
-				//
-				// But NOT while something IS active (ActiveId != 0 -- a button held, a slider or
-				// drag-float being dragged, custom click-and-drag tracking, etc.): teleporting the
-				// cursor to an extreme off-screen position mid-gesture is fine for a plain button
-				// (ActiveId persists independent of mouse position until release) but corrupts any
-				// widget that computes its value from continuous mouse position, and can leave that
-				// widget's own internal drag state stuck once the ray drifts back on/off panel.
-				// Hold the cursor at its last known (on-panel) position instead -- the same
-				// "capture" semantics a desktop OS gives a window mid-drag, and the active widget
-				// still ends normally on release regardless (button-release forwarding doesn't
-				// depend on cursor position).
-				io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
-				io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
-				io.MouseDrawCursor = false;
+			} else {
+				// Explicitly false here rather than relying on it having already been consumed:
+				// a platform backend that still honors a stale WantSetMousePos would otherwise
+				// try to warp the OS cursor to whatever io.MousePos holds below, and casting
+				// -FLT_MAX to an integer screen coordinate is undefined behavior.
+				io.WantSetMousePos = false;
+				if (ImGui::GetActiveID() == 0) {
+					// Wand off the panel and nothing is active: park the cursor off-screen so a
+					// click can't land on the last-hovered widget, and skip the pointer-click
+					// synthesis below — off-panel input belongs to the client (e.g. a tool
+					// shortcut, read via IsButtonHeld).
+					//
+					// But NOT while something IS active (ActiveId != 0 -- a button held, a slider
+					// or drag-float being dragged, custom click-and-drag tracking, etc.):
+					// teleporting the cursor to an extreme off-screen position mid-gesture is fine
+					// for a plain button (ActiveId persists independent of mouse position until
+					// release) but corrupts any widget that computes its value from continuous
+					// mouse position, and can leave that widget's own internal drag state stuck
+					// once the ray drifts back on/off panel. Hold the cursor at its last known
+					// (on-panel) position instead -- the same "capture" semantics a desktop OS
+					// gives a window mid-drag, and the active widget still ends normally on
+					// release regardless (button-release forwarding doesn't depend on cursor
+					// position).
+					io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
+					io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+					io.MouseDrawCursor = false;
+				}
 			}
 
 			const uint32_t changed = held ^ m_prevHeld;
