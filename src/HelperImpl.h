@@ -13,7 +13,7 @@
 
 namespace ImGuiVRHelper
 {
-	class HelperImpl final : public ImGuiVRHelperPluginAPI::IImGuiVRHelperInterface004
+	class HelperImpl final : public ImGuiVRHelperPluginAPI::IImGuiVRHelperInterface005
 	{
 	public:
 		static HelperImpl& GetSingleton();
@@ -64,6 +64,9 @@ namespace ImGuiVRHelper
 		// IImGuiVRHelperInterface004 (world-anchored quads).
 		void SubmitWorldQuads(uint32_t client_id,
 			const ImGuiVRHelperPluginAPI::WorldQuad* quads, std::size_t count) override;
+
+		// IImGuiVRHelperInterface005 (client-driven reposition drag).
+		void RequestReposition(uint32_t client_id) override;
 
 		// Helper-internal entry points (not part of the public API).
 

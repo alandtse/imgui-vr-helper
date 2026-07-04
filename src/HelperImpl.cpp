@@ -576,6 +576,19 @@ namespace ImGuiVRHelper
 			list.assign(quads, quads + std::min(count, kMaxWorldQuads));
 	}
 
+	void HelperImpl::RequestReposition(uint32_t client_id)
+	{
+		{
+			std::scoped_lock lk{ m_mutex };
+			if (client_id == 0 || client_id != m_focused_client)
+				return;  // only the focused client's own panel may be repositioned
+		}
+		// A heartbeat, not a toggle: OverlayDrag::Update consumes (resets false) this every
+		// DispatchFrame, so the caller must call again next frame to keep the drag going —
+		// naturally ends the drag the frame after the caller stops (e.g. trigger released).
+		Overlay::State::GetSingleton().repositionRequested = true;
+	}
+
 	std::vector<HelperImpl::WorldQuadClientSnapshot> HelperImpl::SnapshotWorldQuadClients()
 	{
 		std::vector<WorldQuadClientSnapshot> out;

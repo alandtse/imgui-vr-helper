@@ -274,4 +274,27 @@ namespace ImGuiVRHelperPluginAPI
 	/// Handshake for revision 004. Returns nullptr if the installed helper predates 004.
 	IImGuiVRHelperInterface004* GetImGuiVRHelperInterface004();
 
+	/// Revision 005. Adds a client-driven reposition drag: an alternative to the helper's
+	/// off-panel grip-drag gesture for clients whose panel coexists with a game menu that binds
+	/// grip to something else (e.g. Skyrim's dialogue menu closes on grip), so the normal
+	/// off-panel gesture can't be used at all while that menu is up. Obtain via
+	/// GetImGuiVRHelperInterface005(); nullptr against a helper older than 005.
+	struct IImGuiVRHelperInterface005 : IImGuiVRHelperInterface004
+	{
+		/// Call every frame you want a reposition drag active — e.g. while a wand-clickable
+		/// "Move" button in your own panel is held down with the trigger (ImGui's IsItemActive()
+		/// idiom: stays true for the whole hold, even after the wand ray drifts off the button
+		/// or off the panel entirely, which it will as the user physically moves their hand to
+		/// drag — don't gate this call on the wand still being on-panel). Uses the same drag
+		/// machinery as the off-panel grip gesture (same settings persisted on release), driven
+		/// by whichever controller was pointing at your panel when the drag started. No-op if
+		/// `client_id` doesn't currently hold focus or if drag-to-reposition is disabled in
+		/// settings. This is a heartbeat, not a toggle: stop calling (e.g. on trigger release) to
+		/// end the drag and persist the new position — there is no separate "release" call.
+		virtual void RequestReposition(uint32_t client_id) = 0;
+	};
+
+	/// Handshake for revision 005. Returns nullptr if the installed helper predates 005.
+	IImGuiVRHelperInterface005* GetImGuiVRHelperInterface005();
+
 }  // namespace ImGuiVRHelperPluginAPI

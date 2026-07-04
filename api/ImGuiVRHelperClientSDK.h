@@ -198,6 +198,7 @@ namespace ImGuiVRHelperPluginAPI
 			m_helper002 = GetImGuiVRHelperInterface002();
 			m_helper003 = GetImGuiVRHelperInterface003();
 			m_helper004 = GetImGuiVRHelperInterface004();
+			m_helper005 = GetImGuiVRHelperInterface005();
 			return true;
 		}
 
@@ -213,6 +214,7 @@ namespace ImGuiVRHelperPluginAPI
 			m_helper002 = nullptr;
 			m_helper003 = nullptr;
 			m_helper004 = nullptr;
+			m_helper005 = nullptr;
 			m_kbShown = false;
 			m_kbDelivered.clear();
 			m_kbDismissCooldown = 0;
@@ -246,6 +248,27 @@ namespace ImGuiVRHelperPluginAPI
 			if (!m_helper004 || !IsConnected())
 				return;
 			m_helper004->SubmitWorldQuads(m_id, quads, count);
+		}
+
+		/// True if the helper supports a client-driven reposition drag (interface 005
+		/// acquired). When false, RequestReposition is a no-op -- the panel can still be
+		/// repositioned via the helper's own off-panel grip gesture (Settings ->
+		/// enableDragToReposition), just not from an on-panel "Move" button.
+		[[nodiscard]] bool HasReposition() const { return m_helper005 != nullptr; }
+
+		/// Call every frame you want a reposition drag active -- e.g. while your own
+		/// wand-clickable "Move" button is held with the trigger (check via ImGui's
+		/// IsItemActive() after drawing it, which stays true for the whole hold even once the
+		/// wand ray drifts off the button/panel as the user physically moves their hand to
+		/// drag -- don't gate this on GetPointer/IsPointerInPanel). No-op when disconnected,
+		/// the helper predates interface 005, this client doesn't currently hold focus, or
+		/// drag-to-reposition is disabled in the helper's settings. This is a heartbeat, not a
+		/// toggle: stop calling to end the drag and persist the new position.
+		void RequestReposition()
+		{
+			if (!m_helper005 || !IsConnected())
+				return;
+			m_helper005->RequestReposition(m_id);
 		}
 
 		/// True when the helper routed in-scene focus to this client this frame
@@ -1085,6 +1108,7 @@ namespace ImGuiVRHelperPluginAPI
 		IImGuiVRHelperInterface002* m_helper002 = nullptr;  // null if helper predates 002 (no VR keyboard)
 		IImGuiVRHelperInterface003* m_helper003 = nullptr;  // null if helper predates 003 (no off-panel combos)
 		IImGuiVRHelperInterface004* m_helper004 = nullptr;  // null if helper predates 004 (no world quads)
+		IImGuiVRHelperInterface005* m_helper005 = nullptr;  // null if helper predates 005 (no client-driven reposition)
 		uint32_t m_id = 0;
 		ID3D11DeviceContext* m_cachedContext = nullptr;  // ctx resolved lazily, device-owned
 		bool m_requestsRender = false;

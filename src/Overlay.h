@@ -253,6 +253,14 @@ namespace ImGuiVRHelper::Overlay
 		Vector3 initialHMDOffset = Vector3::Zero;
 		Vector3 initialControllerOffset = Vector3::Zero;
 		float initialHMDScale = 1.0f;
+
+		/// True for a drag started via HelperImpl::RequestReposition (a client's own on-panel
+		/// "Move" affordance, held with trigger) rather than the off-panel grip gesture. Changes
+		/// how UpdateActiveDrag decides to end the drag: State::repositionRequested each frame
+		/// instead of the grip button, since the client — not raw grip state — owns the "still
+		/// held" signal here (grip itself may be bound to something else by the underlying game
+		/// while that client's menu is up, e.g. Skyrim's dialogue menu closes on grip).
+		bool clientRequested = false;
 	};
 
 	// ---- Singleton ------------------------------------------------------
@@ -289,6 +297,13 @@ namespace ImGuiVRHelper::Overlay
 
 		bool lastKnownLeftHandedMode = false;
 		bool overlayVisible = false;  ///< populated by HelperImpl::IsOverlayVisible
+
+		/// Set by HelperImpl::RequestReposition when the focused client calls it this frame (its
+		/// own on-panel "Move" affordance, held with trigger); consumed (and reset false) by
+		/// OverlayDrag::Update each DispatchFrame. The client must call it again every frame it
+		/// wants the drag to continue -- a heartbeat, not a toggle -- so simply not calling it
+		/// (trigger released) ends the drag on the next Update.
+		bool repositionRequested = false;
 
 		/// World position the player was at when fixed-world overlay last
 		/// snapped. Used by auto-reset distance check.

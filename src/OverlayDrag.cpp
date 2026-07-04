@@ -51,7 +51,7 @@ namespace ImGuiVRHelper::OverlayDrag
 			return role != vr::TrackedControllerRole_Invalid;
 		}
 
-		void UpdateActiveDrag()
+		void UpdateActiveDrag(bool a_clientRequestedThisFrame)
 		{
 			auto& state = Overlay::State::GetSingleton();
 			auto& drag = state.dragState;
@@ -69,6 +69,7 @@ namespace ImGuiVRHelper::OverlayDrag
 				drag.controllerIndex = vr::k_unTrackedDeviceIndexInvalid;
 				drag.isPrimary = false;
 				drag.isSecondary = false;
+				drag.clientRequested = false;
 				if (!wasDragging)
 					return;
 				// Fixed-world stores a volatile world matrix that re-anchors as the
@@ -238,7 +239,15 @@ namespace ImGuiVRHelper::OverlayDrag
 				}
 			}
 
-			if (!GetGripPressed(drag.isPrimary, drag.isSecondary)) {
+			// A client-requested drag ends when the client stops calling RequestReposition (its
+			// own trigger-held signal) rather than when grip releases -- grip may not even be
+			// involved (e.g. it's bound to something else by the underlying game while that
+			// client's menu is up), so checking it here would end the drag on the very first
+			// frame regardless of what the client wants.
+			const bool shouldContinue = drag.clientRequested ?
+			                                a_clientRequestedThisFrame :
+			                                GetGripPressed(drag.isPrimary, drag.isSecondary);
+			if (!shouldContinue) {
 				resetDragState();
 			}
 		}
@@ -399,6 +408,78 @@ namespace ImGuiVRHelper::OverlayDrag
 				}
 			}
 		}
+
+		// Client-driven counterpart to TryStartNewDrag: started by HelperImpl::RequestReposition
+		// (a client's own on-panel "Move" affordance) instead of an off-panel grip press. Unlike
+		// the grip gesture, this is expected to start WHILE the wand is on the panel (that's how
+		// the user reached the Move button in the first place) and driven by whichever hand is
+		// currently pointing, not a hand search keyed off role/grip.
+		void TryStartClientRequestedDrag()
+		{
+			auto& state = Overlay::State::GetSingleton();
+			auto& drag = state.dragState;
+			auto& s = state.settings;
+
+			RE::BSOpenVR* openvr = RE::BSOpenVR::GetSingleton();
+			auto* system = openvr ? openvr->vrSystem : nullptr;
+			if (!system)
+				return;
+
+			const vr::TrackedDeviceIndex_t i = state.wandState.controllerIndex;
+			if (i == vr::k_unTrackedDeviceIndexInvalid)
+				return;
+
+			float rawMatrix[3][4];
+			if (!Util::GetControllerWorldMatrix(i, rawMatrix))
+				return;
+			Matrix controllerMatrix = Util::HmdMatrix34ToMatrix(Util::Float3x4ToHmdMatrix34(rawMatrix));
+
+			vr::ETrackedControllerRole role = system->GetControllerRoleForTrackedDeviceIndex(i);
+			const bool isLeft = role == vr::ETrackedControllerRole::TrackedControllerRole_LeftHand;
+			const bool isRight = role == vr::ETrackedControllerRole::TrackedControllerRole_RightHand;
+
+			// Same mode selection UpdateActiveDrag's switch expects: FixedWorld takes priority
+			// (it's independent of attachMode, and the default positioning method), otherwise
+			// whichever attach mode is configured.
+			DragState::Mode mode;
+			if (s.positioningMethod == PositioningMethod::FixedWorld) {
+				mode = DragState::Mode::FixedWorld;
+			} else if (s.attachMode == AttachMode::ControllerOnly) {
+				mode = DragState::Mode::Controller;
+			} else {
+				mode = DragState::Mode::HMD;
+			}
+
+			drag.dragging = true;
+			drag.mode = mode;
+			drag.controllerIndex = i;
+			drag.isPrimary = isLeft;
+			drag.isSecondary = isRight;
+			drag.startControllerMatrix = controllerMatrix;
+			drag.clientRequested = true;
+
+			switch (mode) {
+			case DragState::Mode::FixedWorld:
+				drag.initialControllerMatrix = drag.startControllerMatrix;
+				drag.initialOverlayMatrix = state.fixedWorld.m;
+				break;
+			case DragState::Mode::Controller:
+				drag.initialControllerOffset = Vector3(s.controllerOffsetX, s.controllerOffsetY, s.controllerOffsetZ);
+				drag.initialControllerMatrix = drag.startControllerMatrix;
+				break;
+			case DragState::Mode::HMD:
+				drag.initialHMDOffset = Vector3(s.hmdOffsetX, s.hmdOffsetY, s.hmdOffsetZ);
+				drag.initialHMDScale = s.menuScale;
+				drag.initialControllerMatrix = drag.startControllerMatrix;
+				break;
+			default:
+				break;
+			}
+
+			if (state.overlayVisible) {
+				openvr->TriggerHapticPulse(isRight, 25.0f);
+			}
+		}
 	}  // namespace
 
 	bool CanPerform()
@@ -424,8 +505,15 @@ namespace ImGuiVRHelper::OverlayDrag
 			return;
 
 		auto& state = Overlay::State::GetSingleton();
+		// Consume-once: the client must call RequestReposition again every frame it wants the
+		// drag to continue, so reset here regardless of which branch below runs.
+		const bool clientRequestedThisFrame = state.repositionRequested;
+		state.repositionRequested = false;
+
 		if (state.dragState.dragging) {
-			UpdateActiveDrag();
+			UpdateActiveDrag(clientRequestedThisFrame);
+		} else if (clientRequestedThisFrame) {
+			TryStartClientRequestedDrag();
 		} else {
 			TryStartNewDrag();
 		}
