@@ -752,15 +752,43 @@ namespace ImGuiVRHelperPluginAPI
 				ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 		}
 
-		/// Per-frame convenience: ReconcileFocus + PumpInput in one call. Pass your
-		/// menu-open flag by reference; on return it reflects the resolved shown
-		/// state (the helper's open/close/cycle combos can flip it) and the wand has
-		/// been pumped into ImGui. Returns the shown state. Call before NewFrame.
+		/// Per-frame convenience: ReconcileFocus + PumpKeyboard + PumpInput in one
+		/// call. Pass your menu-open flag by reference; on return it reflects the
+		/// resolved shown state (the helper's open/close/cycle combos can flip it)
+		/// and the wand has been pumped into ImGui. Returns the shown state. Call
+		/// before NewFrame. The VR keyboard pump is included so any focused text
+		/// field pops the system keyboard without per-client wiring (no-op against
+		/// a helper older than 002; harmless if you also call PumpKeyboard
+		/// yourself).
 		bool Update(bool& menuOpen, float scrollDeadzone = 0.15f)
 		{
 			ReconcileFocus(menuOpen);
+			PumpKeyboard();
 			PumpInput(menuOpen, scrollDeadzone);
 			return menuOpen;
+		}
+
+		/// Size the current context's ImGui canvas to the helper panel's logical
+		/// space: kPanelLogicalHeight tall, panel aspect wide. This is the layout
+		/// every panel client wants and two shipped clients hand-rolled: the wand
+		/// cursor maps UV * DisplaySize, so a DisplaySize whose aspect differs from
+		/// the panel's skews clicks off the visuals, and sizing against a desktop
+		/// mirror window makes fonts depend on the monitor instead of the panel.
+		/// Call before NewFrame (RenderMenu does it for you). No-op (returns false)
+		/// until the panel exists.
+		static constexpr float kPanelLogicalHeight = 1080.0f;
+		bool ApplyPanelDisplaySize()
+		{
+			if (!IsConnected())
+				return false;
+			PanelHandle panel{};
+			if (!m_helper->GetPanel(m_id, &panel) || !panel.width || !panel.height)
+				return false;
+			ImGuiIO& io = ImGui::GetIO();
+			io.DisplaySize = ImVec2(
+				kPanelLogicalHeight * static_cast<float>(panel.width) / static_cast<float>(panel.height),
+				kPanelLogicalHeight);
+			return true;
 		}
 
 		/// One-call interactive menu for a VR mod that brings its own ImGui context
@@ -779,6 +807,8 @@ namespace ImGuiVRHelperPluginAPI
 				return menuOpen;
 			ReconcileFocus(menuOpen);
 			const bool shown = menuOpen;
+			ApplyPanelDisplaySize();  // panel-logical canvas: wand UV and fonts stay correct
+			PumpKeyboard();           // focused text fields pop the VR keyboard automatically
 			PumpInput(shown);
 			ImGui_ImplDX11_NewFrame();
 			ImGui::NewFrame();
