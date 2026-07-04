@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include <atomic>
+
 #include <SimpleMath.h>
 #include <imgui.h>
 #include <openvr.h>
@@ -318,6 +320,18 @@ namespace ImGuiVRHelper::Overlay
 		/// port lands. Until then, all isPressed/thumbsticks read 0.
 		RE::VRControllerState primaryControllerState{};
 		RE::VRControllerState secondaryControllerState{};
+
+		/// Synthetic wand-pointer override (devbench bridge): while active, the
+		/// input-thread wand updates force the hit to (u,v) on the panel, so an
+		/// agent can drive deterministic clicks without a headset. Atomics:
+		/// written from devbench's listener thread, read on the input thread.
+		struct DebugPointerOverride
+		{
+			std::atomic<bool> active{ false };
+			std::atomic<float> u{ 0.5f };
+			std::atomic<float> v{ 0.5f };
+		};
+		DebugPointerOverride debugPointer;
 
 	private:
 		State() = default;

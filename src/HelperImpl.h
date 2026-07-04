@@ -238,6 +238,12 @@ namespace ImGuiVRHelper
 		/// tool can keep driving the unpaused world (e.g. fly a free camera).
 		bool IsLiveToolFocused() const;
 
+		/// One-shot JSON dump of live input/focus state for the devbench bridge
+		/// (wand hit, focus, clients + panel dims, held masks, lease strips,
+		/// drag state, relevant settings). Diagnostic reads only — values may be
+		/// one frame stale; called from devbench's listener thread.
+		std::string DiagnosticsJson() const;
+
 	private:
 		HelperImpl() = default;
 

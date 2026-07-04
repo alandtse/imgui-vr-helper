@@ -28,6 +28,7 @@ add_requires("nlohmann_json") -- still needed for ImportLegacySettings (SCS-shap
 add_requires("toml++") -- helper's own settings file
 add_requires("directxtk") -- SimpleMath, used for matrix helpers in VRUtils
 add_requires("catch2") -- unit tests (ImGuiVRHelperTests target only)
+add_requires("devbench-api 1.5.0") -- optional devbench MCP/REST tools (MIT header; runtime no-op without a devbench host)
 
 -- Optional Tracy profiler instrumentation. Off by default so the shipped build
 -- pays nothing — zones compile to no-ops (see src/internal/Profiler.h). Enable
@@ -49,7 +50,7 @@ end
 
 target("ImGuiVRHelper")
 add_deps("commonlibsse-ng")
-add_packages("openvr", "imgui", "nlohmann_json", "toml++", "directxtk")
+add_packages("openvr", "imgui", "nlohmann_json", "toml++", "directxtk", "devbench-api")
 if has_config("tracy") then
     add_packages("tracy")
 end

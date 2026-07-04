@@ -675,6 +675,67 @@ namespace ImGuiVRHelper
 		       (it->second.flags & ImGuiVRHelperPluginAPI::kClientFlag_LiveTool) != 0;
 	}
 
+	std::string HelperImpl::DiagnosticsJson() const
+	{
+		auto& state = Overlay::State::GetSingleton();
+		const auto& s = state.settings;
+
+		// Wire-shaped held mask from live controller state (same fold the frame
+		// builder applies), so the dump matches what clients are delivered.
+		const auto wireMask = [](const RE::VRControllerState& cs) {
+			uint32_t mask = 0;
+			for (const auto& m : ImGuiVRHelper::Input::ButtonTable()) {
+				if (cs[m.reKey].isPressed)
+					mask |= 1u << static_cast<uint32_t>(m.wireButton);
+			}
+			return mask;
+		};
+
+		nlohmann::json j;
+		j["wand"] = {
+			{ "intersecting", state.wandState.isIntersecting },
+			{ "u", state.wandState.uvCoordinates.x },
+			{ "v", state.wandState.uvCoordinates.y },
+			{ "overridden", state.debugPointer.active.load(std::memory_order_relaxed) },
+		};
+		j["drag"] = {
+			{ "dragging", state.dragState.dragging },
+			{ "clientRequested", state.dragState.clientRequested },
+		};
+		j["held"] = {
+			{ "primary", wireMask(state.primaryControllerState) },
+			{ "secondary", wireMask(state.secondaryControllerState) },
+		};
+		j["leases"] = {
+			{ "stripLeft", m_leases.StrippedBits(0) },
+			{ "stripRight", m_leases.StrippedBits(1) },
+		};
+		j["settings"] = {
+			{ "enableWandPointing", s.enableWandPointing },
+			{ "useInputLeases", s.useInputLeases },
+			{ "enableDragToReposition", s.enableDragToReposition },
+		};
+		{
+			auto* self = const_cast<HelperImpl*>(this);
+			std::scoped_lock lk(self->m_mutex);
+			j["focusedClient"] = m_focused_client;
+			auto clients = nlohmann::json::array();
+			for (const auto& [id, rec] : m_clients) {
+				unsigned int w = 0, h = 0;
+				PanelPixelSize(rec, w, h);
+				clients.push_back({
+					{ "id", id },
+					{ "name", rec.name },
+					{ "flags", rec.flags },
+					{ "panelWidth", w },
+					{ "panelHeight", h },
+				});
+			}
+			j["clients"] = std::move(clients);
+		}
+		return j.dump();
+	}
+
 	void HelperImpl::NotifyEnteredGame()
 	{
 		m_enteredGame = true;  // one-way latch; dismisses the startup welcome
@@ -965,6 +1026,18 @@ namespace ImGuiVRHelper
 	{
 		auto& overlayState = Overlay::State::GetSingleton();
 		const auto& s = overlayState.settings;
+
+		// Synthetic pointer (devbench bridge): force the hit to the requested UV
+		// so an agent can aim deterministically — works even with no controllers
+		// tracked (headless null-driver testing), so it precedes every gate.
+		if (overlayState.debugPointer.active.load(std::memory_order_relaxed)) {
+			overlayState.wandState.isIntersecting = true;
+			overlayState.wandState.uvCoordinates = ImVec2(
+				overlayState.debugPointer.u.load(std::memory_order_relaxed),
+				overlayState.debugPointer.v.load(std::memory_order_relaxed));
+			return;
+		}
+
 		if (!s.enableWandPointing) {
 			overlayState.wandState.isIntersecting = false;
 			return;

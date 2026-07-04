@@ -139,10 +139,28 @@ namespace ImGuiVRHelper::WandPointing
 		// Settings instead of the SCS VR class members.
 		auto& state = Overlay::State::GetSingleton();
 		const auto& s = state.settings;
-		if (!s.enableWandPointing)
-			return;
 
 		ImGuiIO& io = ImGui::GetIO();
+
+		// Synthetic pointer (devbench bridge): drive the cursor from the forced
+		// UV so an agent can aim the helper's own UI deterministically, even
+		// with no controllers tracked. Precedes every gate on purpose.
+		if (state.debugPointer.active.load(std::memory_order_relaxed)) {
+			const float u = state.debugPointer.u.load(std::memory_order_relaxed);
+			const float v = state.debugPointer.v.load(std::memory_order_relaxed);
+			state.wandState.isIntersecting = true;
+			state.wandState.uvCoordinates = ImVec2(u, v);
+			const float x = std::clamp(u * io.DisplaySize.x, 0.0f, io.DisplaySize.x);
+			const float y = std::clamp(v * io.DisplaySize.y, 0.0f, io.DisplaySize.y);
+			io.MousePos = ImVec2(x, y);
+			io.AddMousePosEvent(x, y);
+			io.MouseDrawCursor = true;
+			io.WantSetMousePos = true;
+			return;
+		}
+
+		if (!s.enableWandPointing)
+			return;
 
 		namespace API = ImGuiVRHelperPluginAPI;
 
