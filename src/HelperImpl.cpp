@@ -1398,14 +1398,24 @@ namespace ImGuiVRHelper
 		// this must NOT zero raw controller state -- a client's own off-panel shortcuts or IsButtonHeld
 		// reads still need the genuine grip/trigger state during a drag; only the client SDK's ImGui
 		// forwarding step should stand down, via kFrameFlag_SuppressInputForwarding.
+		//
+		// Client-requested drags (DragState::clientRequested) are the exception: that drag is
+		// sustained by the OWNING client seeing its OWN trigger stay held (ImGui::IsItemActive() on
+		// its "Move" button) and ended by seeing that trigger's release -- unlike grip, which the
+		// client never has to forward to ImGui at all. Suppressing forwarding for the drag's whole
+		// duration swallows that release, so the client's button never sees its active state clear:
+		// it keeps calling RequestReposition every frame because it thinks the button is still held,
+		// which keeps the drag alive, which keeps suppressing the release -- a deadlock that only a
+		// wand-off-then-back-onto-the-panel edge (or nothing) could ever clear.
 		const bool dragging = Overlay::State::GetSingleton().dragState.dragging;
+		const bool clientRequestedDrag = Overlay::State::GetSingleton().dragState.clientRequested;
 		if (m_prevDragging && !dragging)
 			m_dragInputSettling = true;
 		m_prevDragging = dragging;
 		if (m_dragInputSettling &&
 			(baseFrame.left.buttons_held | baseFrame.right.buttons_held) == 0)
 			m_dragInputSettling = false;
-		const bool suppressForwarding = dragging || m_dragInputSettling;
+		const bool suppressForwarding = (dragging && !clientRequestedDrag) || m_dragInputSettling;
 
 		for (const auto& sn : snapshot) {
 			ImGuiVRHelperPluginAPI::Frame perClient = baseFrame;
