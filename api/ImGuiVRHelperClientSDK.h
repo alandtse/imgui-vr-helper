@@ -768,15 +768,18 @@ namespace ImGuiVRHelperPluginAPI
 			return menuOpen;
 		}
 
-		/// Size the current context's ImGui canvas to the helper panel's logical
-		/// space: kPanelLogicalHeight tall, panel aspect wide. This is the layout
-		/// every panel client wants and two shipped clients hand-rolled: the wand
-		/// cursor maps UV * DisplaySize, so a DisplaySize whose aspect differs from
-		/// the panel's skews clicks off the visuals, and sizing against a desktop
-		/// mirror window makes fonts depend on the monitor instead of the panel.
+		/// Size the current context's ImGui canvas to the panel's EXACT pixel
+		/// dimensions. This must be 1:1, not merely aspect-matched: the stock DX11
+		/// backend renders draw data into a DisplaySize-sized viewport anchored at
+		/// the panel's top-left (it overwrites whatever viewport the blit set), so
+		/// any client whose canvas differs from the panel gets its content shrunk
+		/// toward (0,0) while the helper's wand marker and hit-test UV span the
+		/// full panel — the click/marker divergence grows linearly toward the
+		/// bottom-right edge, worse the bigger the size mismatch (this was the
+		/// client-dependent "pointer divergence" bug; two shipped clients
+		/// hand-rolled canvas fixes that were aspect-correct but still off-scale).
 		/// Call before NewFrame (RenderMenu does it for you). No-op (returns false)
 		/// until the panel exists.
-		static constexpr float kPanelLogicalHeight = 1080.0f;
 		bool ApplyPanelDisplaySize()
 		{
 			if (!IsConnected())
@@ -785,9 +788,8 @@ namespace ImGuiVRHelperPluginAPI
 			if (!m_helper->GetPanel(m_id, &panel) || !panel.width || !panel.height)
 				return false;
 			ImGuiIO& io = ImGui::GetIO();
-			io.DisplaySize = ImVec2(
-				kPanelLogicalHeight * static_cast<float>(panel.width) / static_cast<float>(panel.height),
-				kPanelLogicalHeight);
+			io.DisplaySize = ImVec2(static_cast<float>(panel.width), static_cast<float>(panel.height));
+			io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
 			return true;
 		}
 
