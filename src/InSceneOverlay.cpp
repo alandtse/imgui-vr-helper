@@ -335,18 +335,16 @@ float4 main(PS_INPUT input) : SV_TARGET
 					const float d = std::sqrt(dx * dx + dy * dy);
 
 					uint8_t r = 0, g = 0, b = 0, a = 0;
-					if (d <= kInnerR) {
-						// White fill, feathered against the outline just outside it.
-						const float t = std::clamp((kInnerR - d) / kFeather, 0.0f, 1.0f);
-						r = g = b = 255;
-						a = static_cast<uint8_t>(255.0f * t);
-					} else if (d <= kOuterR) {
-						// Dark outline ring, feathered on both its inner and outer edges.
-						const float tIn = std::clamp((d - kInnerR) / kFeather, 0.0f, 1.0f);
+					if (d <= kOuterR) {
+						// White fill crossfading to the dark outline across kFeather (AA on
+						// the color boundary); alpha feathers ONLY at the outer edge.
+						// Feathering both alphas down to zero at the fill/outline boundary
+						// left a transparent seam ring showing panel content through the
+						// marker — the opposite of the legibility goal.
+						const float tEdge = std::clamp((d - (kInnerR - kFeather)) / kFeather, 0.0f, 1.0f);
 						const float tOut = std::clamp((kOuterR - d) / kFeather, 0.0f, 1.0f);
-						const float t = std::min(tIn, tOut);
-						r = g = b = 0;
-						a = static_cast<uint8_t>(235.0f * t);
+						r = g = b = static_cast<uint8_t>(255.0f * (1.0f - tEdge));
+						a = static_cast<uint8_t>((255.0f - 20.0f * tEdge) * tOut);
 					}
 					const size_t i = (static_cast<size_t>(y) * kSize + x) * 4;
 					pixels[i + 0] = r;
@@ -1202,7 +1200,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 				auto c = toNDC({ 0.0f, 0.0f, 0.0f }, panelMvp);
 				auto r = toNDC({ 0.5f, 0.0f, 0.0f }, panelMvp);
 				auto m = toNDC({ 0.0f, 0.0f, 0.0f }, markerMvp);
-				logs::info(
+				logs::debug(
 					"TriggerPress NDC: uv=({:.3f},{:.3f}) local=({:.3f},{:.3f}) marker=({:.3f},{:.3f}) "
 					"panelLeft=({:.3f},{:.3f}) panelCenter=({:.3f},{:.3f}) panelRight=({:.3f},{:.3f})",
 					wand.uvCoordinates.x, wand.uvCoordinates.y, localX, localY, m.x, m.y,
