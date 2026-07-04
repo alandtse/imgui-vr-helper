@@ -10,6 +10,7 @@
 #pragma once
 
 #include "ImGuiVRHelperAPI.h"
+#include "internal/InputLeases.h"
 
 namespace ImGuiVRHelper
 {
@@ -320,8 +321,16 @@ namespace ImGuiVRHelper
 		// drag and maps to a client's right-click, so if the wand ray sweeps onto the panel mid-drag
 		// the still-held grip would otherwise be forwarded as a right-click the user never intended,
 		// and the drag's eventual grip release could leak in as a spurious click of its own.
+		// (Legacy path only — with settings.useInputLeases the lease table below replaces
+		// both settle latches and the SuppressInputForwarding flag.)
 		bool m_prevDragging = false;
 		bool m_dragInputSettling = false;
+
+		// Route-on-press button leases: a press claims its route (client / drag /
+		// modal) and the hold+release follow it unconditionally, so gating-state
+		// changes mid-hold can no longer strand a half-delivered press/release
+		// pair (the "clicks stop registering after grip-move" class).
+		InputLeases::Table m_leases;
 
 		// Startup welcome banner (HUD-mode). Shows once at launch, then
 		// dismisses after a timeout, on entering the game, or if disabled.

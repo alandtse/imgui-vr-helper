@@ -623,32 +623,25 @@ namespace ImGuiVRHelperPluginAPI
 				if (!(changed & bit))
 					return;
 				const bool down = (held & bit) != 0;
-				// Presses drive the UI only while the wand is on the panel (off-panel belongs to the
-				// client's own shortcuts, read via IsButtonHeld) -- but releases always forward
-				// regardless of onPanel. A press that starts on the panel and ends after the wand
-				// drifts off it (e.g. a drag that moves the hand far enough to slip the ray off the
-				// panel edge) used to have its release edge gated the same as the press: skipped
-				// entirely when onPanel was false that frame, with m_prevHeld still updated to match,
-				// so the edge was lost forever. ImGui then believed the button was held down with no
-				// way to un-stick it short of an unrelated nav event clearing ActiveId.
-				if (down && !onPanel)
+				// PRESSES are gated -- on-panel only (off-panel belongs to the client's own
+				// shortcuts, read via IsButtonHeld), and not while a helper-owned modal gesture
+				// set kFrameFlag_SuppressInputForwarding (only helpers predating route-on-press
+				// leases still set it; current helpers strip leased-away buttons from the frame
+				// instead, so this SDK never even sees them). RELEASES always forward: gating a
+				// release the same as its press drops the edge forever -- m_prevHeld advances
+				// regardless -- leaving ImGui's io.MouseDown stuck true with no recovery (the
+				// "clicks stop registering after grip-moving the overlay" bug). One invariant,
+				// both gates: suppression may cost a click, never a release.
+				if (down && (!onPanel || suppressForwarding))
 					return;
 				fn(down);
 			};
-			// Suppressed while a helper-owned modal gesture (e.g. an overlay reposition drag) is in
-			// progress -- grip both drives that drag and maps to a client right-click below, so without
-			// this a wand ray sweeping onto the panel mid-drag would forward the still-held grip as an
-			// unintended click. m_prevHeld still advances every frame regardless (see below), so a
-			// button already held when suppression lifts requires a fresh release+press to register as
-			// a genuine new click, rather than firing a phantom edge the instant forwarding resumes.
-			if (!suppressForwarding) {
-				onEdge(Button::TriggerClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Left, d); });
-				onEdge(Button::GripClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Right, d); });
-				onEdge(Button::PadClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
-				onEdge(Button::StickClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
-				onEdge(Button::BY, [&](bool d) { io.AddKeyEvent(ImGuiKey_Tab, d); });
-				onEdge(Button::AX, [&](bool d) { io.AddKeyEvent(ImGuiKey_Enter, d); });
-			}
+			onEdge(Button::TriggerClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Left, d); });
+			onEdge(Button::GripClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Right, d); });
+			onEdge(Button::PadClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
+			onEdge(Button::StickClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
+			onEdge(Button::BY, [&](bool d) { io.AddKeyEvent(ImGuiKey_Tab, d); });
+			onEdge(Button::AX, [&](bool d) { io.AddKeyEvent(ImGuiKey_Enter, d); });
 			m_prevHeld = held;
 
 			// Recovery watchdog: a wand click's press/release edges are inherently noisier than a real

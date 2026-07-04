@@ -111,6 +111,11 @@ namespace ImGuiVRHelper::Overlay
 
 		bool enableWandPointing = true;
 
+		/// Route-on-press input leases (see internal/InputLeases.h). Kill-switch
+		/// only — false reverts to the legacy settle-latch + suppression-flag
+		/// routing in case a regression surfaces in the field. Not in the UI.
+		bool useInputLeases = true;
+
 		// Drag-to-reposition. On by default so the documented grip-to-move gesture
 		// works out of the box; gated to off-panel grip so it can't hijack on-panel
 		// menu input.
