@@ -824,11 +824,23 @@ namespace ImGuiVRHelper
 		// desktop/dev conveniences. The pause gate applies only to controller
 		// activation — see the self-toggle combo in ReconcileSelfFocusAndCombos.
 		std::scoped_lock lk{ m_mutex };
-		if (m_clients.contains(client_id)) {
+		const auto it = m_clients.find(client_id);
+		if (it != m_clients.end()) {
 			m_focused_client = client_id;
-			// Remember the last client overlay so the open combo can reopen it.
-			// The helper's own settings UI has its own toggle, so it's excluded.
-			if (client_id != m_self_client_id)
+			// Remember the last client overlay so the open combo can reopen it. Excludes the
+			// helper's own settings UI (has its own toggle) and, like BuildOverlayOrder's cycle
+			// filter, PointerFocus/WorldQuad clients: those are driven by the owning mod's own
+			// context (e.g. an in-conversation panel, only meaningful while a conversation is
+			// live), not something the generic open combo can meaningfully reopen cold. Letting
+			// one through here previously meant the NEXT open-combo press retargeted such a
+			// client, which the owning mod's own state machine would just close again next
+			// frame (no conversation active) — a silent no-op that also left m_focused_client at
+			// 0, which additionally blocks cycling (ProcessOverlayCycleInput requires a nonzero
+			// focus to begin with), so first-open would appear completely dead until a
+			// different client's own keyboard hotkey called RequestFocus directly.
+			constexpr uint32_t kExcludedFromLastOpened =
+				ImGuiVRHelperPluginAPI::kClientFlag_PointerFocus | ImGuiVRHelperPluginAPI::kClientFlag_WorldQuad;
+			if (client_id != m_self_client_id && !(it->second.flags & kExcludedFromLastOpened))
 				m_lastOpenedOverlay = client_id;
 		}
 	}
