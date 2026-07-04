@@ -1152,7 +1152,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// Marker size as a fraction of panel local space, pre-compensated by the inverse of
 		// CreateScaleMatrix's Y stretch so composing it with that same scale yields a round dot
 		// instead of one squashed/stretched by the panel's aspect correction.
-		constexpr float kMarkerLocalSize = 0.035f;
+		constexpr float kMarkerLocalSize = 0.016f;
 		const float localX = wand.uvCoordinates.x - 0.5f;
 		const float localY = 0.5f - wand.uvCoordinates.y;
 		Matrix markerLocal =
