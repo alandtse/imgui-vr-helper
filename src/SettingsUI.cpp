@@ -1138,6 +1138,23 @@ namespace ImGuiVRHelper::SettingsUI
 		auto& vrState = Overlay::State::GetSingleton();
 		const auto& settings = vrState.settings;
 
+		// Backends FIRST, wand/stick injection second, so the injected cursor
+		// wins over the Win32 backend's OS-cursor sample. The old order relied
+		// on WantSetMousePos round-tripping the wand position through the OS
+		// cursor in the game window's client area — Windows clamps the cursor
+		// to that window, so any mirror window smaller than the canvas dragged
+		// the readback toward the window edge, diverging from the wand (and
+		// from the composited dot) worse toward the panel edges.
+		ImGui_ImplDX11_NewFrame();
+		// Win32 input backend's NewFrame captures cursor pos + key state
+		// from Windows and feeds it into this context's IO. Skipped if
+		// the WndProc hook didn't install (e.g. swapchain HWND wasn't
+		// resolvable) — controllers still drive ImGui via the thumbstick
+		// + button paths below, just without desktop input.
+		if (g_hwnd) {
+			ImGui_ImplWin32_NewFrame();
+		}
+
 		WandPointing::UpdateCursorFromWandPointing();
 
 		// Per-thumbstick scroll accumulators. Mirrors upstream/dev's
@@ -1291,25 +1308,19 @@ namespace ImGuiVRHelper::SettingsUI
 		pumpButtons(vrState.primaryControllerState, prevPrimary);
 		pumpButtons(vrState.secondaryControllerState, prevSecondary);
 
-		ImGui_ImplDX11_NewFrame();
-		// Win32 input backend's NewFrame captures cursor pos + key state
-		// from Windows and feeds it into this context's IO. Skipped if
-		// the WndProc hook didn't install (e.g. swapchain HWND wasn't
-		// resolvable) — controllers still drive ImGui via the thumbstick
-		// + button paths above, just without desktop input.
-		if (g_hwnd) {
-			ImGui_ImplWin32_NewFrame();
-		}
 		ImGui::NewFrame();
 
 		// Cursor visibility (single source of truth; post-NewFrame so io.MousePos
 		// is final): draw it only when it actually lands on the panel — placed by
 		// the wand, the thumbstick, or the desktop mouse (the backend reports
-		// in-bounds while the mirror window has focus, -FLT_MAX otherwise). The
-		// in-game OS hardware cursor is hidden, so this is the only cursor shown.
+		// in-bounds while the mirror window has focus, -FLT_MAX otherwise). While
+		// the wand is the source, stand down: the compositor's wand dot is the
+		// pointer (the self client registers kClientFlag_HelperCursor), and a
+		// software cursor under it would just be a second, smaller pointer.
 		io.MouseDrawCursor =
 			io.MousePos.x >= 0.0f && io.MousePos.y >= 0.0f &&
-			io.MousePos.x < io.DisplaySize.x && io.MousePos.y < io.DisplaySize.y;
+			io.MousePos.x < io.DisplaySize.x && io.MousePos.y < io.DisplaySize.y &&
+			!vrState.wandState.isIntersecting;
 
 		if (g_visible) {
 			RenderWindow();
