@@ -33,11 +33,13 @@
 #include <d3d11_1.h>
 #include <d3dcompiler.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
 #include <exception>
 #include <optional>
+#include <vector>
 
 #pragma comment(lib, "d3dcompiler.lib")
 
@@ -254,6 +256,15 @@ float4 main(PS_INPUT input) : SV_TARGET
 			winrt::com_ptr<ID3D11ShaderResourceView> menuSRV;
 			ID3D11Texture2D* cachedMenuTexture = nullptr;
 
+			// Procedurally-generated marker for the wand-panel intersection point (a filled
+			// circle with a dark outline), composited over whichever panel is currently shown so
+			// the laser's aim is legible — the default ImGui software cursor a client (or the
+			// settings UI) might additionally draw into its own panel pixels is unreadable at
+			// panel scale/distance. Built once at InitResources; static content, no per-frame
+			// update needed.
+			winrt::com_ptr<ID3D11Texture2D> cursorTexture;
+			winrt::com_ptr<ID3D11ShaderResourceView> cursorSRV;
+
 			bool initialized = false;
 		};
 
@@ -300,6 +311,76 @@ float4 main(PS_INPUT input) : SV_TARGET
 #else
 #	define HELPER_GPU_PASS(name)
 #endif
+
+		// ---- Cursor marker texture ---------------------------------------
+
+		// White filled disc with a dark outline, alpha-feathered at both edges so it reads
+		// cleanly over any panel content. Matches the marker client mods (PhotoMode,
+		// DialogueHistory) were independently drawing themselves via ImGui's foreground draw
+		// list — built once here instead so every RendersOnFocus client (and the settings UI)
+		// gets a legible wand-aim indicator for free.
+		bool CreateCursorTexture(ID3D11Device* device)
+		{
+			constexpr int kSize = 64;
+			constexpr float kCenter = (kSize - 1) * 0.5f;
+			constexpr float kOuterR = kSize * 0.42f;  // dark outline outer edge
+			constexpr float kInnerR = kSize * 0.34f;  // white fill / outline boundary
+			constexpr float kFeather = 1.5f;          // px of AA falloff at each edge
+
+			std::vector<uint8_t> pixels(static_cast<size_t>(kSize) * kSize * 4, 0);
+			for (int y = 0; y < kSize; ++y) {
+				for (int x = 0; x < kSize; ++x) {
+					const float dx = (static_cast<float>(x) - kCenter);
+					const float dy = (static_cast<float>(y) - kCenter);
+					const float d = std::sqrt(dx * dx + dy * dy);
+
+					uint8_t r = 0, g = 0, b = 0, a = 0;
+					if (d <= kInnerR) {
+						// White fill, feathered against the outline just outside it.
+						const float t = std::clamp((kInnerR - d) / kFeather, 0.0f, 1.0f);
+						r = g = b = 255;
+						a = static_cast<uint8_t>(255.0f * t);
+					} else if (d <= kOuterR) {
+						// Dark outline ring, feathered on both its inner and outer edges.
+						const float tIn = std::clamp((d - kInnerR) / kFeather, 0.0f, 1.0f);
+						const float tOut = std::clamp((kOuterR - d) / kFeather, 0.0f, 1.0f);
+						const float t = std::min(tIn, tOut);
+						r = g = b = 0;
+						a = static_cast<uint8_t>(235.0f * t);
+					}
+					const size_t i = (static_cast<size_t>(y) * kSize + x) * 4;
+					pixels[i + 0] = r;
+					pixels[i + 1] = g;
+					pixels[i + 2] = b;
+					pixels[i + 3] = a;
+				}
+			}
+
+			D3D11_TEXTURE2D_DESC desc = {};
+			desc.Width = kSize;
+			desc.Height = kSize;
+			desc.MipLevels = 1;
+			desc.ArraySize = 1;
+			desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+			desc.SampleDesc.Count = 1;
+			desc.Usage = D3D11_USAGE_IMMUTABLE;
+			desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+			D3D11_SUBRESOURCE_DATA initData = {};
+			initData.pSysMem = pixels.data();
+			initData.SysMemPitch = kSize * 4;
+
+			if (FAILED(device->CreateTexture2D(&desc, &initData, g_res.cursorTexture.put()))) {
+				logs::error("InSceneOverlay: cursor texture creation failed");
+				return false;
+			}
+			if (FAILED(device->CreateShaderResourceView(
+					g_res.cursorTexture.get(), nullptr, g_res.cursorSRV.put()))) {
+				logs::error("InSceneOverlay: cursor SRV creation failed");
+				return false;
+			}
+			return true;
+		}
 
 		// ---- Resource init ----------------------------------------------
 
@@ -549,6 +630,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 			samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
 			if (FAILED(device->CreateSamplerState(&samplerDesc, g_res.sampler.put()))) {
 				logs::error("InSceneOverlay: sampler creation failed");
+				return false;
+			}
+
+			if (!CreateCursorTexture(device)) {
 				return false;
 			}
 
@@ -1012,6 +1097,74 @@ float4 main(PS_INPUT input) : SV_TARGET
 		}
 	}
 
+	// Marker pass: a small quad carrying the cursor texture, placed at the wand's current
+	// panel-UV hit (Overlay::State::wandState) using the SAME anchor transform as the panel quad
+	// it lands on, so it rides along with the panel exactly (position, drag, scale). No-op if the
+	// wand isn't currently on the panel — GetPointer/PumpInput already treat "off panel" as
+	// belonging to the client/game, so there's nothing useful to point at.
+	//
+	// Local-space convention matches WandPointing::ComputeIntersectionForOverlayType: the panel
+	// quad is a unit square in [-0.5,0.5] BEFORE Config::CreateScaleMatrix(menuScale) is applied,
+	// and that's exactly the space the ray-plane hit test resolves in (uv.x = hit.x+0.5, uv.y =
+	// 0.5-hit.y), so inverting that gives the marker's position in the same pre-scale local space
+	// the panel's own vertices live in — composing it with the SAME CreateScaleMatrix(menuScale) *
+	// anchor chain keeps the two in lockstep.
+	void RenderCursorPass(ID3D11DeviceContext* ctx,
+		const EyeMatrices& matrices, const Overlay::Settings& s, const Overlay::State& overlayState)
+	{
+		const auto& wand = overlayState.wandState;
+		if (!wand.isIntersecting || !g_res.cursorSRV)
+			return;
+
+		Matrix anchor;
+		Matrix vpMat;
+		if (wand.matchedOverlayType == Overlay::OverlayType::HMD) {
+			if (s.attachMode != Overlay::AttachMode::HMDOnly && s.attachMode != Overlay::AttachMode::Both)
+				return;  // settings changed since the hit was computed this tick; skip rather than stale-draw
+			if (s.positioningMethod == Overlay::PositioningMethod::FixedWorld) {
+				anchor = overlayState.fixedWorld.m;
+				vpMat = matrices.vpWorldSpace;
+			} else {
+				anchor = Matrix::CreateTranslation(s.hmdOffsetX, s.hmdOffsetY, s.hmdOffsetZ);
+				vpMat = matrices.vpHeadSpace;
+			}
+		} else {
+			if (s.attachMode != Overlay::AttachMode::ControllerOnly && s.attachMode != Overlay::AttachMode::Both)
+				return;
+			const auto attachIdx = Util::GetControllerIndexForDevice(
+				s.attachController, overlayState.lastKnownLeftHandedMode);
+			if (attachIdx == vr::k_unTrackedDeviceIndexInvalid)
+				return;
+			vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount];
+			if (!Util::GetDeviceToAbsoluteTrackingPoseCompatible(
+					vr::TrackingUniverseStanding, 0, poses, vr::k_unMaxTrackedDeviceCount) ||
+				!poses[attachIdx].bPoseIsValid)
+				return;
+			Matrix controllerWorld = Util::HmdMatrix34ToMatrix(poses[attachIdx].mDeviceToAbsoluteTracking);
+			anchor = Matrix::CreateTranslation(s.controllerOffsetX, s.controllerOffsetY, s.controllerOffsetZ) *
+			         controllerWorld;
+			vpMat = matrices.vpWorldSpace;
+			// No backface cull here (unlike the panel quad): a hit was only recorded if the ray
+			// crossed the panel plane in front of the controller, which in practice means the
+			// same side the player is viewing from.
+		}
+
+		// Marker size as a fraction of panel local space, pre-compensated by the inverse of
+		// CreateScaleMatrix's Y stretch so composing it with that same scale yields a round dot
+		// instead of one squashed/stretched by the panel's aspect correction.
+		constexpr float kMarkerLocalSize = 0.035f;
+		const float localX = wand.uvCoordinates.x - 0.5f;
+		const float localY = 0.5f - wand.uvCoordinates.y;
+		Matrix markerLocal =
+			Matrix::CreateScale(kMarkerLocalSize, kMarkerLocalSize / Overlay::Config::kOverlayAspect, 1.0f) *
+			Matrix::CreateTranslation(localX, localY, 0.0f);
+		Matrix model = markerLocal * Overlay::Config::CreateScaleMatrix(s.menuScale) * anchor;
+
+		ConstantBufferData cb;
+		cb.wvp = (model * vpMat).Transpose();
+		DrawQuad(ctx, cb, g_res.cursorSRV.get());
+	}
+
 	// Scene depth for world-quad occlusion. kMAIN is the game's live main depth. Its resolution is
 	// NOT always the submit target's: an upscaling pipeline (e.g. an FSR performance tier) can
 	// leave depth at the lower internal render resolution while only color gets upscaled for the
@@ -1439,8 +1592,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		RenderHUDPass(ctx, matrices, s, hudClients);
 
-		if (wantPanelPass)
+		if (wantPanelPass) {
 			RenderPanelPass(ctx, eye, matrices, s, overlayState, panelSRV);
+			RenderCursorPass(ctx, matrices, s, overlayState);
+		}
 
 		// Drawn last so the rebind capture composites on top of the focused menu.
 		RenderRebindPass(ctx, matrices, s);

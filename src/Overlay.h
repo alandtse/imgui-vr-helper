@@ -218,6 +218,12 @@ namespace ImGuiVRHelper::Overlay
 		vr::TrackedDeviceIndex_t controllerIndex = vr::k_unTrackedDeviceIndexInvalid;
 		Vector3 rayOrigin = Vector3::Zero;
 		Vector3 rayDirection = Vector3::Zero;
+		// Which overlay anchor (HMD- or controller-attached) the hit above belongs to, for
+		// AttachMode::Both where the panel is drawn at both locations at once. Set alongside
+		// isIntersecting/uvCoordinates by WandPointing::ComputeIntersection. Consumed by
+		// InSceneOverlay's cursor-marker pass to draw the marker at the same anchor the panel
+		// quad it's landing on uses.
+		OverlayType matchedOverlayType = OverlayType::HMD;
 	};
 
 	struct FixedWorldPosition

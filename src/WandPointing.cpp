@@ -104,15 +104,18 @@ namespace ImGuiVRHelper::WandPointing
 		const auto attach = state.settings.attachMode;
 
 		bool intersected = false;
+		Overlay::OverlayType matchedType = Overlay::OverlayType::HMD;
 		if (attach == Overlay::AttachMode::HMDOnly || attach == Overlay::AttachMode::Both) {
 			if (ComputeIntersectionForOverlayType(Overlay::OverlayType::HMD, controllerIndex, outUV)) {
 				intersected = true;
+				matchedType = Overlay::OverlayType::HMD;
 			}
 		}
 		if (!intersected &&
 			(attach == Overlay::AttachMode::ControllerOnly || attach == Overlay::AttachMode::Both)) {
 			if (ComputeIntersectionForOverlayType(Overlay::OverlayType::Controller, controllerIndex, outUV)) {
 				intersected = true;
+				matchedType = Overlay::OverlayType::Controller;
 			}
 		}
 
@@ -120,6 +123,7 @@ namespace ImGuiVRHelper::WandPointing
 			state.wandState.isIntersecting = true;
 			state.wandState.uvCoordinates = outUV;
 			state.wandState.controllerIndex = controllerIndex;
+			state.wandState.matchedOverlayType = matchedType;
 		} else {
 			state.wandState.isIntersecting = false;
 		}
