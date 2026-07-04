@@ -193,6 +193,7 @@ namespace ImGuiVRHelperPluginAPI
 				m_helper = nullptr;
 				return false;
 			}
+			m_flags = flags;  // PumpInput consults kClientFlag_OwnCursor
 			// Optional: VR text entry (interface 002). Null against an older helper,
 			// in which case PumpKeyboard is a no-op (desktop keyboard only).
 			m_helper002 = GetImGuiVRHelperInterface002();
@@ -215,6 +216,7 @@ namespace ImGuiVRHelperPluginAPI
 			m_helper003 = nullptr;
 			m_helper004 = nullptr;
 			m_helper005 = nullptr;
+			m_flags = 0;
 			m_kbShown = false;
 			m_kbDelivered.clear();
 			m_kbDismissCooldown = 0;
@@ -586,7 +588,12 @@ namespace ImGuiVRHelperPluginAPI
 				const float y = std::clamp(v * io.DisplaySize.y, 0.0f, io.DisplaySize.y);
 				io.MousePos = ImVec2(x, y);
 				io.AddMousePosEvent(x, y);
-				io.MouseDrawCursor = true;
+				// Cursor choice (kClientFlag_OwnCursor): by default the helper
+				// composites its wand dot over the panel, so ImGui's software
+				// cursor stays off to avoid a second pointer; a client that
+				// opted into drawing its own (context-aware arrow/I-beam/resize)
+				// gets it enabled here and the helper suppresses its dot.
+				io.MouseDrawCursor = (m_flags & kClientFlag_OwnCursor) != 0;
 				io.WantSetMousePos = true;
 			} else {
 				// Explicitly false here rather than relying on it having already been consumed:
@@ -1154,6 +1161,7 @@ namespace ImGuiVRHelperPluginAPI
 		IImGuiVRHelperInterface003* m_helper003 = nullptr;  // null if helper predates 003 (no off-panel combos)
 		IImGuiVRHelperInterface004* m_helper004 = nullptr;  // null if helper predates 004 (no world quads)
 		IImGuiVRHelperInterface005* m_helper005 = nullptr;  // null if helper predates 005 (no client-driven reposition)
+		uint32_t m_flags = 0;                               // registration flags (kClientFlag_OwnCursor gates the software cursor)
 		uint32_t m_id = 0;
 		ID3D11DeviceContext* m_cachedContext = nullptr;  // ctx resolved lazily, device-owned
 		bool m_requestsRender = false;

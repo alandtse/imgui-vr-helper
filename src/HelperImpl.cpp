@@ -608,6 +608,13 @@ namespace ImGuiVRHelper
 		return out;
 	}
 
+	uint32_t HelperImpl::GetClientFlags(uint32_t client_id)
+	{
+		std::scoped_lock lk{ m_mutex };
+		const auto it = m_clients.find(client_id);
+		return it != m_clients.end() ? it->second.flags : 0u;
+	}
+
 	uint32_t HelperImpl::GetFocusedClientId()
 	{
 		std::scoped_lock lk{ m_mutex };
