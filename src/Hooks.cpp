@@ -299,6 +299,10 @@ namespace ImGuiVRHelper::Hooks
 				// not run on the render thread (the vrclient "device busy" race).
 				VRKeyboard::Tick();
 
+				// Synthetic devbench-injected buttons land here — same thread and
+				// same state as real events, ahead of this tick's frame build.
+				Input::DrainInjected();
+
 				// Always feed the menu its input first, even when we're
 				// about to swallow the events from the game side. This is
 				// what lets ImGui see the trigger pull as a click while

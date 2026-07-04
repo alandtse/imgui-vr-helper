@@ -100,4 +100,16 @@ namespace ImGuiVRHelper::Input
 	/// base key so one physical press records once; returns the key unchanged when
 	/// it has no alternate.
 	uint32_t Canonical(uint32_t keyCode);
+
+	// ---- Synthetic input (devbench bridge) ------------------------------
+
+	/// Queue a synthetic button event, applied to the primary/secondary
+	/// controller state on the next input-thread tick — the same state real
+	/// events land in, so leases/combos/edge detection see it identically.
+	/// Thread-safe (called from devbench's listener thread).
+	void InjectButton(bool primaryHand, uint32_t keyCode, bool pressed);
+
+	/// Drain queued synthetic events into controller state. Input thread
+	/// only (called from the PollInputDevices thunk).
+	void DrainInjected();
 }
