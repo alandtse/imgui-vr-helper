@@ -1176,14 +1176,19 @@ float4 main(PS_INPUT input) : SV_TARGET
 			Matrix::CreateTranslation(localX, localY, 0.0f);
 		Matrix model = markerLocal * Overlay::Config::CreateScaleMatrix(s.menuScale) * anchor;
 
-		// TEMP diagnostic: marker NDC + the panel's own left/center/right edge NDC, computed HERE
-		// with the SAME anchor/vpMat this draw call uses (not a separately-throttled log in
-		// RenderPanelPass -- that drifted out of sync with this pass's own counter, since this
-		// pass only runs while the wand intersects, comparing samples several frames apart under
-		// head/panel motion and producing bogus "divergence"). One log line, one instant.
+		// TEMP diagnostic: log the wand UV/marker NDC on the actual trigger-press edge (ground
+		// truth -- a real click, not an arbitrary periodic sample) so it can be reconciled against
+		// the client's own log of what it thinks got clicked (io.MousePos / hovered widget) for
+		// the SAME press. A periodic sample only proves this pass's own math is self-consistent
+		// (marker vs panel computed with the identical anchor/vpMat, so of course they agree) --
+		// it says nothing about whether the underlying wand UV corresponds to where content
+		// actually is, which is the open question here.
 		{
-			static int frameCounter = 0;
-			if (++frameCounter % 30 == 0) {
+			using Keys = RE::BSOpenVRControllerDevice::Keys;
+			static bool prevTriggerHeld = false;
+			const bool triggerHeld = overlayState.primaryControllerState[Keys::kTrigger].isPressed ||
+			                         overlayState.secondaryControllerState[Keys::kTrigger].isPressed;
+			if (triggerHeld && !prevTriggerHeld) {
 				Matrix panelModel = Overlay::Config::CreateScaleMatrix(s.menuScale) * anchor;
 				Matrix panelMvp = panelModel * vpMat;
 				Matrix markerMvp = model * vpMat;
@@ -1197,15 +1202,13 @@ float4 main(PS_INPUT input) : SV_TARGET
 				auto c = toNDC({ 0.0f, 0.0f, 0.0f }, panelMvp);
 				auto r = toNDC({ 0.5f, 0.0f, 0.0f }, panelMvp);
 				auto m = toNDC({ 0.0f, 0.0f, 0.0f }, markerMvp);
-				// Expected: linear interpolation of l/c/r by localX+0.5 is NOT valid under
-				// perspective (only clip space, pre-divide, is linear) -- compare m directly
-				// against a same-instant panel instead of deriving an "expected" value from it.
 				logs::info(
-					"Sync NDC: uv=({:.3f},{:.3f}) local=({:.3f},{:.3f}) marker=({:.3f},{:.3f}) "
+					"TriggerPress NDC: uv=({:.3f},{:.3f}) local=({:.3f},{:.3f}) marker=({:.3f},{:.3f}) "
 					"panelLeft=({:.3f},{:.3f}) panelCenter=({:.3f},{:.3f}) panelRight=({:.3f},{:.3f})",
 					wand.uvCoordinates.x, wand.uvCoordinates.y, localX, localY, m.x, m.y,
 					l.x, l.y, c.x, c.y, r.x, r.y);
 			}
+			prevTriggerHeld = triggerHeld;
 		}
 
 		ConstantBufferData cb;
