@@ -256,7 +256,7 @@ namespace ImGuiVRHelper
 	private:
 		HelperImpl() = default;
 
-		std::mutex m_mutex;
+		mutable std::mutex m_mutex;  // mutable: DiagnosticsJson() is const but must lock to snapshot clients
 		uint32_t m_next_client_id = 1;
 		std::unordered_map<uint32_t, struct ClientRecord> m_clients;
 		std::unordered_map<ImGuiVRHelperPluginAPI::ComboId,
@@ -352,6 +352,12 @@ namespace ImGuiVRHelper
 		// changes mid-hold can no longer strand a half-delivered press/release
 		// pair (the "clicks stop registering after grip-move" class).
 		InputLeases::Table m_leases;
+		// Mirror of m_leases.StrippedBits() for DiagnosticsJson() (devbench's listener
+		// thread): m_leases itself is plain (non-atomic) state mutated only from
+		// DispatchToClients on the render thread, so a cross-thread read of it would
+		// race. Updated alongside every m_leases.Update() call.
+		std::atomic<uint32_t> m_diagStripLeft{ 0 };
+		std::atomic<uint32_t> m_diagStripRight{ 0 };
 
 		// Startup welcome banner (HUD-mode). Shows once at launch, then
 		// dismisses after a timeout, on entering the game, or if disabled.

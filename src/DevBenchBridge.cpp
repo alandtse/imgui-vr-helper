@@ -140,14 +140,26 @@ namespace ImGuiVRHelper::DevBenchBridge
 			if (id == 0)
 				return json{ { "error", "unknown client" }, { "hint", "pass client_id or name (see inspect kind=imguivrhelper)" } };
 
+			// Path is treated as UTF-8 end-to-end (JSON strings are UTF-8; the actual
+			// UTF-16 conversion for the WinAPI call happens in ServicePanelDumps).
 			std::string path = args.value("path", std::string());
 			if (path.empty()) {
-				char* profile = nullptr;
-				size_t len = 0;
-				const std::string home = (_dupenv_s(&profile, &len, "USERPROFILE") == 0 && profile) ?
-				                             std::string(profile) :
-				                             std::string(".");
-				free(profile);
+				// Fetch USERPROFILE wide (may contain non-ASCII) and re-encode to UTF-8
+				// rather than _dupenv_s's narrow/ANSI-codepage string, which would
+				// mangle a non-ASCII username.
+				std::string home = ".";
+				wchar_t* wprofile = nullptr;
+				size_t wlen = 0;
+				if (_wdupenv_s(&wprofile, &wlen, L"USERPROFILE") == 0 && wprofile) {
+					const int n = WideCharToMultiByte(
+						CP_UTF8, 0, wprofile, -1, nullptr, 0, nullptr, nullptr);
+					if (n > 0) {
+						home.resize(static_cast<size_t>(n) - 1);
+						WideCharToMultiByte(
+							CP_UTF8, 0, wprofile, -1, home.data(), n, nullptr, nullptr);
+					}
+					free(wprofile);
+				}
 				path = std::format("{}\\My Games\\Skyrim VR\\SKSE\\imguivrhelper-panel-{}.png", home, id);
 			}
 
@@ -193,7 +205,7 @@ namespace ImGuiVRHelper::DevBenchBridge
 			"inputSchema": { "type": "object", "properties": {
 				"client_id": { "type": "integer" }, "name": { "type": "string" },
 				"path": { "type": "string" } } },
-			"readOnly": true
+			"readOnly": false
 		})";
 
 		// inspect extension keeps the agent-facing tool list small; hosts older
