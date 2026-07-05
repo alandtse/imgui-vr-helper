@@ -877,15 +877,18 @@ namespace ImGuiVRHelper
 		// RendersOnFocus: the helper unconditionally renders its
 		// settings UI into the self-client RTV (DispatchFrame's
 		// SettingsUI::Render block), so it trivially honors the
-		// focus-render contract. No kClientFlag_OwnCursor: the settings UI has no
-		// styled cursor of its own, so it takes the helper-composited pointer
-		// (the default) like any other client.
+		// focus-render contract. OwnCursor: SettingsUI already draws its own
+		// wand-aware cursor (see the "single source of truth" MouseDrawCursor
+		// logic in SettingsUI::Render) rather than taking the compositor's
+		// pointer -- register the flag so the compositor agrees and doesn't
+		// draw a second one.
 		m_self_client_id = RegisterClient(
 			kSelfClientName,
 			nullptr,
 			+[](const ImGuiVRHelperPluginAPI::Frame*, void*) { /* no-op */ },
 			nullptr,
-			ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus);
+			ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus |
+				ImGuiVRHelperPluginAPI::kClientFlag_OwnCursor);
 
 		// Synthetic HUD-mode client for the Settings::showHUDDemo smoke
 		// test. Always registered (zero overhead until showHUDDemo
