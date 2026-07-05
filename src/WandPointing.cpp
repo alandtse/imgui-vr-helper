@@ -139,10 +139,36 @@ namespace ImGuiVRHelper::WandPointing
 		// Settings instead of the SCS VR class members.
 		auto& state = Overlay::State::GetSingleton();
 		const auto& s = state.settings;
-		if (!s.enableWandPointing)
-			return;
 
 		ImGuiIO& io = ImGui::GetIO();
+
+		// Synthetic pointer (devbench bridge): drive the cursor from the forced
+		// UV so an agent can aim the helper's own UI deterministically, even
+		// with no controllers tracked. Precedes every gate on purpose.
+		if (state.debugPointer.active.load(std::memory_order_relaxed)) {
+			// Clamp to [0,1] before it becomes state.wandState.uvCoordinates: that
+			// field is exposed to clients via GetPointer(), which documents (and
+			// ComputeIntersectionForOverlayType always maintains) a 0..1 range.
+			const float u = std::clamp(state.debugPointer.u.load(std::memory_order_relaxed), 0.0f, 1.0f);
+			const float v = std::clamp(state.debugPointer.v.load(std::memory_order_relaxed), 0.0f, 1.0f);
+			state.wandState.isIntersecting = true;
+			state.wandState.uvCoordinates = ImVec2(u, v);
+			const float x = u * io.DisplaySize.x;
+			const float y = v * io.DisplaySize.y;
+			io.MousePos = ImVec2(x, y);
+			io.AddMousePosEvent(x, y);
+			// Same no-warp rule as the real wand below: injection runs after the
+			// Win32 backend's NewFrame, so it wins without the OS-cursor clamp
+			// (WantSetMousePos=true would round-trip through the OS cursor,
+			// clamped to the mirror window's client area). MouseDrawCursor is
+			// left alone -- SettingsUI's single source of truth decides it from
+			// wandState.isIntersecting after this returns.
+			io.WantSetMousePos = false;
+			return;
+		}
+
+		if (!s.enableWandPointing)
+			return;
 
 		namespace API = ImGuiVRHelperPluginAPI;
 

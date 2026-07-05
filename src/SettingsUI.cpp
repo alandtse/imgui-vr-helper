@@ -208,6 +208,18 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::Checkbox("Wand pointing", &s.enableWandPointing);
 				if (ImGui::IsItemHovered())
 					ImGui::SetTooltip("Aim a controller at the panel to move the cursor.");
+				// Style of the helper-drawn pointer (for clients that don't draw their own).
+				int cursorStyle = static_cast<int>(s.cursorStyle);
+				if (ImGui::Combo("Pointer style", &cursorStyle, "Dot\0Arrow\0"))
+					s.cursorStyle = static_cast<Overlay::CursorStyle>(cursorStyle);
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("Shape of the wand pointer the helper draws over menus.");
+				ImGui::SliderFloat("Pointer size", &s.cursorSize, 0.5f, 3.0f, "%.2fx");
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("Scale of the helper-drawn pointer. 1.0 = default.");
+				ImGui::ColorEdit4("Pointer color", s.cursorColor);
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("Tint of the helper-drawn pointer's fill; its outline stays dark for contrast.");
 				ImGui::Checkbox("Grip-to-drag repositioning", &s.enableDragToReposition);
 				if (ImGui::IsItemHovered())
 					ImGui::SetTooltip("Hold grip and move your hand to reposition the overlay;\nthumbstick up/down moves it farther/closer.");
@@ -1002,6 +1014,25 @@ namespace ImGuiVRHelper::SettingsUI
 			ImGui::PopStyleVar(3);
 			ImGui::PopStyleColor(2);
 		}
+
+		// Same fix client mods apply via the SDK's ApplyPanelDisplaySize: override
+		// the Win32-backend-derived io.DisplaySize with the actual panel texture's
+		// pixel dimensions, so the wand cursor (mapped from panel UV) and the
+		// rendered content agree on the same canvas. No-op until the self client
+		// (and its panel) exist.
+		void ApplySelfPanelDisplaySize()
+		{
+			auto& helper = HelperImpl::GetSingleton();
+			const uint32_t selfId = helper.GetSelfClientId();
+			if (selfId == 0)
+				return;
+			ImGuiVRHelperPluginAPI::PanelHandle panel{};
+			if (!helper.GetPanel(selfId, &panel) || !panel.width || !panel.height)
+				return;
+			ImGuiIO& io = ImGui::GetIO();
+			io.DisplaySize = ImVec2(static_cast<float>(panel.width), static_cast<float>(panel.height));
+			io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+		}
 	}  // namespace
 
 	bool Init()
@@ -1111,6 +1142,7 @@ namespace ImGuiVRHelper::SettingsUI
 			if (g_hwnd) {
 				ImGui_ImplWin32_NewFrame();
 			}
+			ApplySelfPanelDisplaySize();
 			ImGui::NewFrame();
 			io.MouseDrawCursor = false;
 			RenderQuickSelectMenu();
@@ -1154,6 +1186,16 @@ namespace ImGuiVRHelper::SettingsUI
 		if (g_hwnd) {
 			ImGui_ImplWin32_NewFrame();
 		}
+		// ImGui_ImplWin32_NewFrame sets io.DisplaySize from the game window's
+		// client rect (its native/mirror resolution) -- unrelated to the actual
+		// panel texture this content renders into, which HelperImpl allocates
+		// supersampled (PanelPixelSize: baseWidth/Height * hudSupersample for the
+		// self client, since it fills the view like a HUD layer). Left alone, the
+		// UI only fills a sub-rect of that texture sized to the window's native
+		// resolution, and the wand cursor (mapped from panel UV, i.e. the FULL
+		// supersampled dimensions) diverges by exactly the supersample factor.
+		// Same fix client mods apply via the SDK's ApplyPanelDisplaySize.
+		ApplySelfPanelDisplaySize();
 
 		WandPointing::UpdateCursorFromWandPointing();
 
@@ -1314,8 +1356,8 @@ namespace ImGuiVRHelper::SettingsUI
 		// is final): draw it only when it actually lands on the panel — placed by
 		// the wand, the thumbstick, or the desktop mouse (the backend reports
 		// in-bounds while the mirror window has focus, -FLT_MAX otherwise). While
-		// the wand is the source, stand down: the compositor's wand dot is the
-		// pointer (the self client registers kClientFlag_HelperCursor), and a
+		// the wand is the source, stand down: the compositor draws the pointer
+		// for the self client (it doesn't set kClientFlag_OwnCursor), and a
 		// software cursor under it would just be a second, smaller pointer.
 		io.MouseDrawCursor =
 			io.MousePos.x >= 0.0f && io.MousePos.y >= 0.0f &&

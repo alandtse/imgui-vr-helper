@@ -264,6 +264,14 @@ float4 main(PS_INPUT input) : SV_TARGET
 			// update needed.
 			winrt::com_ptr<ID3D11Texture2D> cursorTexture;
 			winrt::com_ptr<ID3D11ShaderResourceView> cursorSRV;
+			// Alternate pointer style (Settings::CursorStyle::Arrow); same 64px
+			// quad, hotspot baked at the texture center so RenderCursorPass just
+			// swaps the SRV with no positioning change.
+			winrt::com_ptr<ID3D11Texture2D> cursorArrowTexture;
+			winrt::com_ptr<ID3D11ShaderResourceView> cursorArrowSRV;
+			// Tint last baked into cursorTexture/cursorArrowTexture; EnsureCursorColorCurrent
+			// regenerates both only when Settings::cursorColor no longer matches this.
+			float cursorColorApplied[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 
 			bool initialized = false;
 		};
@@ -314,18 +322,53 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		// ---- Cursor marker texture ---------------------------------------
 
-		// White filled disc with a dark outline, alpha-feathered at both edges so it reads
-		// cleanly over any panel content. Matches the marker client mods (PhotoMode,
+		constexpr int kCursorSize = 64;
+
+		// Upload a 64x64 RGBA bitmap as an immutable texture + SRV.
+		bool UploadCursorBitmap(ID3D11Device* device, const std::vector<uint8_t>& pixels,
+			winrt::com_ptr<ID3D11Texture2D>& texOut, winrt::com_ptr<ID3D11ShaderResourceView>& srvOut,
+			const char* label)
+		{
+			D3D11_TEXTURE2D_DESC desc = {};
+			desc.Width = kCursorSize;
+			desc.Height = kCursorSize;
+			desc.MipLevels = 1;
+			desc.ArraySize = 1;
+			desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+			desc.SampleDesc.Count = 1;
+			desc.Usage = D3D11_USAGE_IMMUTABLE;
+			desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+			D3D11_SUBRESOURCE_DATA initData = {};
+			initData.pSysMem = pixels.data();
+			initData.SysMemPitch = kCursorSize * 4;
+
+			if (FAILED(device->CreateTexture2D(&desc, &initData, texOut.put()))) {
+				logs::error("InSceneOverlay: {} texture creation failed", label);
+				return false;
+			}
+			if (FAILED(device->CreateShaderResourceView(texOut.get(), nullptr, srvOut.put()))) {
+				logs::error("InSceneOverlay: {} SRV creation failed", label);
+				return false;
+			}
+			return true;
+		}
+
+		// Fill color crossfading to a dark outline, alpha-feathered at the outer edge so it
+		// reads cleanly over any panel content. Matches the marker client mods (PhotoMode,
 		// DialogueHistory) were independently drawing themselves via ImGui's foreground draw
 		// list — built once here instead so every RendersOnFocus client (and the settings UI)
-		// gets a legible wand-aim indicator for free.
-		bool CreateCursorTexture(ID3D11Device* device)
+		// gets a legible wand-aim indicator for free. Hotspot is the texture center. tint is
+		// user-configurable (Settings::cursorColor); the outline stays dark regardless, for
+		// contrast against any panel content or fill color.
+		bool CreateDotTexture(ID3D11Device* device, const float tint[4])
 		{
-			constexpr int kSize = 64;
+			constexpr int kSize = kCursorSize;
 			constexpr float kCenter = (kSize - 1) * 0.5f;
 			constexpr float kOuterR = kSize * 0.42f;  // dark outline outer edge
-			constexpr float kInnerR = kSize * 0.34f;  // white fill / outline boundary
+			constexpr float kInnerR = kSize * 0.34f;  // fill / outline boundary
 			constexpr float kFeather = 1.5f;          // px of AA falloff at each edge
+			const float fillR = tint[0] * 255.0f, fillG = tint[1] * 255.0f, fillB = tint[2] * 255.0f;
 
 			std::vector<uint8_t> pixels(static_cast<size_t>(kSize) * kSize * 4, 0);
 			for (int y = 0; y < kSize; ++y) {
@@ -336,15 +379,17 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 					uint8_t r = 0, g = 0, b = 0, a = 0;
 					if (d <= kOuterR) {
-						// White fill crossfading to the dark outline across kFeather (AA on
+						// Fill crossfading to the dark (0,0,0) outline across kFeather (AA on
 						// the color boundary); alpha feathers ONLY at the outer edge.
 						// Feathering both alphas down to zero at the fill/outline boundary
 						// left a transparent seam ring showing panel content through the
 						// marker — the opposite of the legibility goal.
 						const float tEdge = std::clamp((d - (kInnerR - kFeather)) / kFeather, 0.0f, 1.0f);
 						const float tOut = std::clamp((kOuterR - d) / kFeather, 0.0f, 1.0f);
-						r = g = b = static_cast<uint8_t>(255.0f * (1.0f - tEdge));
-						a = static_cast<uint8_t>((255.0f - 20.0f * tEdge) * tOut);
+						r = static_cast<uint8_t>(fillR * (1.0f - tEdge));
+						g = static_cast<uint8_t>(fillG * (1.0f - tEdge));
+						b = static_cast<uint8_t>(fillB * (1.0f - tEdge));
+						a = static_cast<uint8_t>((255.0f - 20.0f * tEdge) * tOut * tint[3]);
 					}
 					const size_t i = (static_cast<size_t>(y) * kSize + x) * 4;
 					pixels[i + 0] = r;
@@ -353,31 +398,112 @@ float4 main(PS_INPUT input) : SV_TARGET
 					pixels[i + 3] = a;
 				}
 			}
+			return UploadCursorBitmap(device, pixels, g_res.cursorTexture, g_res.cursorSRV, "cursor dot");
+		}
 
-			D3D11_TEXTURE2D_DESC desc = {};
-			desc.Width = kSize;
-			desc.Height = kSize;
-			desc.MipLevels = 1;
-			desc.ArraySize = 1;
-			desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-			desc.SampleDesc.Count = 1;
-			desc.Usage = D3D11_USAGE_IMMUTABLE;
-			desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		// Classic desktop arrow: tinted fill, dark outline. Drawn as a filled polygon whose
+		// TIP is at the texture center (kCursorSize/2, kCursorSize/2) so it shares the dot's
+		// center hotspot — swapping the SRV in RenderCursorPass needs no repositioning. The
+		// arrow body extends down-right from the tip (standard pointer orientation).
+		bool CreateArrowTexture(ID3D11Device* device, const float tint[4])
+		{
+			constexpr int kSize = kCursorSize;
+			constexpr float kHot = kSize * 0.5f;  // tip at center
+			constexpr float kS = kSize * 0.34f;   // arrow length from tip
 
-			D3D11_SUBRESOURCE_DATA initData = {};
-			initData.pSysMem = pixels.data();
-			initData.SysMemPitch = kSize * 4;
+			// Arrow outline in tip-local units (tip at 0,0; +x right, +y down), the classic
+			// Windows pointer: down the left edge, notch to the tail, out to the tail tip,
+			// back up the right shaft. Multiplied by kS and offset to the hotspot below.
+			const ImVec2 poly[7] = {
+				{ 0.00f, 0.00f },  // tip
+				{ 0.00f, 1.00f },  // straight down the left edge
+				{ 0.28f, 0.73f },  // inner notch
+				{ 0.46f, 1.10f },  // down the tail's left side
+				{ 0.66f, 1.02f },  // tail tip
+				{ 0.40f, 0.62f },  // up the tail's right side to the shaft
+				{ 0.72f, 0.55f },  // out along the top-right shaft edge
+			};
+			ImVec2 pts[7];
+			for (int i = 0; i < 7; ++i)
+				pts[i] = ImVec2(kHot + poly[i].x * kS, kHot + poly[i].y * kS);
 
-			if (FAILED(device->CreateTexture2D(&desc, &initData, g_res.cursorTexture.put()))) {
-				logs::error("InSceneOverlay: cursor texture creation failed");
-				return false;
+			auto pointInPoly = [&](float px, float py) {
+				bool in = false;
+				for (int i = 0, j = 6; i < 7; j = i++) {
+					if (((pts[i].y > py) != (pts[j].y > py)) &&
+						(px < (pts[j].x - pts[i].x) * (py - pts[i].y) / (pts[j].y - pts[i].y) + pts[i].x))
+						in = !in;
+				}
+				return in;
+			};
+			// Distance from a point to the polygon boundary (for the dark outline + AA).
+			auto edgeDist = [&](float px, float py) {
+				float best = 1e9f;
+				for (int i = 0, j = 6; i < 7; j = i++) {
+					const float ax = pts[j].x, ay = pts[j].y, bx = pts[i].x, by = pts[i].y;
+					const float vx = bx - ax, vy = by - ay;
+					const float wx = px - ax, wy = py - ay;
+					const float len2 = vx * vx + vy * vy;
+					float t = len2 > 0.0f ? (wx * vx + wy * vy) / len2 : 0.0f;
+					t = std::clamp(t, 0.0f, 1.0f);
+					const float dx = px - (ax + t * vx), dy = py - (ay + t * vy);
+					best = std::min(best, std::sqrt(dx * dx + dy * dy));
+				}
+				return best;
+			};
+
+			constexpr float kOutline = 2.0f;  // px dark border
+			constexpr float kFeather = 1.0f;  // px AA
+			const float fillR = tint[0] * 255.0f, fillG = tint[1] * 255.0f, fillB = tint[2] * 255.0f;
+			std::vector<uint8_t> pixels(static_cast<size_t>(kSize) * kSize * 4, 0);
+			for (int y = 0; y < kSize; ++y) {
+				for (int x = 0; x < kSize; ++x) {
+					const float px = static_cast<float>(x) + 0.5f;
+					const float py = static_cast<float>(y) + 0.5f;
+					const bool inside = pointInPoly(px, py);
+					const float ed = edgeDist(px, py);
+
+					uint8_t r = 0, g = 0, b = 0, a = 0;
+					if (inside) {
+						// Tinted interior; the outermost kOutline px darken to the border.
+						const float tBorder = std::clamp((kOutline - ed) / kOutline, 0.0f, 1.0f);
+						r = static_cast<uint8_t>(fillR * (1.0f - tBorder));
+						g = static_cast<uint8_t>(fillG * (1.0f - tBorder));
+						b = static_cast<uint8_t>(fillB * (1.0f - tBorder));
+						a = static_cast<uint8_t>(255.0f * tint[3]);
+					} else if (ed < kFeather) {
+						// Just outside: dark, alpha-feathered edge for AA.
+						a = static_cast<uint8_t>(255.0f * (1.0f - ed / kFeather) * tint[3]);
+					}
+					const size_t i = (static_cast<size_t>(y) * kSize + x) * 4;
+					pixels[i + 0] = r;
+					pixels[i + 1] = g;
+					pixels[i + 2] = b;
+					pixels[i + 3] = a;
+				}
 			}
-			if (FAILED(device->CreateShaderResourceView(
-					g_res.cursorTexture.get(), nullptr, g_res.cursorSRV.put()))) {
-				logs::error("InSceneOverlay: cursor SRV creation failed");
-				return false;
+			return UploadCursorBitmap(
+				device, pixels, g_res.cursorArrowTexture, g_res.cursorArrowSRV, "cursor arrow");
+		}
+
+		bool CreateCursorTexture(ID3D11Device* device, const float tint[4])
+		{
+			return CreateDotTexture(device, tint) && CreateArrowTexture(device, tint);
+		}
+
+		// Regenerate the cursor textures when Settings::cursorColor changes (a cheap 4-float
+		// compare every frame; the textures themselves are only rebuilt on an actual edit,
+		// e.g. dragging the color picker in the settings menu).
+		void EnsureCursorColorCurrent(ID3D11Device* device, const float tint[4])
+		{
+			if (g_res.cursorColorApplied[0] == tint[0] && g_res.cursorColorApplied[1] == tint[1] &&
+				g_res.cursorColorApplied[2] == tint[2] && g_res.cursorColorApplied[3] == tint[3]) {
+				return;
 			}
-			return true;
+			if (CreateCursorTexture(device, tint)) {
+				for (int i = 0; i < 4; ++i)
+					g_res.cursorColorApplied[i] = tint[i];
+			}
 		}
 
 		// ---- Resource init ----------------------------------------------
@@ -631,7 +757,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 				return false;
 			}
 
-			if (!CreateCursorTexture(device)) {
+			// Default white tint; RenderCursorPass regenerates on the render thread if the
+			// user has set a custom Settings::cursorColor (EnsureCursorColorCurrent).
+			constexpr float kDefaultTint[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+			if (!CreateCursorTexture(device, kDefaultTint)) {
 				return false;
 			}
 
@@ -1145,7 +1274,14 @@ float4 main(PS_INPUT input) : SV_TARGET
 		const EyeMatrices& matrices, const Overlay::Settings& s, const Overlay::State& overlayState)
 	{
 		const auto& wand = overlayState.wandState;
-		if (!wand.isIntersecting || !g_res.cursorSRV)
+		if (!wand.isIntersecting)
+			return;
+		if (auto* device = Globals::GetD3D().device)
+			EnsureCursorColorCurrent(device, s.cursorColor);
+		ID3D11ShaderResourceView* cursorSRV = s.cursorStyle == Overlay::CursorStyle::Arrow ?
+		                                          g_res.cursorArrowSRV.get() :
+		                                          g_res.cursorSRV.get();
+		if (!cursorSRV)
 			return;
 
 		// Settings changed since the hit was computed this tick (e.g. attach mode switched
@@ -1167,10 +1303,11 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// CreateScaleMatrix's Y stretch so composing it with that same scale yields a round dot
 		// instead of one squashed/stretched by the panel's aspect correction.
 		constexpr float kMarkerLocalSize = 0.016f;
+		const float markerSize = kMarkerLocalSize * s.cursorSize;
 		const float localX = wand.uvCoordinates.x - 0.5f;
 		const float localY = 0.5f - wand.uvCoordinates.y;
 		Matrix markerLocal =
-			Matrix::CreateScale(kMarkerLocalSize, kMarkerLocalSize / Overlay::Config::kOverlayAspect, 1.0f) *
+			Matrix::CreateScale(markerSize, markerSize / Overlay::Config::kOverlayAspect, 1.0f) *
 			Matrix::CreateTranslation(localX, localY, 0.0f);
 		Matrix model = markerLocal * Overlay::Config::CreateScaleMatrix(s.menuScale) * anchor;
 
@@ -1211,7 +1348,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		ConstantBufferData cb;
 		cb.wvp = (model * vpMat).Transpose();
-		DrawQuad(ctx, cb, g_res.cursorSRV.get());
+		DrawQuad(ctx, cb, cursorSRV);
 	}
 
 	// Scene depth for world-quad occlusion. kMAIN is the game's live main depth. Its resolution is
@@ -1643,13 +1780,12 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		if (wantPanelPass) {
 			RenderPanelPass(ctx, eye, matrices, s, overlayState, panelSRV);
-			// The composited dot is opt-in (kClientFlag_HelperCursor); by default
-			// the focused client's own ImGui software cursor is the pointer —
-			// matching what every shipped client SDK already renders.
+			// The helper composites the pointer for the focused client by default;
+			// a client only draws its own if it opts out (kClientFlag_OwnCursor).
 			auto& helper = HelperImpl::GetSingleton();
 			const uint32_t focusedId = helper.GetFocusedClientId();
-			if (focusedId && (helper.GetClientFlags(focusedId) &
-								 ImGuiVRHelperPluginAPI::kClientFlag_HelperCursor)) {
+			if (focusedId && !(helper.GetClientFlags(focusedId) &
+								 ImGuiVRHelperPluginAPI::kClientFlag_OwnCursor)) {
 				RenderCursorPass(ctx, matrices, s, overlayState);
 			}
 		}

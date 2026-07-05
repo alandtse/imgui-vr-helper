@@ -7,6 +7,7 @@
 
 #include "pch.h"
 
+#include "DevBenchBridge.h"
 #include "HelperImpl.h"
 #include "Hooks.h"
 #include "OpenVRDetection.h"
@@ -126,6 +127,10 @@ namespace
 				// All plugins have finished loading by kPostPostLoad, so the handshake reaches
 				// VRIK regardless of load order. Safe no-op if VRIK isn't installed.
 				ImGuiVRHelper::VrikCompat::TryFetchInterface();
+
+				// Same timing argument for devbench: its listener is up by now.
+				// Runtime no-op when devbench isn't installed.
+				ImGuiVRHelper::DevBenchBridge::Install();
 			}
 			break;
 

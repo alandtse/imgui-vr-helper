@@ -242,10 +242,21 @@ namespace ImGuiVRHelper
 		/// tool can keep driving the unpaused world (e.g. fly a free camera).
 		bool IsLiveToolFocused() const;
 
+		/// One-shot JSON dump of live input/focus state for the devbench bridge
+		/// (wand hit, focus, clients + panel dims, held masks, lease strips,
+		/// drag state, relevant settings). Diagnostic reads only — values may be
+		/// one frame stale; called from devbench's listener thread.
+		std::string DiagnosticsJson() const;
+
+		/// Queue a client's panel texture to be saved as a PNG (devbench bridge).
+		/// Thread-safe; the write happens on the render thread in the next
+		/// DispatchFrame (ServicePanelDumps) since it uses the immediate context.
+		void RequestPanelDump(uint32_t client_id, const std::string& path);
+
 	private:
 		HelperImpl() = default;
 
-		std::mutex m_mutex;
+		mutable std::mutex m_mutex;  // mutable: DiagnosticsJson() is const but must lock to snapshot clients
 		uint32_t m_next_client_id = 1;
 		std::unordered_map<uint32_t, struct ClientRecord> m_clients;
 		std::unordered_map<ImGuiVRHelperPluginAPI::ComboId,
@@ -321,6 +332,12 @@ namespace ImGuiVRHelper
 		bool m_prevRecording = false;
 		bool m_inputSettling = false;
 
+		// Pending devbench panel-dump requests (client_id -> PNG path). Queued from
+		// the listener thread; drained on the render thread in ServicePanelDumps.
+		std::mutex m_dumpMutex;
+		std::vector<std::pair<uint32_t, std::string>> m_pendingDumps;
+		void ServicePanelDumps();
+
 		// Same masking treatment for an in-progress overlay reposition drag: grip both starts that
 		// drag and maps to a client's right-click, so if the wand ray sweeps onto the panel mid-drag
 		// the still-held grip would otherwise be forwarded as a right-click the user never intended,
@@ -335,6 +352,12 @@ namespace ImGuiVRHelper
 		// changes mid-hold can no longer strand a half-delivered press/release
 		// pair (the "clicks stop registering after grip-move" class).
 		InputLeases::Table m_leases;
+		// Mirror of m_leases.StrippedBits() for DiagnosticsJson() (devbench's listener
+		// thread): m_leases itself is plain (non-atomic) state mutated only from
+		// DispatchToClients on the render thread, so a cross-thread read of it would
+		// race. Updated alongside every m_leases.Update() call.
+		std::atomic<uint32_t> m_diagStripLeft{ 0 };
+		std::atomic<uint32_t> m_diagStripRight{ 0 };
 
 		// Startup welcome banner (HUD-mode). Shows once at launch, then
 		// dismisses after a timeout, on entering the game, or if disabled.

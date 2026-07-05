@@ -27,7 +27,11 @@
 #include <RE/B/BSOpenVRControllerDevice.h>
 #include <RE/U/UI.h>
 
+#include <ScreenGrab.h>
 #include <nlohmann/json.hpp>
+#include <wincodec.h>  // GUID_ContainerFormatPng
+
+#include <filesystem>
 
 namespace
 {
@@ -682,6 +686,127 @@ namespace ImGuiVRHelper
 		       (it->second.flags & ImGuiVRHelperPluginAPI::kClientFlag_LiveTool) != 0;
 	}
 
+	std::string HelperImpl::DiagnosticsJson() const
+	{
+		auto& state = Overlay::State::GetSingleton();
+		const auto& s = state.settings;
+
+		// Wire-shaped held mask from live controller state (same fold the frame
+		// builder applies), so the dump matches what clients are delivered.
+		const auto wireMask = [](const RE::VRControllerState& cs) {
+			uint32_t mask = 0;
+			for (const auto& m : ImGuiVRHelper::Input::ButtonTable()) {
+				if (cs[m.reKey].isPressed)
+					mask |= 1u << static_cast<uint32_t>(m.wireButton);
+			}
+			return mask;
+		};
+
+		nlohmann::json j;
+		j["wand"] = {
+			{ "intersecting", state.wandState.isIntersecting },
+			{ "u", state.wandState.uvCoordinates.x },
+			{ "v", state.wandState.uvCoordinates.y },
+			{ "overridden", state.debugPointer.active.load(std::memory_order_relaxed) },
+		};
+		j["drag"] = {
+			{ "dragging", state.dragState.dragging },
+			{ "clientRequested", state.dragState.clientRequested },
+		};
+		j["held"] = {
+			{ "primary", wireMask(state.primaryControllerState) },
+			{ "secondary", wireMask(state.secondaryControllerState) },
+		};
+		j["leases"] = {
+			{ "stripLeft", m_diagStripLeft.load(std::memory_order_relaxed) },
+			{ "stripRight", m_diagStripRight.load(std::memory_order_relaxed) },
+		};
+		j["settings"] = {
+			{ "enableWandPointing", s.enableWandPointing },
+			{ "useInputLeases", s.useInputLeases },
+			{ "enableDragToReposition", s.enableDragToReposition },
+		};
+		{
+			std::scoped_lock lk(m_mutex);
+			j["focusedClient"] = m_focused_client;
+			auto clients = nlohmann::json::array();
+			for (const auto& [id, rec] : m_clients) {
+				unsigned int w = 0, h = 0;
+				PanelPixelSize(rec, w, h);
+				clients.push_back({
+					{ "id", id },
+					{ "name", rec.name },
+					{ "flags", rec.flags },
+					{ "panelWidth", w },
+					{ "panelHeight", h },
+				});
+			}
+			j["clients"] = std::move(clients);
+		}
+		return j.dump();
+	}
+
+	void HelperImpl::RequestPanelDump(uint32_t client_id, const std::string& path)
+	{
+		std::scoped_lock lk(m_dumpMutex);
+		// Drains on the next render frame, so a legitimate caller never gets near
+		// this; it only bites a caller requesting dumps far faster than frames render.
+		constexpr size_t kMaxPendingDumps = 64;
+		if (m_pendingDumps.size() >= kMaxPendingDumps) {
+			logs::warn("RequestPanelDump: queue full ({} pending), dropping request for client {}",
+				kMaxPendingDumps, client_id);
+			return;
+		}
+		m_pendingDumps.emplace_back(client_id, path);
+	}
+
+	void HelperImpl::ServicePanelDumps()
+	{
+		std::vector<std::pair<uint32_t, std::string>> pending;
+		{
+			std::scoped_lock lk(m_dumpMutex);
+			if (m_pendingDumps.empty())
+				return;
+			pending.swap(m_pendingDumps);
+		}
+		auto* ctx = Globals::GetD3D().context;  // render thread: DispatchFrame caller
+		if (!ctx)
+			return;
+		for (const auto& [id, path] : pending) {
+			ID3D11Texture2D* tex = GetClientPanelTexture(id);
+			if (!tex) {
+				logs::warn("dumppanel: client {} has no panel texture", id);
+				continue;
+			}
+			// path is UTF-8 (see DevBenchBridge::BuildDumpPanel); widen it properly
+			// rather than byte-widening, which mangles any non-ASCII character.
+			std::wstring wpath;
+			const int wlen = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
+			if (wlen > 0) {
+				// wlen includes the NUL terminator; convert into a scratch buffer
+				// rather than a wstring sized wlen-1, which would have
+				// MultiByteToWideChar write that NUL into the string's own
+				// (implicit, not meant to be written) terminator slot.
+				std::vector<wchar_t> buf(static_cast<size_t>(wlen));
+				MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, buf.data(), wlen);
+				wpath.assign(buf.data(), static_cast<size_t>(wlen) - 1);
+			}
+
+			const auto fsPath = std::filesystem::path(wpath);
+			if (fsPath.has_parent_path()) {
+				std::error_code ec;
+				std::filesystem::create_directories(fsPath.parent_path(), ec);
+			}
+			const HRESULT hr = DirectX::SaveWICTextureToFile(
+				ctx, tex, GUID_ContainerFormatPng, wpath.c_str());
+			if (FAILED(hr))
+				logs::warn("dumppanel: SaveWICTextureToFile('{}') failed 0x{:08X}",
+					path, static_cast<unsigned>(hr));
+			else
+				logs::info("dumppanel: wrote client {} panel to {}", id, path);
+		}
+	}
+
 	void HelperImpl::NotifyEnteredGame()
 	{
 		m_enteredGame = true;  // one-way latch; dismisses the startup welcome
@@ -752,16 +877,15 @@ namespace ImGuiVRHelper
 		// RendersOnFocus: the helper unconditionally renders its
 		// settings UI into the self-client RTV (DispatchFrame's
 		// SettingsUI::Render block), so it trivially honors the
-		// focus-render contract.
-		// HelperCursor: the settings UI has no styled ImGui software cursor of
-		// its own, so it keeps the composited wand dot.
+		// focus-render contract. No kClientFlag_OwnCursor: the settings UI has no
+		// styled cursor of its own, so it takes the helper-composited pointer
+		// (the default) like any other client.
 		m_self_client_id = RegisterClient(
 			kSelfClientName,
 			nullptr,
 			+[](const ImGuiVRHelperPluginAPI::Frame*, void*) { /* no-op */ },
 			nullptr,
-			ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus |
-				ImGuiVRHelperPluginAPI::kClientFlag_HelperCursor);
+			ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus);
 
 		// Synthetic HUD-mode client for the Settings::showHUDDemo smoke
 		// test. Always registered (zero overhead until showHUDDemo
@@ -975,6 +1099,18 @@ namespace ImGuiVRHelper
 	{
 		auto& overlayState = Overlay::State::GetSingleton();
 		const auto& s = overlayState.settings;
+
+		// Synthetic pointer (devbench bridge): force the hit to the requested UV
+		// so an agent can aim deterministically — works even with no controllers
+		// tracked (headless null-driver testing), so it precedes every gate.
+		if (overlayState.debugPointer.active.load(std::memory_order_relaxed)) {
+			overlayState.wandState.isIntersecting = true;
+			overlayState.wandState.uvCoordinates = ImVec2(
+				overlayState.debugPointer.u.load(std::memory_order_relaxed),
+				overlayState.debugPointer.v.load(std::memory_order_relaxed));
+			return;
+		}
+
 		if (!s.enableWandPointing) {
 			overlayState.wandState.isIntersecting = false;
 			return;
@@ -1421,7 +1557,11 @@ namespace ImGuiVRHelper
 				{ baseFrame.left.buttons_released, baseFrame.right.buttons_released }, ctx);
 			stripLeft = m_leases.StrippedBits(0);
 			stripRight = m_leases.StrippedBits(1);
+			m_diagStripLeft.store(stripLeft, std::memory_order_relaxed);
+			m_diagStripRight.store(stripRight, std::memory_order_relaxed);
 		} else {
+			m_diagStripLeft.store(0, std::memory_order_relaxed);
+			m_diagStripRight.store(0, std::memory_order_relaxed);
 			// Legacy latches (kill-switch fallback): mask everything while recording
 			// (+ settle), suppress SDK forwarding while dragging (+ settle).
 			if (m_prevRecording && !recording)
@@ -1652,6 +1792,8 @@ namespace ImGuiVRHelper
 		const uint32_t focused = DispatchToClients(baseFrame, dt);
 
 		PostProcessFrame(focused, dt);
+
+		ServicePanelDumps();
 	}
 
 	bool HelperImpl::IsDashboardVisible()

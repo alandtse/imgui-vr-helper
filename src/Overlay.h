@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include <atomic>
+
 #include <SimpleMath.h>
 #include <imgui.h>
 #include <openvr.h>
@@ -90,6 +92,15 @@ namespace ImGuiVRHelper::Overlay
 		Controller,
 	};
 
+	/// Style of the helper-composited wand pointer (drawn for every focused
+	/// client that doesn't set kClientFlag_OwnCursor). Both anchor their hotspot
+	/// at the exact wand hit; this is a presentation choice.
+	enum class CursorStyle
+	{
+		Dot = 0,    ///< Filled disc with a dark outline (legible at distance).
+		Arrow = 1,  ///< Classic desktop arrow, tip at the hit point.
+	};
+
 	// ---- Settings -------------------------------------------------------
 
 	struct Settings
@@ -110,6 +121,20 @@ namespace ImGuiVRHelper::Overlay
 		float controllerOffsetZ = Config::kDefaultControllerOffsetZ;
 
 		bool enableWandPointing = true;
+
+		/// Style of the helper-composited wand pointer. Applies to every focused
+		/// client that takes the default (helper-drawn) pointer.
+		CursorStyle cursorStyle = CursorStyle::Dot;
+
+		/// Scale multiplier on the helper-drawn pointer's on-panel size (1.0 =
+		/// the built-in default). Accessibility knob: larger/smaller for
+		/// visibility or precision-aiming preference.
+		float cursorSize = 1.0f;
+
+		/// RGBA tint applied to the helper-drawn pointer's fill color (its dark
+		/// outline stays dark for contrast against any panel content). Alpha
+		/// scales the baked per-pixel coverage, not a flat overlay.
+		float cursorColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 
 		/// Route-on-press input leases (see internal/InputLeases.h). Kill-switch
 		/// only — false reverts to the legacy settle-latch + suppression-flag
@@ -318,6 +343,18 @@ namespace ImGuiVRHelper::Overlay
 		/// port lands. Until then, all isPressed/thumbsticks read 0.
 		RE::VRControllerState primaryControllerState{};
 		RE::VRControllerState secondaryControllerState{};
+
+		/// Synthetic wand-pointer override (devbench bridge): while active, the
+		/// input-thread wand updates force the hit to (u,v) on the panel, so an
+		/// agent can drive deterministic clicks without a headset. Atomics:
+		/// written from devbench's listener thread, read on the input thread.
+		struct DebugPointerOverride
+		{
+			std::atomic<bool> active{ false };
+			std::atomic<float> u{ 0.5f };
+			std::atomic<float> v{ 0.5f };
+		};
+		DebugPointerOverride debugPointer;
 
 	private:
 		State() = default;

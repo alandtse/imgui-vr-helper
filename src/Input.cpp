@@ -120,6 +120,18 @@ namespace ImGuiVRHelper::Input
 		std::mutex g_eventLogMutex;
 		std::deque<EventLogEntry> g_eventLog;
 
+		// Synthetic button events (devbench bridge), queued from devbench's
+		// listener thread and drained on the input thread so they land in
+		// controller state with the same threading as real events.
+		struct InjectedEvent
+		{
+			bool primaryHand;
+			uint32_t keyCode;
+			bool pressed;
+		};
+		std::mutex g_injectMutex;
+		std::vector<InjectedEvent> g_injectQueue;
+
 		bool IsButtonKey(uint32_t keyCode)
 		{
 			for (const auto& m : ButtonTable()) {
@@ -374,5 +386,41 @@ namespace ImGuiVRHelper::Input
 		// to clients (focus, overlay visibility, pointer-in-panel). Leave
 		// flags at 0 here; HelperImpl::DispatchFrame patches them per-client.
 		out.flags = state.overlayVisible ? (1u << 1) : 0u;
+	}
+
+	void InjectButton(bool primaryHand, uint32_t keyCode, bool pressed)
+	{
+		std::scoped_lock lk(g_injectMutex);
+		// Drains every input poll (well under a second even at the lowest realistic
+		// poll rate), so a legitimate caller never gets near this; it only bites a
+		// caller injecting far faster than the game polls input.
+		constexpr size_t kMaxQueuedInjections = 256;
+		if (g_injectQueue.size() >= kMaxQueuedInjections) {
+			logs::warn("InjectButton: queue full ({} pending), dropping event", kMaxQueuedInjections);
+			return;
+		}
+		g_injectQueue.push_back({ primaryHand, keyCode, pressed });
+	}
+
+	void DrainInjected()
+	{
+		std::vector<InjectedEvent> pending;
+		{
+			std::scoped_lock lk(g_injectMutex);
+			if (g_injectQueue.empty())
+				return;
+			pending.swap(g_injectQueue);
+		}
+		auto& state = Overlay::State::GetSingleton();
+		const auto nowSecs = std::chrono::duration<double>(
+			std::chrono::steady_clock::now().time_since_epoch())
+		                         .count();
+		for (const auto& e : pending) {
+			auto& target = e.primaryHand ? state.primaryControllerState :
+			                               state.secondaryControllerState;
+			// Same canonical fold real events get, so one synthetic button is
+			// exactly one state entry (see FeedVREvent).
+			target[Canonical(e.keyCode)].OnEvent(e.pressed, nowSecs);
+		}
 	}
 }
