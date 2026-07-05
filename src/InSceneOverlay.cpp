@@ -269,6 +269,9 @@ float4 main(PS_INPUT input) : SV_TARGET
 			// swaps the SRV with no positioning change.
 			winrt::com_ptr<ID3D11Texture2D> cursorArrowTexture;
 			winrt::com_ptr<ID3D11ShaderResourceView> cursorArrowSRV;
+			// Tint last baked into cursorTexture/cursorArrowTexture; EnsureCursorColorCurrent
+			// regenerates both only when Settings::cursorColor no longer matches this.
+			float cursorColorApplied[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 
 			bool initialized = false;
 		};
@@ -351,18 +354,21 @@ float4 main(PS_INPUT input) : SV_TARGET
 			return true;
 		}
 
-		// White filled disc with a dark outline, alpha-feathered at both edges so it reads
-		// cleanly over any panel content. Matches the marker client mods (PhotoMode,
+		// Fill color crossfading to a dark outline, alpha-feathered at the outer edge so it
+		// reads cleanly over any panel content. Matches the marker client mods (PhotoMode,
 		// DialogueHistory) were independently drawing themselves via ImGui's foreground draw
 		// list — built once here instead so every RendersOnFocus client (and the settings UI)
-		// gets a legible wand-aim indicator for free. Hotspot is the texture center.
-		bool CreateDotTexture(ID3D11Device* device)
+		// gets a legible wand-aim indicator for free. Hotspot is the texture center. tint is
+		// user-configurable (Settings::cursorColor); the outline stays dark regardless, for
+		// contrast against any panel content or fill color.
+		bool CreateDotTexture(ID3D11Device* device, const float tint[4])
 		{
 			constexpr int kSize = kCursorSize;
 			constexpr float kCenter = (kSize - 1) * 0.5f;
 			constexpr float kOuterR = kSize * 0.42f;  // dark outline outer edge
-			constexpr float kInnerR = kSize * 0.34f;  // white fill / outline boundary
+			constexpr float kInnerR = kSize * 0.34f;  // fill / outline boundary
 			constexpr float kFeather = 1.5f;          // px of AA falloff at each edge
+			const float fillR = tint[0] * 255.0f, fillG = tint[1] * 255.0f, fillB = tint[2] * 255.0f;
 
 			std::vector<uint8_t> pixels(static_cast<size_t>(kSize) * kSize * 4, 0);
 			for (int y = 0; y < kSize; ++y) {
@@ -373,15 +379,17 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 					uint8_t r = 0, g = 0, b = 0, a = 0;
 					if (d <= kOuterR) {
-						// White fill crossfading to the dark outline across kFeather (AA on
+						// Fill crossfading to the dark (0,0,0) outline across kFeather (AA on
 						// the color boundary); alpha feathers ONLY at the outer edge.
 						// Feathering both alphas down to zero at the fill/outline boundary
 						// left a transparent seam ring showing panel content through the
 						// marker — the opposite of the legibility goal.
 						const float tEdge = std::clamp((d - (kInnerR - kFeather)) / kFeather, 0.0f, 1.0f);
 						const float tOut = std::clamp((kOuterR - d) / kFeather, 0.0f, 1.0f);
-						r = g = b = static_cast<uint8_t>(255.0f * (1.0f - tEdge));
-						a = static_cast<uint8_t>((255.0f - 20.0f * tEdge) * tOut);
+						r = static_cast<uint8_t>(fillR * (1.0f - tEdge));
+						g = static_cast<uint8_t>(fillG * (1.0f - tEdge));
+						b = static_cast<uint8_t>(fillB * (1.0f - tEdge));
+						a = static_cast<uint8_t>((255.0f - 20.0f * tEdge) * tOut * tint[3]);
 					}
 					const size_t i = (static_cast<size_t>(y) * kSize + x) * 4;
 					pixels[i + 0] = r;
@@ -393,11 +401,11 @@ float4 main(PS_INPUT input) : SV_TARGET
 			return UploadCursorBitmap(device, pixels, g_res.cursorTexture, g_res.cursorSRV, "cursor dot");
 		}
 
-		// Classic desktop arrow: white fill, dark outline. Drawn as a filled polygon whose
+		// Classic desktop arrow: tinted fill, dark outline. Drawn as a filled polygon whose
 		// TIP is at the texture center (kCursorSize/2, kCursorSize/2) so it shares the dot's
 		// center hotspot — swapping the SRV in RenderCursorPass needs no repositioning. The
 		// arrow body extends down-right from the tip (standard pointer orientation).
-		bool CreateArrowTexture(ID3D11Device* device)
+		bool CreateArrowTexture(ID3D11Device* device, const float tint[4])
 		{
 			constexpr int kSize = kCursorSize;
 			constexpr float kHot = kSize * 0.5f;  // tip at center
@@ -446,6 +454,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 			constexpr float kOutline = 2.0f;  // px dark border
 			constexpr float kFeather = 1.0f;  // px AA
+			const float fillR = tint[0] * 255.0f, fillG = tint[1] * 255.0f, fillB = tint[2] * 255.0f;
 			std::vector<uint8_t> pixels(static_cast<size_t>(kSize) * kSize * 4, 0);
 			for (int y = 0; y < kSize; ++y) {
 				for (int x = 0; x < kSize; ++x) {
@@ -456,13 +465,15 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 					uint8_t r = 0, g = 0, b = 0, a = 0;
 					if (inside) {
-						// White interior; the outermost kOutline px darken to the border.
+						// Tinted interior; the outermost kOutline px darken to the border.
 						const float tBorder = std::clamp((kOutline - ed) / kOutline, 0.0f, 1.0f);
-						r = g = b = static_cast<uint8_t>(255.0f * (1.0f - tBorder));
-						a = 255;
+						r = static_cast<uint8_t>(fillR * (1.0f - tBorder));
+						g = static_cast<uint8_t>(fillG * (1.0f - tBorder));
+						b = static_cast<uint8_t>(fillB * (1.0f - tBorder));
+						a = static_cast<uint8_t>(255.0f * tint[3]);
 					} else if (ed < kFeather) {
 						// Just outside: dark, alpha-feathered edge for AA.
-						a = static_cast<uint8_t>(255.0f * (1.0f - ed / kFeather));
+						a = static_cast<uint8_t>(255.0f * (1.0f - ed / kFeather) * tint[3]);
 					}
 					const size_t i = (static_cast<size_t>(y) * kSize + x) * 4;
 					pixels[i + 0] = r;
@@ -475,9 +486,24 @@ float4 main(PS_INPUT input) : SV_TARGET
 				device, pixels, g_res.cursorArrowTexture, g_res.cursorArrowSRV, "cursor arrow");
 		}
 
-		bool CreateCursorTexture(ID3D11Device* device)
+		bool CreateCursorTexture(ID3D11Device* device, const float tint[4])
 		{
-			return CreateDotTexture(device) && CreateArrowTexture(device);
+			return CreateDotTexture(device, tint) && CreateArrowTexture(device, tint);
+		}
+
+		// Regenerate the cursor textures when Settings::cursorColor changes (a cheap 4-float
+		// compare every frame; the textures themselves are only rebuilt on an actual edit,
+		// e.g. dragging the color picker in the settings menu).
+		void EnsureCursorColorCurrent(ID3D11Device* device, const float tint[4])
+		{
+			if (g_res.cursorColorApplied[0] == tint[0] && g_res.cursorColorApplied[1] == tint[1] &&
+				g_res.cursorColorApplied[2] == tint[2] && g_res.cursorColorApplied[3] == tint[3]) {
+				return;
+			}
+			if (CreateCursorTexture(device, tint)) {
+				for (int i = 0; i < 4; ++i)
+					g_res.cursorColorApplied[i] = tint[i];
+			}
 		}
 
 		// ---- Resource init ----------------------------------------------
@@ -731,7 +757,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 				return false;
 			}
 
-			if (!CreateCursorTexture(device)) {
+			// Default white tint; RenderCursorPass regenerates on the render thread if the
+			// user has set a custom Settings::cursorColor (EnsureCursorColorCurrent).
+			constexpr float kDefaultTint[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+			if (!CreateCursorTexture(device, kDefaultTint)) {
 				return false;
 			}
 
@@ -1245,10 +1274,14 @@ float4 main(PS_INPUT input) : SV_TARGET
 		const EyeMatrices& matrices, const Overlay::Settings& s, const Overlay::State& overlayState)
 	{
 		const auto& wand = overlayState.wandState;
+		if (!wand.isIntersecting)
+			return;
+		if (auto* device = Globals::GetD3D().device)
+			EnsureCursorColorCurrent(device, s.cursorColor);
 		ID3D11ShaderResourceView* cursorSRV = s.cursorStyle == Overlay::CursorStyle::Arrow ?
 		                                          g_res.cursorArrowSRV.get() :
 		                                          g_res.cursorSRV.get();
-		if (!wand.isIntersecting || !cursorSRV)
+		if (!cursorSRV)
 			return;
 
 		// Settings changed since the hit was computed this tick (e.g. attach mode switched
@@ -1270,10 +1303,11 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// CreateScaleMatrix's Y stretch so composing it with that same scale yields a round dot
 		// instead of one squashed/stretched by the panel's aspect correction.
 		constexpr float kMarkerLocalSize = 0.016f;
+		const float markerSize = kMarkerLocalSize * s.cursorSize;
 		const float localX = wand.uvCoordinates.x - 0.5f;
 		const float localY = 0.5f - wand.uvCoordinates.y;
 		Matrix markerLocal =
-			Matrix::CreateScale(kMarkerLocalSize, kMarkerLocalSize / Overlay::Config::kOverlayAspect, 1.0f) *
+			Matrix::CreateScale(markerSize, markerSize / Overlay::Config::kOverlayAspect, 1.0f) *
 			Matrix::CreateTranslation(localX, localY, 0.0f);
 		Matrix model = markerLocal * Overlay::Config::CreateScaleMatrix(s.menuScale) * anchor;
 

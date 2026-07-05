@@ -126,6 +126,16 @@ namespace ImGuiVRHelper::Overlay
 		/// client that takes the default (helper-drawn) pointer.
 		CursorStyle cursorStyle = CursorStyle::Dot;
 
+		/// Scale multiplier on the helper-drawn pointer's on-panel size (1.0 =
+		/// the built-in default). Accessibility knob: larger/smaller for
+		/// visibility or precision-aiming preference.
+		float cursorSize = 1.0f;
+
+		/// RGBA tint applied to the helper-drawn pointer's fill color (its dark
+		/// outline stays dark for contrast against any panel content). Alpha
+		/// scales the baked per-pixel coverage, not a flat overlay.
+		float cursorColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+
 		/// Route-on-press input leases (see internal/InputLeases.h). Kill-switch
 		/// only — false reverts to the legacy settle-latch + suppression-flag
 		/// routing in case a regression surfaces in the field. Not in the UI.
