@@ -772,10 +772,17 @@ namespace ImGuiVRHelper
 			}
 			// path is UTF-8 (see DevBenchBridge::BuildDumpPanel); widen it properly
 			// rather than byte-widening, which mangles any non-ASCII character.
+			std::wstring wpath;
 			const int wlen = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
-			std::wstring wpath(wlen > 0 ? static_cast<size_t>(wlen) - 1 : 0, L'\0');
-			if (wlen > 0)
-				MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wpath.data(), wlen);
+			if (wlen > 0) {
+				// wlen includes the NUL terminator; convert into a scratch buffer
+				// rather than a wstring sized wlen-1, which would have
+				// MultiByteToWideChar write that NUL into the string's own
+				// (implicit, not meant to be written) terminator slot.
+				std::vector<wchar_t> buf(static_cast<size_t>(wlen));
+				MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, buf.data(), wlen);
+				wpath.assign(buf.data(), static_cast<size_t>(wlen) - 1);
+			}
 
 			const auto fsPath = std::filesystem::path(wpath);
 			if (fsPath.has_parent_path()) {

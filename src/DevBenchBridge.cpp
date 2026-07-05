@@ -154,9 +154,14 @@ namespace ImGuiVRHelper::DevBenchBridge
 					const int n = WideCharToMultiByte(
 						CP_UTF8, 0, wprofile, -1, nullptr, 0, nullptr, nullptr);
 					if (n > 0) {
-						home.resize(static_cast<size_t>(n) - 1);
+						// n includes the NUL terminator; convert into a scratch buffer
+						// rather than a string sized n-1, which would have
+						// WideCharToMultiByte write that NUL into the string's own
+						// (implicit, not meant to be written) terminator slot.
+						std::vector<char> buf(static_cast<size_t>(n));
 						WideCharToMultiByte(
-							CP_UTF8, 0, wprofile, -1, home.data(), n, nullptr, nullptr);
+							CP_UTF8, 0, wprofile, -1, buf.data(), n, nullptr, nullptr);
+						home.assign(buf.data(), static_cast<size_t>(n) - 1);
 					}
 					free(wprofile);
 				}
