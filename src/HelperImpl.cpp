@@ -27,7 +27,11 @@
 #include <RE/B/BSOpenVRControllerDevice.h>
 #include <RE/U/UI.h>
 
+#include <ScreenGrab.h>
 #include <nlohmann/json.hpp>
+#include <wincodec.h>  // GUID_ContainerFormatPng
+
+#include <filesystem>
 
 namespace
 {
@@ -741,6 +745,44 @@ namespace ImGuiVRHelper
 			j["clients"] = std::move(clients);
 		}
 		return j.dump();
+	}
+
+	void HelperImpl::RequestPanelDump(uint32_t client_id, const std::string& path)
+	{
+		std::scoped_lock lk(m_dumpMutex);
+		m_pendingDumps.emplace_back(client_id, path);
+	}
+
+	void HelperImpl::ServicePanelDumps()
+	{
+		std::vector<std::pair<uint32_t, std::string>> pending;
+		{
+			std::scoped_lock lk(m_dumpMutex);
+			if (m_pendingDumps.empty())
+				return;
+			pending.swap(m_pendingDumps);
+		}
+		auto* ctx = Globals::GetD3D().context;  // render thread: DispatchFrame caller
+		if (!ctx)
+			return;
+		for (const auto& [id, path] : pending) {
+			ID3D11Texture2D* tex = GetClientPanelTexture(id);
+			if (!tex) {
+				logs::warn("dumppanel: client {} has no panel texture", id);
+				continue;
+			}
+			std::error_code ec;
+			std::filesystem::create_directories(
+				std::filesystem::path(path).parent_path(), ec);
+			const std::wstring wpath(path.begin(), path.end());
+			const HRESULT hr = DirectX::SaveWICTextureToFile(
+				ctx, tex, GUID_ContainerFormatPng, wpath.c_str());
+			if (FAILED(hr))
+				logs::warn("dumppanel: SaveWICTextureToFile('{}') failed 0x{:08X}",
+					path, static_cast<unsigned>(hr));
+			else
+				logs::info("dumppanel: wrote client {} panel to {}", id, path);
+		}
 	}
 
 	void HelperImpl::NotifyEnteredGame()
@@ -1725,6 +1767,8 @@ namespace ImGuiVRHelper
 		const uint32_t focused = DispatchToClients(baseFrame, dt);
 
 		PostProcessFrame(focused, dt);
+
+		ServicePanelDumps();
 	}
 
 	bool HelperImpl::IsDashboardVisible()

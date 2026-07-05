@@ -248,6 +248,11 @@ namespace ImGuiVRHelper
 		/// one frame stale; called from devbench's listener thread.
 		std::string DiagnosticsJson() const;
 
+		/// Queue a client's panel texture to be saved as a PNG (devbench bridge).
+		/// Thread-safe; the write happens on the render thread in the next
+		/// DispatchFrame (ServicePanelDumps) since it uses the immediate context.
+		void RequestPanelDump(uint32_t client_id, const std::string& path);
+
 	private:
 		HelperImpl() = default;
 
@@ -326,6 +331,12 @@ namespace ImGuiVRHelper
 		// so the keys held during capture don't leak into the focused menu.
 		bool m_prevRecording = false;
 		bool m_inputSettling = false;
+
+		// Pending devbench panel-dump requests (client_id -> PNG path). Queued from
+		// the listener thread; drained on the render thread in ServicePanelDumps.
+		std::mutex m_dumpMutex;
+		std::vector<std::pair<uint32_t, std::string>> m_pendingDumps;
+		void ServicePanelDumps();
 
 		// Same masking treatment for an in-progress overlay reposition drag: grip both starts that
 		// drag and maps to a client's right-click, so if the wand ray sweeps onto the panel mid-drag

@@ -29,6 +29,9 @@
 #include <DevBenchAPI.h>
 #include <nlohmann/json.hpp>
 
+#include <cstdlib>
+#include <format>
+
 namespace ImGuiVRHelper::DevBenchBridge
 {
 	namespace
@@ -120,6 +123,45 @@ namespace ImGuiVRHelper::DevBenchBridge
 		{
 			RunHandler(&BuildInput, a_argsJson, a_sink, a_write);
 		}
+
+		json BuildDumpPanel(const json& args)
+		{
+			// Resolve client by explicit id, else by name (as inspect reports it).
+			uint32_t id = args.value("client_id", 0u);
+			if (id == 0 && args.contains("name") && args["name"].is_string()) {
+				const auto name = args["name"].get<std::string>();
+				for (const auto& c : HelperImpl::GetSingleton().SnapshotClients()) {
+					if (c.name == name) {
+						id = c.client_id;
+						break;
+					}
+				}
+			}
+			if (id == 0)
+				return json{ { "error", "unknown client" }, { "hint", "pass client_id or name (see inspect kind=imguivrhelper)" } };
+
+			std::string path = args.value("path", std::string());
+			if (path.empty()) {
+				char* profile = nullptr;
+				size_t len = 0;
+				const std::string home = (_dupenv_s(&profile, &len, "USERPROFILE") == 0 && profile) ?
+				                             std::string(profile) :
+				                             std::string(".");
+				free(profile);
+				path = std::format("{}\\My Games\\Skyrim VR\\SKSE\\imguivrhelper-panel-{}.png", home, id);
+			}
+
+			HelperImpl::GetSingleton().RequestPanelDump(id, path);
+			// The write happens on the next render frame (immediate-context bound
+			// there); the file exists a frame or two later. Caller reads the PNG.
+			return json{ { "ok", true }, { "client_id", id }, { "path", path },
+				{ "note", "written on the next frame; read the PNG path" } };
+		}
+
+		void DumpPanelHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+		{
+			RunHandler(&BuildDumpPanel, a_argsJson, a_sink, a_write);
+		}
 	}
 
 	void Install()
@@ -146,6 +188,14 @@ namespace ImGuiVRHelper::DevBenchBridge
 			"readOnly": false
 		})";
 
+		static constexpr auto kDumpDesc = R"({
+			"description": "Save a client's helper panel texture (its own rendered content, no composited wand dot) to a PNG. client_id or name (see inspect kind=imguivrhelper), optional path. Written on the next frame; read the returned path. Use with action=pointer to verify a client's wand/canvas mapping headlessly.",
+			"inputSchema": { "type": "object", "properties": {
+				"client_id": { "type": "integer" }, "name": { "type": "string" },
+				"path": { "type": "string" } } },
+			"readOnly": true
+		})";
+
 		// inspect extension keeps the agent-facing tool list small; hosts older
 		// than 1.5.0 lack that vtable slot, so fall back to a top-level tool.
 		if (dvb->GetBuildNumber() >= 10500) {
@@ -154,6 +204,7 @@ namespace ImGuiVRHelper::DevBenchBridge
 			dvb->RegisterTool("imguivrhelper.inspect", kInspectDesc, &InspectHandler, nullptr);
 		}
 		dvb->RegisterTool("imguivrhelper.input", kInputDesc, &InputHandler, nullptr);
+		dvb->RegisterTool("imguivrhelper.dumppanel", kDumpDesc, &DumpPanelHandler, nullptr);
 		logs::info("devbench bridge registered (host build {})", dvb->GetBuildNumber());
 	}
 }
