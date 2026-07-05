@@ -366,26 +366,33 @@ namespace ImGuiVRHelper::Hooks
 					}
 				}
 
-				// Swallow controller input from the game while the helper
-				// is interactive — otherwise trigger pulls used to click
-				// menu buttons also fire bows / cast spells, scroll thumb
-				// drifts the player camera, etc. Pattern lifted from SCS
-				// (origin/vr_imgui src/Hooks.cpp:566-607): when the menu
-				// wants input, hand the original a dummy {nullptr} list.
-				// Non-VR-controller events pass through unchanged so the
-				// game still sees keyboard / gamepad / mouse / etc.
+				// Swallow VR controller input from the game while the helper is
+				// interactive — otherwise trigger pulls used to click menu buttons
+				// also fire bows / cast spells, scroll thumb drifts the player
+				// camera, etc. Pattern lifted from SCS (origin/vr_imgui
+				// src/Hooks.cpp:566-607), but filtered PER EVENT rather than
+				// substituting a dummy {nullptr} for the whole dispatch: Skyrim can
+				// batch unrelated devices' events (mouse, keyboard, a non-VR
+				// gamepad) together with a VR controller event in the same
+				// dispatch call, so replacing the whole chain silently ate real
+				// mouse/keyboard input whenever it happened to land in the same
+				// batch as a VR event -- e.g. a desktop-mouse click on a
+				// flat-screen-capable client's menu (Community Shaders) while a
+				// controller was also reporting thumbstick noise that frame.
 				if (sawVRController && HelperImpl::GetSingleton().ShouldSwallowInput()) {
 					// Live-tool clients (e.g. VR photo mode) keep driving the
-					// unpaused world, so forward locomotion to the game: rebuild
-					// the chain with only thumbstick (and non-VR) events and drop
-					// the VR buttons, which stay reserved for laser-driven UI.
-					if (HelperImpl::GetSingleton().IsLiveToolFocused() && a_events) {
-						RE::InputEvent* head = nullptr;
-						RE::InputEvent* tail = nullptr;
+					// unpaused world, so their thumbstick still passes through for
+					// locomotion; everyone else's VR thumbstick is swallowed too
+					// (menu-driven scroll would otherwise drift the camera). VR
+					// buttons stay reserved for laser-driven UI either way.
+					const bool liveTool = HelperImpl::GetSingleton().IsLiveToolFocused();
+					RE::InputEvent* head = nullptr;
+					RE::InputEvent* tail = nullptr;
+					if (a_events) {
 						for (auto* e = *a_events; e; e = e->next) {
 							const bool isVR = IsVRControllerDevice(e->GetDevice());
 							const bool passThrough = !isVR ||
-							                         e->GetEventType() == RE::INPUT_EVENT_TYPE::kThumbstick;
+							                         (liveTool && e->GetEventType() == RE::INPUT_EVENT_TYPE::kThumbstick);
 							if (passThrough) {
 								if (tail) {
 									tail->next = e;
@@ -398,12 +405,9 @@ namespace ImGuiVRHelper::Hooks
 						if (tail) {
 							tail->next = nullptr;
 						}
-						RE::InputEvent* const forwarded[] = { head };
-						func(a_dispatcher, forwarded);
-						return;
 					}
-					constexpr RE::InputEvent* const dummy[] = { nullptr };
-					func(a_dispatcher, dummy);
+					RE::InputEvent* const forwarded[] = { head };
+					func(a_dispatcher, forwarded);
 					return;
 				}
 				func(a_dispatcher, a_events);
