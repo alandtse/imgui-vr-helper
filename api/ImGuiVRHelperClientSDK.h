@@ -220,6 +220,7 @@ namespace ImGuiVRHelperPluginAPI
 			m_kbShown = false;
 			m_kbDelivered.clear();
 			m_kbDismissCooldown = 0;
+			m_offPanelParked = false;
 			m_id = 0;
 		}
 
@@ -601,28 +602,35 @@ namespace ImGuiVRHelperPluginAPI
 				// try to warp the OS cursor to whatever io.MousePos holds below, and casting
 				// -FLT_MAX to an integer screen coordinate is undefined behavior.
 				io.WantSetMousePos = false;
-				if (ImGui::GetActiveID() == 0) {
-					// Wand off the panel and nothing is active: park the cursor off-screen so a
-					// click can't land on the last-hovered widget, and skip the pointer-click
-					// synthesis below — off-panel input belongs to the client (e.g. a tool
-					// shortcut, read via IsButtonHeld).
+				if (!m_offPanelParked && ImGui::GetActiveID() == 0) {
+					// Park the cursor off-screen ONCE per off-panel departure, so a wand click
+					// can't land on the last-hovered widget after the ray leaves. One-shot, not
+					// per-frame: this event competes with every other mouse-position source the
+					// client has (e.g. the Win32 backend feeding the real desktop mouse on the
+					// game's flat window). A per-frame park lost that competition in the worst
+					// way -- hover looked fine (the real position event was queued after the
+					// park each frame and won), but on a click frame ImGui's event trickling
+					// defers the position event that follows a button event to the NEXT frame,
+					// so every desktop click was processed at (-FLT_MAX,-FLT_MAX) and landed on
+					// nothing (the "desktop clicks silently swallowed while hover still works"
+					// bug). After the one-shot park, position ownership belongs to whoever
+					// feeds ImGui next: the desktop mouse on a flat-screen-capable client, or
+					// nobody (stays parked) on a headset-only one.
 					//
-					// But NOT while something IS active (ActiveId != 0 -- a button held, a slider
-					// or drag-float being dragged, custom click-and-drag tracking, etc.):
-					// teleporting the cursor to an extreme off-screen position mid-gesture is fine
-					// for a plain button (ActiveId persists independent of mouse position until
-					// release) but corrupts any widget that computes its value from continuous
-					// mouse position, and can leave that widget's own internal drag state stuck
-					// once the ray drifts back on/off panel. Hold the cursor at its last known
-					// (on-panel) position instead -- the same "capture" semantics a desktop OS
-					// gives a window mid-drag, and the active widget still ends normally on
-					// release regardless (button-release forwarding doesn't depend on cursor
-					// position).
+					// Deferred while something IS active (ActiveId != 0 -- a slider or
+					// drag-float mid-gesture, custom click-and-drag tracking): teleporting the
+					// cursor mid-gesture corrupts any widget that computes its value from
+					// continuous mouse position. Hold the cursor at its last known position
+					// instead (desktop-OS capture semantics; the active widget still ends
+					// normally on release), and park on the first idle frame after it ends.
 					io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
 					io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
 					io.MouseDrawCursor = false;
+					m_offPanelParked = true;
 				}
 			}
+			if (onPanel)
+				m_offPanelParked = false;  // re-arm the one-shot for the next departure
 
 			const uint32_t changed = held ^ m_prevHeld;
 			const auto onEdge = [&](Button b, auto&& fn) {
@@ -1198,6 +1206,9 @@ namespace ImGuiVRHelperPluginAPI
 		// Seconds ImGui's ActiveId has been non-zero while this client's own MouseDown reads false --
 		// see the recovery-watchdog comment in PumpInput.
 		float m_stuckActiveIdTimer = 0.0f;
+		// One-shot latch for the off-panel cursor park (see PumpInput): set once the park has been
+		// emitted for the current off-panel stretch, re-armed when the wand returns to the panel.
+		bool m_offPanelParked = false;
 
 		bool m_panelWasShowing = false;  // RenderToPanel clear-once
 
