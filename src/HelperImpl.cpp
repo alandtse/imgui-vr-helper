@@ -718,8 +718,8 @@ namespace ImGuiVRHelper
 			{ "secondary", wireMask(state.secondaryControllerState) },
 		};
 		j["leases"] = {
-			{ "stripLeft", m_leases.StrippedBits(0) },
-			{ "stripRight", m_leases.StrippedBits(1) },
+			{ "stripLeft", m_diagStripLeft.load(std::memory_order_relaxed) },
+			{ "stripRight", m_diagStripRight.load(std::memory_order_relaxed) },
 		};
 		j["settings"] = {
 			{ "enableWandPointing", s.enableWandPointing },
@@ -727,8 +727,7 @@ namespace ImGuiVRHelper
 			{ "enableDragToReposition", s.enableDragToReposition },
 		};
 		{
-			auto* self = const_cast<HelperImpl*>(this);
-			std::scoped_lock lk(self->m_mutex);
+			std::scoped_lock lk(m_mutex);
 			j["focusedClient"] = m_focused_client;
 			auto clients = nlohmann::json::array();
 			for (const auto& [id, rec] : m_clients) {
@@ -771,10 +770,18 @@ namespace ImGuiVRHelper
 				logs::warn("dumppanel: client {} has no panel texture", id);
 				continue;
 			}
-			std::error_code ec;
-			std::filesystem::create_directories(
-				std::filesystem::path(path).parent_path(), ec);
-			const std::wstring wpath(path.begin(), path.end());
+			// path is UTF-8 (see DevBenchBridge::BuildDumpPanel); widen it properly
+			// rather than byte-widening, which mangles any non-ASCII character.
+			const int wlen = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
+			std::wstring wpath(wlen > 0 ? static_cast<size_t>(wlen) - 1 : 0, L'\0');
+			if (wlen > 0)
+				MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wpath.data(), wlen);
+
+			const auto fsPath = std::filesystem::path(wpath);
+			if (fsPath.has_parent_path()) {
+				std::error_code ec;
+				std::filesystem::create_directories(fsPath.parent_path(), ec);
+			}
 			const HRESULT hr = DirectX::SaveWICTextureToFile(
 				ctx, tex, GUID_ContainerFormatPng, wpath.c_str());
 			if (FAILED(hr))
@@ -1535,7 +1542,11 @@ namespace ImGuiVRHelper
 				{ baseFrame.left.buttons_released, baseFrame.right.buttons_released }, ctx);
 			stripLeft = m_leases.StrippedBits(0);
 			stripRight = m_leases.StrippedBits(1);
+			m_diagStripLeft.store(stripLeft, std::memory_order_relaxed);
+			m_diagStripRight.store(stripRight, std::memory_order_relaxed);
 		} else {
+			m_diagStripLeft.store(0, std::memory_order_relaxed);
+			m_diagStripRight.store(0, std::memory_order_relaxed);
 			// Legacy latches (kill-switch fallback): mask everything while recording
 			// (+ settle), suppress SDK forwarding while dragging (+ settle).
 			if (m_prevRecording && !recording)
