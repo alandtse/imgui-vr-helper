@@ -202,52 +202,6 @@ namespace ImGuiVRHelper::SettingsUI
 			}
 		}
 
-		// Live WYSIWYG preview of the helper-drawn pointer over a mock panel, so size/color
-		// changes are obvious without leaving the settings menu. Drawn via ImGui's own draw
-		// list rather than sampling the real cursor texture (InSceneOverlay's GPU resource,
-		// a different module) -- cheap, always in sync with the sliders, and doesn't need a
-		// GPU texture regeneration round-trip for a live edit.
-		void RenderCursorPreview(const Overlay::Settings& s)
-		{
-			constexpr float kBoxSize = 96.0f;
-			ImGui::Dummy(ImVec2(0.0f, 4.0f));
-			ImGui::TextDisabled("Preview");
-			ImGui::InvisibleButton("##cursor_preview_area", ImVec2(kBoxSize, kBoxSize));
-			ImDrawList* dl = ImGui::GetWindowDrawList();
-			const ImVec2 origin = ImGui::GetItemRectMin();
-			const ImVec2 size = ImGui::GetItemRectSize();
-			const ImVec2 center(origin.x + size.x * 0.5f, origin.y + size.y * 0.5f);
-
-			// Mock panel background so the pointer's contrast reads the way it will in-game.
-			dl->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + size.y),
-				IM_COL32(60, 60, 65, 255), 4.0f);
-
-			const ImU32 fillColor = ImGui::ColorConvertFloat4ToU32(
-				ImVec4(s.cursorColor[0], s.cursorColor[1], s.cursorColor[2], s.cursorColor[3]));
-			const ImU32 outlineColor = IM_COL32(0, 0, 0, static_cast<int>(235.0f * s.cursorColor[3]));
-			const float scale = std::clamp(s.cursorSize, 0.5f, 3.0f);
-
-			if (s.cursorStyle == Overlay::CursorStyle::Arrow) {
-				// Same 7-point outline as InSceneOverlay's CreateArrowTexture, scaled to fit
-				// the preview box; tip anchored at the box center (its hotspot).
-				constexpr ImVec2 kPoly[7] = {
-					{ 0.00f, 0.00f }, { 0.00f, 1.00f }, { 0.28f, 0.73f }, { 0.46f, 1.10f },
-					{ 0.66f, 1.02f }, { 0.40f, 0.62f }, { 0.72f, 0.55f }
-				};
-				const float armLen = kBoxSize * 0.34f * scale;
-				ImVec2 pts[7];
-				for (int i = 0; i < 7; ++i)
-					pts[i] = ImVec2(center.x + kPoly[i].x * armLen, center.y + kPoly[i].y * armLen);
-				dl->AddConvexPolyFilled(pts, 7, fillColor);
-				dl->AddPolyline(pts, 7, outlineColor, ImDrawFlags_Closed, 1.5f);
-			} else {
-				const float outerR = kBoxSize * 0.42f * scale;
-				const float innerR = kBoxSize * 0.34f * scale;
-				dl->AddCircleFilled(center, outerR, outlineColor);
-				dl->AddCircleFilled(center, innerR, fillColor);
-			}
-		}
-
 		void RenderInteractionSection(Overlay::Settings& s)
 		{
 			if (ImGui::CollapsingHeader("Interaction")) {
@@ -266,7 +220,6 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::ColorEdit4("Pointer color", s.cursorColor);
 				if (ImGui::IsItemHovered())
 					ImGui::SetTooltip("Tint of the helper-drawn pointer's fill; its outline stays dark for contrast.");
-				RenderCursorPreview(s);
 				ImGui::Checkbox("Grip-to-drag repositioning", &s.enableDragToReposition);
 				if (ImGui::IsItemHovered())
 					ImGui::SetTooltip("Hold grip and move your hand to reposition the overlay;\nthumbstick up/down moves it farther/closer.");
@@ -1061,6 +1014,25 @@ namespace ImGuiVRHelper::SettingsUI
 			ImGui::PopStyleVar(3);
 			ImGui::PopStyleColor(2);
 		}
+
+		// Same fix client mods apply via the SDK's ApplyPanelDisplaySize: override
+		// the Win32-backend-derived io.DisplaySize with the actual panel texture's
+		// pixel dimensions, so the wand cursor (mapped from panel UV) and the
+		// rendered content agree on the same canvas. No-op until the self client
+		// (and its panel) exist.
+		void ApplySelfPanelDisplaySize()
+		{
+			auto& helper = HelperImpl::GetSingleton();
+			const uint32_t selfId = helper.GetSelfClientId();
+			if (selfId == 0)
+				return;
+			ImGuiVRHelperPluginAPI::PanelHandle panel{};
+			if (!helper.GetPanel(selfId, &panel) || !panel.width || !panel.height)
+				return;
+			ImGuiIO& io = ImGui::GetIO();
+			io.DisplaySize = ImVec2(static_cast<float>(panel.width), static_cast<float>(panel.height));
+			io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+		}
 	}  // namespace
 
 	bool Init()
@@ -1170,6 +1142,7 @@ namespace ImGuiVRHelper::SettingsUI
 			if (g_hwnd) {
 				ImGui_ImplWin32_NewFrame();
 			}
+			ApplySelfPanelDisplaySize();
 			ImGui::NewFrame();
 			io.MouseDrawCursor = false;
 			RenderQuickSelectMenu();
@@ -1213,6 +1186,16 @@ namespace ImGuiVRHelper::SettingsUI
 		if (g_hwnd) {
 			ImGui_ImplWin32_NewFrame();
 		}
+		// ImGui_ImplWin32_NewFrame sets io.DisplaySize from the game window's
+		// client rect (its native/mirror resolution) -- unrelated to the actual
+		// panel texture this content renders into, which HelperImpl allocates
+		// supersampled (PanelPixelSize: baseWidth/Height * hudSupersample for the
+		// self client, since it fills the view like a HUD layer). Left alone, the
+		// UI only fills a sub-rect of that texture sized to the window's native
+		// resolution, and the wand cursor (mapped from panel UV, i.e. the FULL
+		// supersampled dimensions) diverges by exactly the supersample factor.
+		// Same fix client mods apply via the SDK's ApplyPanelDisplaySize.
+		ApplySelfPanelDisplaySize();
 
 		WandPointing::UpdateCursorFromWandPointing();
 
