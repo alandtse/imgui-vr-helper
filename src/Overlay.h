@@ -246,6 +246,9 @@ namespace ImGuiVRHelper::Overlay
 		Matrix initialControllerMatrix = Matrix::Identity;
 		Matrix initialOverlayMatrix = Matrix::Identity;
 		Matrix startControllerMatrix = Matrix::Identity;
+		/// Invert(initialControllerMatrix), cached at grip-press (FixedWorld mode's
+		/// rigid-attach recompute needs it every frame; it's constant for the drag).
+		Matrix initialControllerMatrixInverse = Matrix::Identity;
 
 		enum class Mode
 		{

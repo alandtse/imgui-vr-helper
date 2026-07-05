@@ -142,8 +142,9 @@ namespace ImGuiVRHelper::OverlayDrag
 						// hand turned, not just where it moved. (HMD/Controller attach modes
 						// don't need this: they already recompute from the live attach
 						// point's pose every frame, so they always track its orientation.)
-						const Matrix toControllerLocal = drag.initialControllerMatrix.Invert();
-						state.fixedWorld.m = drag.initialOverlayMatrix * toControllerLocal * controllerMatrix;
+						// initialControllerMatrixInverse is cached at grip-press (onInit
+						// below) -- it's constant for the drag's lifetime.
+						state.fixedWorld.m = drag.initialOverlayMatrix * drag.initialControllerMatrixInverse * controllerMatrix;
 						break;
 					}
 
@@ -333,6 +334,7 @@ namespace ImGuiVRHelper::OverlayDrag
 				dragModes.push_back({ DragState::Mode::FixedWorld, true, canStart,
 					[&]() {
 						drag.initialControllerMatrix = drag.startControllerMatrix;
+						drag.initialControllerMatrixInverse = drag.initialControllerMatrix.Invert();
 						drag.initialOverlayMatrix = state.fixedWorld.m;
 					} });
 			}
