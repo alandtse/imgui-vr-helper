@@ -391,6 +391,14 @@ namespace ImGuiVRHelper::Input
 	void InjectButton(bool primaryHand, uint32_t keyCode, bool pressed)
 	{
 		std::scoped_lock lk(g_injectMutex);
+		// Drains every input poll (well under a second even at the lowest realistic
+		// poll rate), so a legitimate caller never gets near this; it only bites a
+		// caller injecting far faster than the game polls input.
+		constexpr size_t kMaxQueuedInjections = 256;
+		if (g_injectQueue.size() >= kMaxQueuedInjections) {
+			logs::warn("InjectButton: queue full ({} pending), dropping event", kMaxQueuedInjections);
+			return;
+		}
 		g_injectQueue.push_back({ primaryHand, keyCode, pressed });
 	}
 

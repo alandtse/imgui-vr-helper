@@ -5,8 +5,9 @@
 //
 //   inspect kind=imguivrhelper  — live input/focus dump (wand hit + override
 //       flag, drag state, per-hand held wire masks, lease strips, clients with
-//       panel dims, relevant settings). One call replaces the two-log
-//       correlation exercise the pointer-divergence investigation needed.
+//       panel dims, relevant settings). One call gives a headless caller
+//       ground truth for wand/client correlation instead of cross-referencing
+//       two separately-logged streams by hand.
 //   imguivrhelper.input         — synthetic input: force the wand pointer to a
 //       UV, press/release buttons, or clear overrides. Injected on the input
 //       thread through the same state real events land in, so leases, combos,
@@ -29,7 +30,10 @@
 #include <DevBenchAPI.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <format>
 
 namespace ImGuiVRHelper::DevBenchBridge
@@ -124,6 +128,37 @@ namespace ImGuiVRHelper::DevBenchBridge
 			RunHandler(&BuildInput, a_argsJson, a_sink, a_write);
 		}
 
+		// dumppanel intentionally accepts any local path the caller wants (a
+		// debugging/verification tool, not a sandboxed one) -- but two shapes are
+		// worth rejecting outright rather than handing to SaveWICTextureToFile:
+		// a UNC/network path (`\\host\share\...`) makes this process open an
+		// outbound SMB connection and attempt NTLM auth against whatever host the
+		// caller named, and an NTFS reserved device name (CON, NUL, COM1, ...) as
+		// a path component can hang or misbehave regardless of directory. Returns
+		// a reason string, or empty if the path is acceptable.
+		std::string RejectUnsafeDumpPath(const std::string& path)
+		{
+			constexpr size_t kMaxPathLen = 4096;
+			if (path.size() > kMaxPathLen)
+				return "path exceeds maximum length";
+			if (path.size() >= 2 &&
+				((path[0] == '\\' && path[1] == '\\') || (path[0] == '/' && path[1] == '/')))
+				return "UNC/network paths are not allowed";
+			static constexpr std::string_view kReservedNames[] = {
+				"CON", "PRN", "AUX", "NUL",
+				"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+				"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+			};
+			const auto stem = std::filesystem::path(path).stem().string();
+			for (const auto& reserved : kReservedNames) {
+				if (stem.size() == reserved.size() &&
+					std::equal(stem.begin(), stem.end(), reserved.begin(),
+						[](char a, char b) { return std::toupper(static_cast<unsigned char>(a)) == b; }))
+					return "reserved device name in path";
+			}
+			return {};
+		}
+
 		json BuildDumpPanel(const json& args)
 		{
 			// Resolve client by explicit id, else by name (as inspect reports it).
@@ -166,6 +201,8 @@ namespace ImGuiVRHelper::DevBenchBridge
 					free(wprofile);
 				}
 				path = std::format("{}\\My Games\\Skyrim VR\\SKSE\\imguivrhelper-panel-{}.png", home, id);
+			} else if (const auto reason = RejectUnsafeDumpPath(path); !reason.empty()) {
+				return json{ { "error", "unsafe path" }, { "reason", reason } };
 			}
 
 			HelperImpl::GetSingleton().RequestPanelDump(id, path);
@@ -213,9 +250,12 @@ namespace ImGuiVRHelper::DevBenchBridge
 			"readOnly": false
 		})";
 
+		// devbench's packed build number is major*10000 + minor*100 + patch.
+		constexpr uint32_t kMinInspectExtensionBuild = 10500;  // 1.5.0
+
 		// inspect extension keeps the agent-facing tool list small; hosts older
 		// than 1.5.0 lack that vtable slot, so fall back to a top-level tool.
-		if (dvb->GetBuildNumber() >= 10500) {
+		if (dvb->GetBuildNumber() >= kMinInspectExtensionBuild) {
 			dvb->RegisterToolExtension("inspect", "imguivrhelper", kInspectDesc, &InspectHandler, nullptr);
 		} else {
 			dvb->RegisterTool("imguivrhelper.inspect", kInspectDesc, &InspectHandler, nullptr);

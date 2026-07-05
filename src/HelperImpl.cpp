@@ -749,6 +749,14 @@ namespace ImGuiVRHelper
 	void HelperImpl::RequestPanelDump(uint32_t client_id, const std::string& path)
 	{
 		std::scoped_lock lk(m_dumpMutex);
+		// Drains on the next render frame, so a legitimate caller never gets near
+		// this; it only bites a caller requesting dumps far faster than frames render.
+		constexpr size_t kMaxPendingDumps = 64;
+		if (m_pendingDumps.size() >= kMaxPendingDumps) {
+			logs::warn("RequestPanelDump: queue full ({} pending), dropping request for client {}",
+				kMaxPendingDumps, client_id);
+			return;
+		}
 		m_pendingDumps.emplace_back(client_id, path);
 	}
 
