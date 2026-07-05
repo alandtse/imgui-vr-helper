@@ -134,15 +134,16 @@ namespace ImGuiVRHelper::OverlayDrag
 
 				case DragState::Mode::FixedWorld:
 					{
-						Vector3 worldDelta(
-							controllerMatrix._41 - drag.initialControllerMatrix._41,
-							controllerMatrix._42 - drag.initialControllerMatrix._42,
-							controllerMatrix._43 - drag.initialControllerMatrix._43);
-						Matrix translated = drag.initialOverlayMatrix;
-						translated._41 += worldDelta.x;
-						translated._42 += worldDelta.y;
-						translated._43 += worldDelta.z;
-						state.fixedWorld.m = translated;
+						// Rigidly attach the overlay to the controller at grip-press, like
+						// picking up a physical object: every frame, recompute the overlay's
+						// world pose as if it never left the controller's local frame
+						// established at grab time. This gives 1:1 translation AND rotation
+						// -- turning the wrist reorients the menu exactly as much as the
+						// hand turned, not just where it moved. (HMD/Controller attach modes
+						// don't need this: they already recompute from the live attach
+						// point's pose every frame, so they always track its orientation.)
+						const Matrix toControllerLocal = drag.initialControllerMatrix.Invert();
+						state.fixedWorld.m = drag.initialOverlayMatrix * toControllerLocal * controllerMatrix;
 						break;
 					}
 
