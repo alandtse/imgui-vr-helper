@@ -193,11 +193,13 @@ namespace ImGuiVRHelperPluginAPI
 				m_helper = nullptr;
 				return false;
 			}
+			m_flags = flags;  // PumpInput consults kClientFlag_OwnCursor
 			// Optional: VR text entry (interface 002). Null against an older helper,
 			// in which case PumpKeyboard is a no-op (desktop keyboard only).
 			m_helper002 = GetImGuiVRHelperInterface002();
 			m_helper003 = GetImGuiVRHelperInterface003();
 			m_helper004 = GetImGuiVRHelperInterface004();
+			m_helper005 = GetImGuiVRHelperInterface005();
 			return true;
 		}
 
@@ -213,6 +215,8 @@ namespace ImGuiVRHelperPluginAPI
 			m_helper002 = nullptr;
 			m_helper003 = nullptr;
 			m_helper004 = nullptr;
+			m_helper005 = nullptr;
+			m_flags = 0;
 			m_kbShown = false;
 			m_kbDelivered.clear();
 			m_kbDismissCooldown = 0;
@@ -246,6 +250,27 @@ namespace ImGuiVRHelperPluginAPI
 			if (!m_helper004 || !IsConnected())
 				return;
 			m_helper004->SubmitWorldQuads(m_id, quads, count);
+		}
+
+		/// True if the helper supports a client-driven reposition drag (interface 005
+		/// acquired). When false, RequestReposition is a no-op -- the panel can still be
+		/// repositioned via the helper's own off-panel grip gesture (Settings ->
+		/// enableDragToReposition), just not from an on-panel "Move" button.
+		[[nodiscard]] bool HasReposition() const { return m_helper005 != nullptr; }
+
+		/// Call every frame you want a reposition drag active -- e.g. while your own
+		/// wand-clickable "Move" button is held with the trigger (check via ImGui's
+		/// IsItemActive() after drawing it, which stays true for the whole hold even once the
+		/// wand ray drifts off the button/panel as the user physically moves their hand to
+		/// drag -- don't gate this on GetPointer/IsPointerInPanel). No-op when disconnected,
+		/// the helper predates interface 005, this client doesn't currently hold focus, or
+		/// drag-to-reposition is disabled in the helper's settings. This is a heartbeat, not a
+		/// toggle: stop calling to end the drag and persist the new position.
+		void RequestReposition()
+		{
+			if (!m_helper005 || !IsConnected())
+				return;
+			m_helper005->RequestReposition(m_id);
 		}
 
 		/// True when the helper routed in-scene focus to this client this frame
@@ -563,15 +588,40 @@ namespace ImGuiVRHelperPluginAPI
 				const float y = std::clamp(v * io.DisplaySize.y, 0.0f, io.DisplaySize.y);
 				io.MousePos = ImVec2(x, y);
 				io.AddMousePosEvent(x, y);
-				io.MouseDrawCursor = true;
+				// Cursor choice (kClientFlag_HelperCursor): by default the client's
+				// own ImGui software cursor is the pointer (context-aware
+				// arrow/I-beam/resize — the shipped-SDK behavior); opting into the
+				// helper's composited dot turns it off here so there's no second
+				// pointer under the dot.
+				io.MouseDrawCursor = (m_flags & kClientFlag_HelperCursor) == 0;
 				io.WantSetMousePos = true;
 			} else {
-				// Wand off the panel: park the cursor off-screen so a click can't land on the
-				// last-hovered widget, and skip the pointer-click synthesis below — off-panel input
-				// belongs to the client (e.g. a tool shortcut, read via IsButtonHeld).
-				io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
-				io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
-				io.MouseDrawCursor = false;
+				// Explicitly false here rather than relying on it having already been consumed:
+				// a platform backend that still honors a stale WantSetMousePos would otherwise
+				// try to warp the OS cursor to whatever io.MousePos holds below, and casting
+				// -FLT_MAX to an integer screen coordinate is undefined behavior.
+				io.WantSetMousePos = false;
+				if (ImGui::GetActiveID() == 0) {
+					// Wand off the panel and nothing is active: park the cursor off-screen so a
+					// click can't land on the last-hovered widget, and skip the pointer-click
+					// synthesis below — off-panel input belongs to the client (e.g. a tool
+					// shortcut, read via IsButtonHeld).
+					//
+					// But NOT while something IS active (ActiveId != 0 -- a button held, a slider
+					// or drag-float being dragged, custom click-and-drag tracking, etc.):
+					// teleporting the cursor to an extreme off-screen position mid-gesture is fine
+					// for a plain button (ActiveId persists independent of mouse position until
+					// release) but corrupts any widget that computes its value from continuous
+					// mouse position, and can leave that widget's own internal drag state stuck
+					// once the ray drifts back on/off panel. Hold the cursor at its last known
+					// (on-panel) position instead -- the same "capture" semantics a desktop OS
+					// gives a window mid-drag, and the active widget still ends normally on
+					// release regardless (button-release forwarding doesn't depend on cursor
+					// position).
+					io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
+					io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+					io.MouseDrawCursor = false;
+				}
 			}
 
 			const uint32_t changed = held ^ m_prevHeld;
@@ -580,32 +630,25 @@ namespace ImGuiVRHelperPluginAPI
 				if (!(changed & bit))
 					return;
 				const bool down = (held & bit) != 0;
-				// Presses drive the UI only while the wand is on the panel (off-panel belongs to the
-				// client's own shortcuts, read via IsButtonHeld) -- but releases always forward
-				// regardless of onPanel. A press that starts on the panel and ends after the wand
-				// drifts off it (e.g. a drag that moves the hand far enough to slip the ray off the
-				// panel edge) used to have its release edge gated the same as the press: skipped
-				// entirely when onPanel was false that frame, with m_prevHeld still updated to match,
-				// so the edge was lost forever. ImGui then believed the button was held down with no
-				// way to un-stick it short of an unrelated nav event clearing ActiveId.
-				if (down && !onPanel)
+				// PRESSES are gated -- on-panel only (off-panel belongs to the client's own
+				// shortcuts, read via IsButtonHeld), and not while a helper-owned modal gesture
+				// set kFrameFlag_SuppressInputForwarding (only helpers predating route-on-press
+				// leases still set it; current helpers strip leased-away buttons from the frame
+				// instead, so this SDK never even sees them). RELEASES always forward: gating a
+				// release the same as its press drops the edge forever -- m_prevHeld advances
+				// regardless -- leaving ImGui's io.MouseDown stuck true with no recovery (the
+				// "clicks stop registering after grip-moving the overlay" bug). One invariant,
+				// both gates: suppression may cost a click, never a release.
+				if (down && (!onPanel || suppressForwarding))
 					return;
 				fn(down);
 			};
-			// Suppressed while a helper-owned modal gesture (e.g. an overlay reposition drag) is in
-			// progress -- grip both drives that drag and maps to a client right-click below, so without
-			// this a wand ray sweeping onto the panel mid-drag would forward the still-held grip as an
-			// unintended click. m_prevHeld still advances every frame regardless (see below), so a
-			// button already held when suppression lifts requires a fresh release+press to register as
-			// a genuine new click, rather than firing a phantom edge the instant forwarding resumes.
-			if (!suppressForwarding) {
-				onEdge(Button::TriggerClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Left, d); });
-				onEdge(Button::GripClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Right, d); });
-				onEdge(Button::PadClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
-				onEdge(Button::StickClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
-				onEdge(Button::BY, [&](bool d) { io.AddKeyEvent(ImGuiKey_Tab, d); });
-				onEdge(Button::AX, [&](bool d) { io.AddKeyEvent(ImGuiKey_Enter, d); });
-			}
+			onEdge(Button::TriggerClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Left, d); });
+			onEdge(Button::GripClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Right, d); });
+			onEdge(Button::PadClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
+			onEdge(Button::StickClick, [&](bool d) { io.AddMouseButtonEvent(ImGuiMouseButton_Middle, d); });
+			onEdge(Button::BY, [&](bool d) { io.AddKeyEvent(ImGuiKey_Tab, d); });
+			onEdge(Button::AX, [&](bool d) { io.AddKeyEvent(ImGuiKey_Enter, d); });
 			m_prevHeld = held;
 
 			// Recovery watchdog: a wand click's press/release edges are inherently noisier than a real
@@ -716,15 +759,45 @@ namespace ImGuiVRHelperPluginAPI
 				ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 		}
 
-		/// Per-frame convenience: ReconcileFocus + PumpInput in one call. Pass your
-		/// menu-open flag by reference; on return it reflects the resolved shown
-		/// state (the helper's open/close/cycle combos can flip it) and the wand has
-		/// been pumped into ImGui. Returns the shown state. Call before NewFrame.
+		/// Per-frame convenience: ReconcileFocus + PumpKeyboard + PumpInput in one
+		/// call. Pass your menu-open flag by reference; on return it reflects the
+		/// resolved shown state (the helper's open/close/cycle combos can flip it)
+		/// and the wand has been pumped into ImGui. Returns the shown state. Call
+		/// before NewFrame. The VR keyboard pump is included so any focused text
+		/// field pops the system keyboard without per-client wiring (no-op against
+		/// a helper older than 002; harmless if you also call PumpKeyboard
+		/// yourself).
 		bool Update(bool& menuOpen, float scrollDeadzone = 0.15f)
 		{
 			ReconcileFocus(menuOpen);
+			PumpKeyboard();
 			PumpInput(menuOpen, scrollDeadzone);
 			return menuOpen;
+		}
+
+		/// Size the current context's ImGui canvas to the panel's EXACT pixel
+		/// dimensions. This must be 1:1, not merely aspect-matched: the stock DX11
+		/// backend renders draw data into a DisplaySize-sized viewport anchored at
+		/// the panel's top-left (it overwrites whatever viewport the blit set), so
+		/// any client whose canvas differs from the panel gets its content shrunk
+		/// toward (0,0) while the helper's wand marker and hit-test UV span the
+		/// full panel — the click/marker divergence grows linearly toward the
+		/// bottom-right edge, worse the bigger the size mismatch (this was the
+		/// client-dependent "pointer divergence" bug; two shipped clients
+		/// hand-rolled canvas fixes that were aspect-correct but still off-scale).
+		/// Call before NewFrame (RenderMenu does it for you). No-op (returns false)
+		/// until the panel exists.
+		bool ApplyPanelDisplaySize()
+		{
+			if (!IsConnected())
+				return false;
+			PanelHandle panel{};
+			if (!m_helper->GetPanel(m_id, &panel) || !panel.width || !panel.height)
+				return false;
+			ImGuiIO& io = ImGui::GetIO();
+			io.DisplaySize = ImVec2(static_cast<float>(panel.width), static_cast<float>(panel.height));
+			io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+			return true;
 		}
 
 		/// One-call interactive menu for a VR mod that brings its own ImGui context
@@ -743,6 +816,8 @@ namespace ImGuiVRHelperPluginAPI
 				return menuOpen;
 			ReconcileFocus(menuOpen);
 			const bool shown = menuOpen;
+			ApplyPanelDisplaySize();  // panel-logical canvas: wand UV and fonts stay correct
+			PumpKeyboard();           // focused text fields pop the VR keyboard automatically
 			PumpInput(shown);
 			ImGui_ImplDX11_NewFrame();
 			ImGui::NewFrame();
@@ -1085,6 +1160,8 @@ namespace ImGuiVRHelperPluginAPI
 		IImGuiVRHelperInterface002* m_helper002 = nullptr;  // null if helper predates 002 (no VR keyboard)
 		IImGuiVRHelperInterface003* m_helper003 = nullptr;  // null if helper predates 003 (no off-panel combos)
 		IImGuiVRHelperInterface004* m_helper004 = nullptr;  // null if helper predates 004 (no world quads)
+		IImGuiVRHelperInterface005* m_helper005 = nullptr;  // null if helper predates 005 (no client-driven reposition)
+		uint32_t m_flags = 0;                               // registration flags (kClientFlag_OwnCursor gates the software cursor)
 		uint32_t m_id = 0;
 		ID3D11DeviceContext* m_cachedContext = nullptr;  // ctx resolved lazily, device-owned
 		bool m_requestsRender = false;

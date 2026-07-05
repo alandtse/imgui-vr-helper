@@ -251,6 +251,21 @@ namespace ImGuiVRHelperPluginAPI
 		/// game-render-pipeline injection — but the helper binds the game's scene
 		/// depth for this pass, so billboards are per-pixel occluded by world geometry.
 		kClientFlag_WorldQuad = 1u << 6,
+
+		/// The helper draws its composited wand dot over this client's panel and
+		/// the SDK keeps ImGui's software cursor off. Default (flag unset): the
+		/// client's own ImGui software cursor is the pointer — context-aware
+		/// (arrow, I-beam over text fields, resize arrows), themed and scaled by
+		/// the client — which is also what every SDK shipped before this flag
+		/// already did, so existing clients are unchanged.
+		///
+		/// Opt in when you want the dot instead: it is drawn by the same code
+		/// that computes the wand hit UV, so it sits at the true click position
+		/// even if the client's canvas is mis-sized, and it stays legible at
+		/// panel-viewing distance regardless of client cursor styling. (With a
+		/// 1:1 panel canvas — see the SDK's ApplyPanelDisplaySize — both styles
+		/// are positionally identical; this is a presentation choice.)
+		kClientFlag_HelperCursor = 1u << 7,
 	};
 
 	/// One world-anchored billboard for a kClientFlag_WorldQuad client. The helper

@@ -104,15 +104,18 @@ namespace ImGuiVRHelper::WandPointing
 		const auto attach = state.settings.attachMode;
 
 		bool intersected = false;
+		Overlay::OverlayType matchedType = Overlay::OverlayType::HMD;
 		if (attach == Overlay::AttachMode::HMDOnly || attach == Overlay::AttachMode::Both) {
 			if (ComputeIntersectionForOverlayType(Overlay::OverlayType::HMD, controllerIndex, outUV)) {
 				intersected = true;
+				matchedType = Overlay::OverlayType::HMD;
 			}
 		}
 		if (!intersected &&
 			(attach == Overlay::AttachMode::ControllerOnly || attach == Overlay::AttachMode::Both)) {
 			if (ComputeIntersectionForOverlayType(Overlay::OverlayType::Controller, controllerIndex, outUV)) {
 				intersected = true;
+				matchedType = Overlay::OverlayType::Controller;
 			}
 		}
 
@@ -120,6 +123,7 @@ namespace ImGuiVRHelper::WandPointing
 			state.wandState.isIntersecting = true;
 			state.wandState.uvCoordinates = outUV;
 			state.wandState.controllerIndex = controllerIndex;
+			state.wandState.matchedOverlayType = matchedType;
 		} else {
 			state.wandState.isIntersecting = false;
 		}
@@ -170,11 +174,16 @@ namespace ImGuiVRHelper::WandPointing
 			screenY = std::clamp(screenY, 0.0f, io.DisplaySize.y);
 			io.MousePos = ImVec2(screenX, screenY);
 			io.AddMousePosEvent(screenX, screenY);
-			io.MouseDrawCursor = true;
-			io.WantSetMousePos = true;
+			// No WantSetMousePos warp: this runs AFTER the Win32 backend's
+			// NewFrame (see SettingsUI), so the injected position wins directly.
+			// Round-tripping through the OS cursor clamped the position to the
+			// mirror window's client area — a window smaller than the canvas
+			// dragged the cursor toward the window edge, diverging from the wand
+			// (and the composited dot) worse toward the panel edges.
+			io.WantSetMousePos = false;
 		} else {
-			// Wand off the panel: release the warp so ImGui_ImplWin32 reads the
-			// real OS mouse position. Cursor visibility is decided once in
+			// Wand off the panel: leave io.MousePos as the Win32 backend's OS
+			// mouse sample. Cursor visibility is decided once in
 			// SettingsUI::Render after NewFrame (shown at the wand or the mouse,
 			// hidden when neither is on the panel), so don't force it here.
 			state.wandState.isIntersecting = false;

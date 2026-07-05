@@ -62,7 +62,10 @@ namespace
 		auto& state = ImGuiVRHelper::Overlay::State::GetSingleton();
 
 		for (const auto& k : keys) {
-			const uint32_t reKey = k.GetKey();
+			// Canonicalize: live state is stored on canonical keys only (FeedVREvent
+			// folds kGripAlt/kTouchpadAlt), so a legacy config that saved an
+			// alternate code must be folded the same way to keep matching.
+			const uint32_t reKey = ImGuiVRHelper::Input::Canonical(k.GetKey());
 			bool pressed = false;
 			switch (k.GetDevice()) {
 			case API::InputDeviceType::Both:
@@ -576,6 +579,19 @@ namespace ImGuiVRHelper
 			list.assign(quads, quads + std::min(count, kMaxWorldQuads));
 	}
 
+	void HelperImpl::RequestReposition(uint32_t client_id)
+	{
+		{
+			std::scoped_lock lk{ m_mutex };
+			if (client_id == 0 || client_id != m_focused_client)
+				return;  // only the focused client's own panel may be repositioned
+		}
+		// A heartbeat, not a toggle: OverlayDrag::Update consumes (resets false) this every
+		// DispatchFrame, so the caller must call again next frame to keep the drag going —
+		// naturally ends the drag the frame after the caller stops (e.g. trigger released).
+		Overlay::State::GetSingleton().repositionRequested = true;
+	}
+
 	std::vector<HelperImpl::WorldQuadClientSnapshot> HelperImpl::SnapshotWorldQuadClients()
 	{
 		std::vector<WorldQuadClientSnapshot> out;
@@ -590,6 +606,13 @@ namespace ImGuiVRHelper
 			out.push_back({ id, rec.name, rec.texture, rec.worldQuads });
 		}
 		return out;
+	}
+
+	uint32_t HelperImpl::GetClientFlags(uint32_t client_id)
+	{
+		std::scoped_lock lk{ m_mutex };
+		const auto it = m_clients.find(client_id);
+		return it != m_clients.end() ? it->second.flags : 0u;
 	}
 
 	uint32_t HelperImpl::GetFocusedClientId()
@@ -730,12 +753,15 @@ namespace ImGuiVRHelper
 		// settings UI into the self-client RTV (DispatchFrame's
 		// SettingsUI::Render block), so it trivially honors the
 		// focus-render contract.
+		// HelperCursor: the settings UI has no styled ImGui software cursor of
+		// its own, so it keeps the composited wand dot.
 		m_self_client_id = RegisterClient(
 			kSelfClientName,
 			nullptr,
 			+[](const ImGuiVRHelperPluginAPI::Frame*, void*) { /* no-op */ },
 			nullptr,
-			ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus);
+			ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus |
+				ImGuiVRHelperPluginAPI::kClientFlag_HelperCursor);
 
 		// Synthetic HUD-mode client for the Settings::showHUDDemo smoke
 		// test. Always registered (zero overhead until showHUDDemo
@@ -824,11 +850,23 @@ namespace ImGuiVRHelper
 		// desktop/dev conveniences. The pause gate applies only to controller
 		// activation — see the self-toggle combo in ReconcileSelfFocusAndCombos.
 		std::scoped_lock lk{ m_mutex };
-		if (m_clients.contains(client_id)) {
+		const auto it = m_clients.find(client_id);
+		if (it != m_clients.end()) {
 			m_focused_client = client_id;
-			// Remember the last client overlay so the open combo can reopen it.
-			// The helper's own settings UI has its own toggle, so it's excluded.
-			if (client_id != m_self_client_id)
+			// Remember the last client overlay so the open combo can reopen it. Excludes the
+			// helper's own settings UI (has its own toggle) and, like BuildOverlayOrder's cycle
+			// filter, PointerFocus/WorldQuad clients: those are driven by the owning mod's own
+			// context (e.g. an in-conversation panel, only meaningful while a conversation is
+			// live), not something the generic open combo can meaningfully reopen cold. Letting
+			// one through here previously meant the NEXT open-combo press retargeted such a
+			// client, which the owning mod's own state machine would just close again next
+			// frame (no conversation active) — a silent no-op that also left m_focused_client at
+			// 0, which additionally blocks cycling (ProcessOverlayCycleInput requires a nonzero
+			// focus to begin with), so first-open would appear completely dead until a
+			// different client's own keyboard hotkey called RequestFocus directly.
+			constexpr uint32_t kExcludedFromLastOpened =
+				ImGuiVRHelperPluginAPI::kClientFlag_PointerFocus | ImGuiVRHelperPluginAPI::kClientFlag_WorldQuad;
+			if (client_id != m_self_client_id && !(it->second.flags & kExcludedFromLastOpened))
 				m_lastOpenedOverlay = client_id;
 		}
 	}
@@ -1352,35 +1390,56 @@ namespace ImGuiVRHelper
 			}
 		}
 
-		// While capturing a rebind, the overlay is modal: swallow controller input
-		// from clients so the focused client doesn't act on the combo the user is
-		// pressing. Keep masking after capture ends until every button releases —
-		// otherwise keys still held from the capture leak in as menu clicks.
 		const bool recording = ComboRecording::IsActive();
-		if (m_prevRecording && !recording)
-			m_inputSettling = true;
-		m_prevRecording = recording;
-		if (m_inputSettling &&
-			(baseFrame.left.buttons_held | baseFrame.right.buttons_held) == 0)
-			m_inputSettling = false;
-
-		const bool maskInput = recording || m_inputSettling;
-
-		// Overlay reposition drag is the other modal grip-driven gesture: grip both starts the drag and
-		// maps to a client's right-click, so without this a wand ray sweeping onto a client's panel
-		// mid-drag would forward the still-held grip as an unintended right-click, and the drag's
-		// eventual release could leak in as a spurious click of its own. Unlike the rebind mask above,
-		// this must NOT zero raw controller state -- a client's own off-panel shortcuts or IsButtonHeld
-		// reads still need the genuine grip/trigger state during a drag; only the client SDK's ImGui
-		// forwarding step should stand down, via kFrameFlag_SuppressInputForwarding.
 		const bool dragging = Overlay::State::GetSingleton().dragState.dragging;
-		if (m_prevDragging && !dragging)
-			m_dragInputSettling = true;
-		m_prevDragging = dragging;
-		if (m_dragInputSettling &&
-			(baseFrame.left.buttons_held | baseFrame.right.buttons_held) == 0)
-			m_dragInputSettling = false;
-		const bool suppressForwarding = dragging || m_dragInputSettling;
+		const bool clientRequestedDrag = Overlay::State::GetSingleton().dragState.clientRequested;
+		const bool useLeases = Overlay::State::GetSingleton().settings.useInputLeases;
+
+		// Route-on-press leases: a press claims client / helper-drag / modal at its
+		// press edge, and the hold + release follow that route unconditionally, so a
+		// gating change mid-hold (drag started, recording ended) can never strand a
+		// half-delivered press/release pair. Buttons pressed while the helper drag or
+		// the combo modal own input are stripped from client frames for their whole
+		// lifetime; everything else flows, including releases of buttons the client
+		// legitimately saw pressed — which is what the old settle latches and the
+		// SuppressInputForwarding flag got wrong (they re-decided per frame, dropping
+		// whichever edge landed inside the window; the flag is never set anymore, so
+		// the matching gate in shipped client SDKs is simply never armed).
+		//
+		// Client-requested drags keep the trigger with the owning client by
+		// construction: it was pressed on-panel (Client route), so the client always
+		// sees its own release and reposition heartbeats stop cleanly.
+		uint32_t stripLeft = 0, stripRight = 0;
+		bool maskInput = false;
+		bool suppressForwarding = false;
+		if (useLeases) {
+			InputLeases::Context ctx;
+			ctx.helperDragActive = dragging && !clientRequestedDrag;
+			ctx.modalRecording = recording;
+			m_leases.Update(
+				{ baseFrame.left.buttons_pressed, baseFrame.right.buttons_pressed },
+				{ baseFrame.left.buttons_released, baseFrame.right.buttons_released }, ctx);
+			stripLeft = m_leases.StrippedBits(0);
+			stripRight = m_leases.StrippedBits(1);
+		} else {
+			// Legacy latches (kill-switch fallback): mask everything while recording
+			// (+ settle), suppress SDK forwarding while dragging (+ settle).
+			if (m_prevRecording && !recording)
+				m_inputSettling = true;
+			m_prevRecording = recording;
+			if (m_inputSettling &&
+				(baseFrame.left.buttons_held | baseFrame.right.buttons_held) == 0)
+				m_inputSettling = false;
+			maskInput = recording || m_inputSettling;
+
+			if (m_prevDragging && !dragging)
+				m_dragInputSettling = true;
+			m_prevDragging = dragging;
+			if (m_dragInputSettling &&
+				(baseFrame.left.buttons_held | baseFrame.right.buttons_held) == 0)
+				m_dragInputSettling = false;
+			suppressForwarding = (dragging && !clientRequestedDrag) || m_dragInputSettling;
+		}
 
 		for (const auto& sn : snapshot) {
 			ImGuiVRHelperPluginAPI::Frame perClient = baseFrame;
@@ -1393,7 +1452,26 @@ namespace ImGuiVRHelper
 				perClient.flags &= ~((1u << 0) | (1u << 2));
 			}
 
-			if (maskInput) {
+			if (useLeases) {
+				// Strip drag/modal-leased bits from every button view (pair
+				// integrity: held, pressed, released, touched together).
+				const auto strip = [](ImGuiVRHelperPluginAPI::Hand& h, uint32_t bits) {
+					h.buttons_held &= ~bits;
+					h.buttons_pressed &= ~bits;
+					h.buttons_released &= ~bits;
+					h.buttons_touched &= ~bits;
+				};
+				strip(perClient.left, stripLeft);
+				strip(perClient.right, stripRight);
+				// Analog axes aren't edge-paired, so zeroing them while the combo
+				// modal is up is safe and keeps the capture from steering menus.
+				if (recording) {
+					for (auto* h : { &perClient.left, &perClient.right }) {
+						h->trigger = h->grip = 0.0f;
+						h->stick_x = h->stick_y = h->pad_x = h->pad_y = 0.0f;
+					}
+				}
+			} else if (maskInput) {
 				for (auto* h : { &perClient.left, &perClient.right }) {
 					h->buttons_held = h->buttons_pressed = h->buttons_released = h->buttons_touched = 0;
 					h->trigger = h->grip = 0.0f;

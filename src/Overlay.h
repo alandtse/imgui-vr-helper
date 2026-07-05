@@ -111,6 +111,11 @@ namespace ImGuiVRHelper::Overlay
 
 		bool enableWandPointing = true;
 
+		/// Route-on-press input leases (see internal/InputLeases.h). Kill-switch
+		/// only — false reverts to the legacy settle-latch + suppression-flag
+		/// routing in case a regression surfaces in the field. Not in the UI.
+		bool useInputLeases = true;
+
 		// Drag-to-reposition. On by default so the documented grip-to-move gesture
 		// works out of the box; gated to off-panel grip so it can't hijack on-panel
 		// menu input.
@@ -218,6 +223,12 @@ namespace ImGuiVRHelper::Overlay
 		vr::TrackedDeviceIndex_t controllerIndex = vr::k_unTrackedDeviceIndexInvalid;
 		Vector3 rayOrigin = Vector3::Zero;
 		Vector3 rayDirection = Vector3::Zero;
+		// Which overlay anchor (HMD- or controller-attached) the hit above belongs to, for
+		// AttachMode::Both where the panel is drawn at both locations at once. Set alongside
+		// isIntersecting/uvCoordinates by WandPointing::ComputeIntersection. Consumed by
+		// InSceneOverlay's cursor-marker pass to draw the marker at the same anchor the panel
+		// quad it's landing on uses.
+		OverlayType matchedOverlayType = OverlayType::HMD;
 	};
 
 	struct FixedWorldPosition
@@ -247,6 +258,14 @@ namespace ImGuiVRHelper::Overlay
 		Vector3 initialHMDOffset = Vector3::Zero;
 		Vector3 initialControllerOffset = Vector3::Zero;
 		float initialHMDScale = 1.0f;
+
+		/// True for a drag started via HelperImpl::RequestReposition (a client's own on-panel
+		/// "Move" affordance, held with trigger) rather than the off-panel grip gesture. Changes
+		/// how UpdateActiveDrag decides to end the drag: State::repositionRequested each frame
+		/// instead of the grip button, since the client — not raw grip state — owns the "still
+		/// held" signal here (grip itself may be bound to something else by the underlying game
+		/// while that client's menu is up, e.g. Skyrim's dialogue menu closes on grip).
+		bool clientRequested = false;
 	};
 
 	// ---- Singleton ------------------------------------------------------
@@ -283,6 +302,13 @@ namespace ImGuiVRHelper::Overlay
 
 		bool lastKnownLeftHandedMode = false;
 		bool overlayVisible = false;  ///< populated by HelperImpl::IsOverlayVisible
+
+		/// Set by HelperImpl::RequestReposition when the focused client calls it this frame (its
+		/// own on-panel "Move" affordance, held with trigger); consumed (and reset false) by
+		/// OverlayDrag::Update each DispatchFrame. The client must call it again every frame it
+		/// wants the drag to continue -- a heartbeat, not a toggle -- so simply not calling it
+		/// (trigger released) ends the drag on the next Update.
+		bool repositionRequested = false;
 
 		/// World position the player was at when fixed-world overlay last
 		/// snapped. Used by auto-reset distance check.

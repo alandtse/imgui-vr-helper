@@ -252,9 +252,14 @@ namespace ImGuiVRHelper::Input
 			std::chrono::steady_clock::now().time_since_epoch())
 		                         .count();
 
+		// Store on the CANONICAL key: some runtimes report a squeeze's press and
+		// release on different alternates (kGrip vs kGripAlt), and since both OR
+		// into one wire bit, splitting them across two entries leaves the OR (and
+		// thus GripClick) stuck held. Folding at store makes one physical button
+		// exactly one entry.
 		for (const auto& m : ButtonTable()) {
 			if (keyCode == m.reKey) {
-				target[m.reKey].OnEvent(pressed, nowSecs);
+				target[m.canonicalKey].OnEvent(pressed, nowSecs);
 				break;
 			}
 		}

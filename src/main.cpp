@@ -35,6 +35,9 @@ namespace
 		case 4:
 			return static_cast<IImGuiVRHelperInterface004*>(
 				&ImGuiVRHelper::HelperImpl::GetSingleton());
+		case 5:
+			return static_cast<IImGuiVRHelperInterface005*>(
+				&ImGuiVRHelper::HelperImpl::GetSingleton());
 		default:
 			logs::warn("GetApiFunction: unsupported interface revision {}", revision);
 			return nullptr;
