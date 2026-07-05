@@ -1355,14 +1355,12 @@ namespace ImGuiVRHelper::SettingsUI
 		// Cursor visibility (single source of truth; post-NewFrame so io.MousePos
 		// is final): draw it only when it actually lands on the panel — placed by
 		// the wand, the thumbstick, or the desktop mouse (the backend reports
-		// in-bounds while the mirror window has focus, -FLT_MAX otherwise). While
-		// the wand is the source, stand down: the compositor draws the pointer
-		// for the self client (it doesn't set kClientFlag_OwnCursor), and a
-		// software cursor under it would just be a second, smaller pointer.
+		// in-bounds while the mirror window has focus, -FLT_MAX otherwise). The
+		// self client sets kClientFlag_OwnCursor, so the compositor never draws
+		// its own pointer here — no wand-vs-other source distinction needed.
 		io.MouseDrawCursor =
 			io.MousePos.x >= 0.0f && io.MousePos.y >= 0.0f &&
-			io.MousePos.x < io.DisplaySize.x && io.MousePos.y < io.DisplaySize.y &&
-			!vrState.wandState.isIntersecting;
+			io.MousePos.x < io.DisplaySize.x && io.MousePos.y < io.DisplaySize.y;
 
 		if (g_visible) {
 			RenderWindow();
