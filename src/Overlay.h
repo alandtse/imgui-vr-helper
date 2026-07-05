@@ -92,6 +92,15 @@ namespace ImGuiVRHelper::Overlay
 		Controller,
 	};
 
+	/// Style of the helper-composited wand pointer (drawn for every focused
+	/// client that doesn't set kClientFlag_OwnCursor). Both anchor their hotspot
+	/// at the exact wand hit; this is a presentation choice.
+	enum class CursorStyle
+	{
+		Dot = 0,    ///< Filled disc with a dark outline (legible at distance).
+		Arrow = 1,  ///< Classic desktop arrow, tip at the hit point.
+	};
+
 	// ---- Settings -------------------------------------------------------
 
 	struct Settings
@@ -112,6 +121,10 @@ namespace ImGuiVRHelper::Overlay
 		float controllerOffsetZ = Config::kDefaultControllerOffsetZ;
 
 		bool enableWandPointing = true;
+
+		/// Style of the helper-composited wand pointer. Applies to every focused
+		/// client that takes the default (helper-drawn) pointer.
+		CursorStyle cursorStyle = CursorStyle::Dot;
 
 		/// Route-on-press input leases (see internal/InputLeases.h). Kill-switch
 		/// only — false reverts to the legacy settle-latch + suppression-flag

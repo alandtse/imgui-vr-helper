@@ -208,6 +208,12 @@ namespace ImGuiVRHelper::SettingsUI
 				ImGui::Checkbox("Wand pointing", &s.enableWandPointing);
 				if (ImGui::IsItemHovered())
 					ImGui::SetTooltip("Aim a controller at the panel to move the cursor.");
+				// Style of the helper-drawn pointer (for clients that don't draw their own).
+				int cursorStyle = static_cast<int>(s.cursorStyle);
+				if (ImGui::Combo("Pointer style", &cursorStyle, "Dot\0Arrow\0"))
+					s.cursorStyle = static_cast<Overlay::CursorStyle>(cursorStyle);
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("Shape of the wand pointer the helper draws over menus.");
 				ImGui::Checkbox("Grip-to-drag repositioning", &s.enableDragToReposition);
 				if (ImGui::IsItemHovered())
 					ImGui::SetTooltip("Hold grip and move your hand to reposition the overlay;\nthumbstick up/down moves it farther/closer.");
@@ -1314,8 +1320,8 @@ namespace ImGuiVRHelper::SettingsUI
 		// is final): draw it only when it actually lands on the panel — placed by
 		// the wand, the thumbstick, or the desktop mouse (the backend reports
 		// in-bounds while the mirror window has focus, -FLT_MAX otherwise). While
-		// the wand is the source, stand down: the compositor's wand dot is the
-		// pointer (the self client registers kClientFlag_HelperCursor), and a
+		// the wand is the source, stand down: the compositor draws the pointer
+		// for the self client (it doesn't set kClientFlag_OwnCursor), and a
 		// software cursor under it would just be a second, smaller pointer.
 		io.MouseDrawCursor =
 			io.MousePos.x >= 0.0f && io.MousePos.y >= 0.0f &&

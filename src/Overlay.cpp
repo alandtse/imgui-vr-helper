@@ -64,6 +64,8 @@ namespace ImGuiVRHelper::Overlay
 			s.controllerOffsetY = tomlGet<float>(t, "controllerOffsetY", s.controllerOffsetY);
 			s.controllerOffsetZ = tomlGet<float>(t, "controllerOffsetZ", s.controllerOffsetZ);
 			s.enableWandPointing = tomlGet<bool>(t, "enableWandPointing", s.enableWandPointing);
+			// cursorStyle: 0 = Dot / 1 = Arrow.
+			s.cursorStyle = tomlEnum(t, "cursorStyle", s.cursorStyle, 1);
 			s.useInputLeases = tomlGet<bool>(t, "useInputLeases", s.useInputLeases);
 			s.enableDragToReposition = tomlGet<bool>(t, "enableDragToReposition", s.enableDragToReposition);
 			s.onlyOpenWhilePaused = tomlGet<bool>(t, "onlyOpenWhilePaused", s.onlyOpenWhilePaused);
@@ -150,6 +152,8 @@ namespace ImGuiVRHelper::Overlay
 
 				<< "# Interaction\n"
 				<< "enableWandPointing = " << (s.enableWandPointing ? "true" : "false") << "\n"
+				<< "# Helper wand pointer style: 0 = dot, 1 = arrow\n"
+				<< "cursorStyle = " << static_cast<int>(s.cursorStyle) << "\n"
 				<< "# Route-on-press input leases; false reverts to the legacy input routing\n"
 				<< "# (kill-switch, remove after one release cycle)\n"
 				<< "useInputLeases = " << (s.useInputLeases ? "true" : "false") << "\n"
