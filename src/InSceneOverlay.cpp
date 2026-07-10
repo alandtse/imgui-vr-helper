@@ -1113,7 +1113,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		for (const auto& hud : hudClients) {
 			if (!hud.texture)
 				continue;
-			auto* hudSRV = GetOrCreateHUDSRV(hud.client_id, hud.texture);
+			auto* hudSRV = GetOrCreateHUDSRV(hud.client_id, hud.texture.get());
 			if (!hudSRV)
 				continue;
 			ConstantBufferData cb;
@@ -1135,10 +1135,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 	{
 		ZoneScopedN("InScene::RebindPass");
 		HELPER_GPU_PASS("ImGuiVRHelper::RebindPass");
-		auto* tex = HelperImpl::GetSingleton().GetActiveRebindTexture();
+		auto tex = HelperImpl::GetSingleton().GetActiveRebindTexture();
 		if (!tex)
 			return;
-		auto* srv = GetOrCreateHUDSRV(kRebindSRVKey, tex);
+		auto* srv = GetOrCreateHUDSRV(kRebindSRVKey, tex.get());
 		if (!srv)
 			return;
 
@@ -1694,8 +1694,11 @@ float4 main(PS_INPUT input) : SV_TARGET
 		auto hudClients = HelperImpl::GetSingleton().SnapshotHUDClients();
 		auto worldClients = HelperImpl::GetSingleton().SnapshotWorldQuadClients();
 
-		// Focused panel-mode client gate (existing semantics).
-		ID3D11Texture2D* menuTex = nullptr;
+		// Focused panel-mode client gate (existing semantics). Held as a
+		// strong ref for the rest of this function so a concurrent
+		// UnregisterClient on another thread can't free it out from under
+		// GetMenuSRV's CreateShaderResourceView call below.
+		winrt::com_ptr<ID3D11Texture2D> menuTex;
 		bool wantPanelPass = false;
 		if (focused != 0 && s.attachMode != Overlay::AttachMode::None) {
 			menuTex = HelperImpl::GetSingleton().GetClientPanelTexture(focused);
@@ -1723,9 +1726,9 @@ float4 main(PS_INPUT input) : SV_TARGET
 		const bool dragging = overlayState.dragState.dragging && s.enableDragToReposition;
 		ID3D11ShaderResourceView* panelSRV = nullptr;
 		if (wantPanelPass) {
-			panelSRV = dragging ? OverlayTinter::GetOutputSRV() : GetMenuSRV(menuTex);
+			panelSRV = dragging ? OverlayTinter::GetOutputSRV() : GetMenuSRV(menuTex.get());
 			if (!panelSRV)
-				panelSRV = GetMenuSRV(menuTex);
+				panelSRV = GetMenuSRV(menuTex.get());
 		}
 
 		// Eye view-projection now needed for BOTH passes — HUD-mode

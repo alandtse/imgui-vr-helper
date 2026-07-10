@@ -427,7 +427,7 @@ namespace ImGuiVRHelper
 		return GetFocusedClientId() != 0;
 	}
 
-	ID3D11Texture2D* HelperImpl::GetClientPanelTexture(uint32_t client_id)
+	winrt::com_ptr<ID3D11Texture2D> HelperImpl::GetClientPanelTexture(uint32_t client_id)
 	{
 		std::scoped_lock lk{ m_mutex };
 		auto it = m_clients.find(client_id);
@@ -435,10 +435,10 @@ namespace ImGuiVRHelper
 			return nullptr;
 		if (!EnsureClientTextureLocked(it->second))
 			return nullptr;
-		return it->second.texture.get();
+		return it->second.texture;
 	}
 
-	ID3D11Texture2D* HelperImpl::GetActiveRebindTexture()
+	winrt::com_ptr<ID3D11Texture2D> HelperImpl::GetActiveRebindTexture()
 	{
 		if (m_rebind_client_id == 0 || !ComboRecording::IsActive())
 			return nullptr;
@@ -558,7 +558,7 @@ namespace ImGuiVRHelper
 				continue;  // never painted, or idle → skip the composite
 			if (!EnsureClientTextureLocked(rec))
 				continue;
-			out.push_back({ id, rec.texture.get() });
+			out.push_back({ id, rec.texture });
 		}
 		return out;
 	}
@@ -773,7 +773,7 @@ namespace ImGuiVRHelper
 		if (!ctx)
 			return;
 		for (const auto& [id, path] : pending) {
-			ID3D11Texture2D* tex = GetClientPanelTexture(id);
+			auto tex = GetClientPanelTexture(id);
 			if (!tex) {
 				logs::warn("dumppanel: client {} has no panel texture", id);
 				continue;
@@ -798,7 +798,7 @@ namespace ImGuiVRHelper
 				std::filesystem::create_directories(fsPath.parent_path(), ec);
 			}
 			const HRESULT hr = DirectX::SaveWICTextureToFile(
-				ctx, tex, GUID_ContainerFormatPng, wpath.c_str());
+				ctx, tex.get(), GUID_ContainerFormatPng, wpath.c_str());
 			if (FAILED(hr))
 				logs::warn("dumppanel: SaveWICTextureToFile('{}') failed 0x{:08X}",
 					path, static_cast<unsigned>(hr));
@@ -1636,7 +1636,7 @@ namespace ImGuiVRHelper
 		// Tint the focused panel (drag-highlight colour while dragging) into the
 		// post-process texture InSceneOverlay samples. Skip when nothing's focused.
 		if (focused != 0) {
-			if (auto* tex = GetClientPanelTexture(focused)) {
+			if (auto tex = GetClientPanelTexture(focused)) {
 				const bool dragging = overlayState.dragState.dragging &&
 				                      overlayState.settings.enableDragToReposition;
 				const float tint[4] = {
@@ -1645,7 +1645,7 @@ namespace ImGuiVRHelper
 					dragging ? overlayState.settings.dragHighlightColor[2] : 0.0f,
 					dragging ? overlayState.settings.dragHighlightColor[3] : 0.0f,
 				};
-				OverlayTinter::Dispatch(tex, tint);
+				OverlayTinter::Dispatch(tex.get(), tint);
 			}
 		}
 
