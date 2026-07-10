@@ -267,7 +267,21 @@ namespace ImGuiVRHelper
 		std::unordered_map<ImGuiVRHelperPluginAPI::ComboId,
 			struct ComboRecord>
 			m_combos;
+		// Internal monotonic sequence, NOT the id handed to clients — see
+		// NextComboIdLocked().
 		ImGuiVRHelperPluginAPI::ComboId m_next_combo_id = 1;
+		ImGuiVRHelperPluginAPI::ComboId m_combo_id_salt = 0;
+		bool m_combo_id_salt_seeded = false;
+
+		/// Mints the next ComboId returned by RegisterCombo. ComboFired/
+		/// RebindCombo/SetComboOffPanel take only an id with no ownership
+		/// check — that ABI is frozen (interface001/003; adding a client_id
+		/// parameter would break every already-shipped client) — so ids are
+		/// scrambled with a per-process random salt via a bijective
+		/// multiplicative hash rather than handed out as small sequential
+		/// integers another client could enumerate. Must be called with
+		/// m_mutex held.
+		ImGuiVRHelperPluginAPI::ComboId NextComboIdLocked();
 		uint32_t m_focused_client = 0;
 		uint64_t m_frameCounter = 0;  ///< ++ each DispatchFrame; HUD-idle skipping uses it
 
