@@ -1307,8 +1307,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// instead of one squashed/stretched by the panel's aspect correction.
 		constexpr float kMarkerLocalSize = 0.016f;
 		const float markerSize = kMarkerLocalSize * s.cursorSize;
-		const float localX = wand.uvCoordinates.x - 0.5f;
-		const float localY = 0.5f - wand.uvCoordinates.y;
+		const float localX = wand.uvCoordinatesX.load(std::memory_order_relaxed) - 0.5f;
+		const float localY = 0.5f - wand.uvCoordinatesY.load(std::memory_order_relaxed);
 		Matrix markerLocal =
 			Matrix::CreateScale(markerSize, markerSize / Overlay::Config::kOverlayAspect, 1.0f) *
 			Matrix::CreateTranslation(localX, localY, 0.0f);
@@ -1343,7 +1343,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 				logs::debug(
 					"TriggerPress NDC: uv=({:.3f},{:.3f}) local=({:.3f},{:.3f}) marker=({:.3f},{:.3f}) "
 					"panelLeft=({:.3f},{:.3f}) panelCenter=({:.3f},{:.3f}) panelRight=({:.3f},{:.3f})",
-					wand.uvCoordinates.x, wand.uvCoordinates.y, localX, localY, m.x, m.y,
+					wand.uvCoordinatesX.load(std::memory_order_relaxed), wand.uvCoordinatesY.load(std::memory_order_relaxed), localX, localY, m.x, m.y,
 					l.x, l.y, c.x, c.y, r.x, r.y);
 			}
 			prevTriggerHeld = triggerHeld;
@@ -1726,7 +1726,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// tinted panel into its post-process texture each Present.
 		// Sample that instead so the drag highlight appears. Only
 		// applies to the panel-mode pass.
-		const bool dragging = overlayState.dragState.dragging && s.enableDragToReposition;
+		const bool dragging = overlayState.dragState.dragging.load(std::memory_order_relaxed) && s.enableDragToReposition;
 		ID3D11ShaderResourceView* panelSRV = nullptr;
 		if (wantPanelPass) {
 			panelSRV = dragging ? OverlayTinter::GetOutputSRV() : GetMenuSRV(menuTex.get());
