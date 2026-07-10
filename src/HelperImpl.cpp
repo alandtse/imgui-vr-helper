@@ -139,6 +139,11 @@ namespace ImGuiVRHelper
 		effective_flags &= ~ImGuiVRHelperPluginAPI::kClientFlag_Dashboard;
 
 		std::scoped_lock lk{ m_mutex };
+		constexpr size_t kMaxClients = 256;
+		if (m_clients.size() >= kMaxClients) {
+			logs::warn("RegisterClient: rejected (exceeds max clients limit of {})", kMaxClients);
+			return 0;
+		}
 		const uint32_t id = m_next_client_id++;
 		auto& rec = m_clients[id];
 		rec.name = name;
@@ -357,6 +362,12 @@ namespace ImGuiVRHelper
 			}
 		}
 		std::scoped_lock lk{ m_mutex };
+		constexpr size_t kMaxCombos = 1024;
+		if (m_combos.size() >= kMaxCombos) {
+			logs::warn("RegisterCombo(client={}): rejected (exceeds max combos limit of {})",
+				client_id, kMaxCombos);
+			return 0;
+		}
 		const auto id = NextComboIdLocked();
 		auto& rec = m_combos[id];
 		rec.client_id = client_id;
