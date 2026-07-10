@@ -67,6 +67,7 @@ namespace ImGuiVRHelper::Hooks
 		// lazily-installed peer overlay (Community Shaders) has already taken
 		// IVRCompositor::Submit, then either install our overlay or stand down.
 		void DecideRenderPath();
+		void MonitorCSHandoff();
 		bool g_renderDecisionMade = false;
 
 		HRESULT WINAPI hk_Present(IDXGISwapChain* This, UINT SyncInterval, UINT Flags)
@@ -89,6 +90,8 @@ namespace ImGuiVRHelper::Hooks
 				DecideRenderPath();
 				return hr;
 			}
+
+			MonitorCSHandoff();
 
 			if (!InSceneOverlay::IsRenderPathDisabled()) {
 				// Latch the render path off (rather than crash) if a per-frame
@@ -247,6 +250,35 @@ namespace ImGuiVRHelper::Hooks
 				"installing imgui-vr-helper's overlay.");
 			InstallRenderPath();
 			g_renderDecisionMade = true;
+		}
+
+		// The 30-frame grace window above only bounds the *initial* race: a
+		// conflicting Community Shaders build can still install its Submit
+		// hook later than that (slow shader-cache warm-up, a stalled first VR
+		// frame), landing on top of ours after we've already claimed Submit.
+		// Keep polling at a low rate after the decision is made and stand
+		// down if CS ever takes the slot, rather than let both hosts drive
+		// the compositor indefinitely.
+		int g_postInstallCheckCounter = 0;
+		constexpr int kPostInstallCheckIntervalFrames = 30;
+
+		void MonitorCSHandoff()
+		{
+			if (InSceneOverlay::IsRenderPathDisabled())
+				return;
+			if (++g_postInstallCheckCounter < kPostInstallCheckIntervalFrames)
+				return;
+			g_postInstallCheckCounter = 0;
+
+			if (CSOwnsSubmitHook()) {
+				logs::error(
+					"Community Shaders claimed IVRCompositor::Submit after "
+					"imgui-vr-helper had already installed its own in-scene "
+					"overlay hook; standing down to avoid a duplicate VR "
+					"overlay host (vrclient 'device or resource busy' crash).");
+				InSceneOverlay::DisableRenderPath(
+					"Community Shaders claimed Submit after imgui-vr-helper installed");
+			}
 		}
 
 		// ---- BSInputDeviceManager::PollInputDevices thunk ---------------
