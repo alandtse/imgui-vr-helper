@@ -59,11 +59,18 @@ namespace ImGuiVRHelper::VrikCompat
 			return;
 		}
 
-		g_vrik = static_cast<vrikPluginApi::IVrikInterface001*>(msg.getApiFunction(1));
-		if (g_vrik) {
-			logs::info("VrikCompat: VRIK interface acquired (build {})", g_vrik->getBuildNumber());
-		} else {
-			logs::warn("VrikCompat: VRIK responded but revision 1 interface was unavailable");
+		// Calling into VRIK's own code, same as GetCameraOffset below — guard
+		// it the same way rather than let a throw cross the plugin boundary.
+		try {
+			g_vrik = static_cast<vrikPluginApi::IVrikInterface001*>(msg.getApiFunction(1));
+			if (g_vrik) {
+				logs::info("VrikCompat: VRIK interface acquired (build {})", g_vrik->getBuildNumber());
+			} else {
+				logs::warn("VrikCompat: VRIK responded but revision 1 interface was unavailable");
+			}
+		} catch (...) {
+			g_vrik = nullptr;
+			logs::error("VrikCompat: getApiFunction/getBuildNumber threw; VRIK compat disabled");
 		}
 	}
 

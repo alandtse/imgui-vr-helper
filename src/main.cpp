@@ -15,32 +15,41 @@
 #include "PluginVersion.h"
 #include "VrikCompat.h"
 
+#include <exception>
+
 namespace
 {
 	using namespace ImGuiVRHelperPluginAPI;
 
 	/// Returns an interface pointer for the requested revision, or nullptr
-	/// if the requested revision is newer than this build supports.
-	void* GetApiFunction(uint32_t revision)
+	/// if the requested revision is newer than this build supports. Called
+	/// directly by a client plugin's own code across the DLL boundary, so an
+	/// exception here must not unwind into a caller that never expects it.
+	void* GetApiFunction(uint32_t revision) noexcept
 	{
-		switch (revision) {
-		case 1:
-			return static_cast<IImGuiVRHelperInterface001*>(
-				&ImGuiVRHelper::HelperImpl::GetSingleton());
-		case 2:
-			return static_cast<IImGuiVRHelperInterface002*>(
-				&ImGuiVRHelper::HelperImpl::GetSingleton());
-		case 3:
-			return static_cast<IImGuiVRHelperInterface003*>(
-				&ImGuiVRHelper::HelperImpl::GetSingleton());
-		case 4:
-			return static_cast<IImGuiVRHelperInterface004*>(
-				&ImGuiVRHelper::HelperImpl::GetSingleton());
-		case 5:
-			return static_cast<IImGuiVRHelperInterface005*>(
-				&ImGuiVRHelper::HelperImpl::GetSingleton());
-		default:
-			logs::warn("GetApiFunction: unsupported interface revision {}", revision);
+		try {
+			switch (revision) {
+			case 1:
+				return static_cast<IImGuiVRHelperInterface001*>(
+					&ImGuiVRHelper::HelperImpl::GetSingleton());
+			case 2:
+				return static_cast<IImGuiVRHelperInterface002*>(
+					&ImGuiVRHelper::HelperImpl::GetSingleton());
+			case 3:
+				return static_cast<IImGuiVRHelperInterface003*>(
+					&ImGuiVRHelper::HelperImpl::GetSingleton());
+			case 4:
+				return static_cast<IImGuiVRHelperInterface004*>(
+					&ImGuiVRHelper::HelperImpl::GetSingleton());
+			case 5:
+				return static_cast<IImGuiVRHelperInterface005*>(
+					&ImGuiVRHelper::HelperImpl::GetSingleton());
+			default:
+				logs::warn("GetApiFunction: unsupported interface revision {}", revision);
+				return nullptr;
+			}
+		} catch (...) {
+			logs::error("GetApiFunction: exception fetching revision {}", revision);
 			return nullptr;
 		}
 	}
@@ -62,7 +71,7 @@ namespace
 	void OnPluginMessage(SKSE::MessagingInterface::Message* msg);
 
 	void OnSKSELifecycle(SKSE::MessagingInterface::Message* msg)
-	{
+	try {
 		if (!msg)
 			return;
 
@@ -147,10 +156,20 @@ namespace
 		default:
 			break;
 		}
+	} catch (const std::exception& e) {
+		// SKSE's dispatcher calls this directly; an exception unwinding into
+		// it is undefined behavior across the plugin boundary. Swallow and
+		// log instead of letting one bad lifecycle stage take the process
+		// down (see the equivalent guard on hk_Present's DispatchFrame call).
+		logs::error("OnSKSELifecycle: exception handling message type {}: {}",
+			msg ? static_cast<uint32_t>(msg->type) : 0u, e.what());
+	} catch (...) {
+		logs::error("OnSKSELifecycle: unknown exception handling message type {}",
+			msg ? static_cast<uint32_t>(msg->type) : 0u);
 	}
 
 	void OnPluginMessage(SKSE::MessagingInterface::Message* msg)
-	{
+	try {
 		if (!msg)
 			return;
 
@@ -179,6 +198,14 @@ namespace
 			logs::info("Handshake from '{}' -> GetApiFunction installed",
 				msg->sender ? msg->sender : "<unknown>");
 		}
+	} catch (const std::exception& e) {
+		// Same rationale as OnSKSELifecycle: SKSE's dispatcher calls this
+		// directly, so a throw must not cross back into it.
+		logs::error("OnPluginMessage: exception from sender '{}': {}",
+			msg && msg->sender ? msg->sender : "<unknown>", e.what());
+	} catch (...) {
+		logs::error("OnPluginMessage: unknown exception from sender '{}'",
+			msg && msg->sender ? msg->sender : "<unknown>");
 	}
 
 }
