@@ -202,16 +202,21 @@ namespace ImGuiVRHelper::SettingsUI
 			}
 		}
 
-		// Live WYSIWYG preview of the helper-drawn pointer over a mock panel, so size/color
-		// changes are obvious without leaving the settings menu. Drawn via ImGui's own draw
-		// list rather than sampling the real cursor texture (InSceneOverlay's GPU resource,
-		// a different module) -- cheap, always in sync with the sliders, and doesn't need a
-		// GPU texture regeneration round-trip for a live edit. Necessary again now that the
-		// settings panel draws its own cursor (kClientFlag_OwnCursor) instead of taking the
-		// helper-composited one it's configuring here.
+		// Live WYSIWYG preview of the helper-drawn pointer over a mock panel, so
+		// size/color changes are obvious without leaving the settings menu. Drawn
+		// via ImGui's own draw list (not the real cursor texture) so it stays in
+		// sync with the sliders without a GPU texture regen round-trip.
 		void RenderCursorPreview(const Overlay::Settings& s)
 		{
 			constexpr float kBoxSize = 96.0f;
+			constexpr ImU32 kPreviewBgColor = IM_COL32(60, 60, 65, 255);
+			constexpr float kPreviewBgRounding = 4.0f;
+			constexpr float kOutlineAlphaScale = 235.0f;
+			constexpr float kArrowArmRatio = 0.34f;
+			constexpr float kOutlinePolyThickness = 1.5f;
+			constexpr float kCircleOuterRatio = 0.42f;
+			constexpr float kCircleInnerRatio = 0.34f;
+
 			ImGui::Dummy(ImVec2(0.0f, 4.0f));
 			ImGui::TextDisabled("Preview");
 			ImGui::InvisibleButton("##cursor_preview_area", ImVec2(kBoxSize, kBoxSize));
@@ -222,11 +227,11 @@ namespace ImGuiVRHelper::SettingsUI
 
 			// Mock panel background so the pointer's contrast reads the way it will in-game.
 			dl->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + size.y),
-				IM_COL32(60, 60, 65, 255), 4.0f);
+				kPreviewBgColor, kPreviewBgRounding);
 
 			const ImU32 fillColor = ImGui::ColorConvertFloat4ToU32(
 				ImVec4(s.cursorColor[0], s.cursorColor[1], s.cursorColor[2], s.cursorColor[3]));
-			const ImU32 outlineColor = IM_COL32(0, 0, 0, static_cast<int>(235.0f * s.cursorColor[3]));
+			const ImU32 outlineColor = IM_COL32(0, 0, 0, static_cast<int>(kOutlineAlphaScale * s.cursorColor[3]));
 			const float scale = std::clamp(s.cursorSize, 0.5f, 3.0f);
 
 			if (s.cursorStyle == Overlay::CursorStyle::Arrow) {
@@ -236,15 +241,15 @@ namespace ImGuiVRHelper::SettingsUI
 					{ 0.00f, 0.00f }, { 0.00f, 1.00f }, { 0.28f, 0.73f }, { 0.46f, 1.10f },
 					{ 0.66f, 1.02f }, { 0.40f, 0.62f }, { 0.72f, 0.55f }
 				};
-				const float armLen = kBoxSize * 0.34f * scale;
+				const float armLen = kBoxSize * kArrowArmRatio * scale;
 				ImVec2 pts[7];
 				for (int i = 0; i < 7; ++i)
 					pts[i] = ImVec2(center.x + kPoly[i].x * armLen, center.y + kPoly[i].y * armLen);
 				dl->AddConvexPolyFilled(pts, 7, fillColor);
-				dl->AddPolyline(pts, 7, outlineColor, ImDrawFlags_Closed, 1.5f);
+				dl->AddPolyline(pts, 7, outlineColor, ImDrawFlags_Closed, kOutlinePolyThickness);
 			} else {
-				const float outerR = kBoxSize * 0.42f * scale;
-				const float innerR = kBoxSize * 0.34f * scale;
+				const float outerR = kBoxSize * kCircleOuterRatio * scale;
+				const float innerR = kBoxSize * kCircleInnerRatio * scale;
 				dl->AddCircleFilled(center, outerR, outlineColor);
 				dl->AddCircleFilled(center, innerR, fillColor);
 			}
@@ -1401,12 +1406,10 @@ namespace ImGuiVRHelper::SettingsUI
 
 		ImGui::NewFrame();
 
-		// Cursor visibility (single source of truth; post-NewFrame so io.MousePos
-		// is final): draw it only when it actually lands on the panel — placed by
-		// the wand, the thumbstick, or the desktop mouse (the backend reports
-		// in-bounds while the mirror window has focus, -FLT_MAX otherwise). The
-		// self client sets kClientFlag_OwnCursor, so the compositor never draws
-		// its own pointer here — no wand-vs-other source distinction needed.
+		// Cursor visibility (single source of truth, computed post-NewFrame so
+		// io.MousePos is final): draw whenever the position is in-bounds, using
+		// -FLT_MAX-out-of-bounds as the "hidden" signal regardless of input
+		// source. kClientFlag_OwnCursor keeps the compositor from drawing its own.
 		io.MouseDrawCursor =
 			io.MousePos.x >= 0.0f && io.MousePos.y >= 0.0f &&
 			io.MousePos.x < io.DisplaySize.x && io.MousePos.y < io.DisplaySize.y;
