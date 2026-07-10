@@ -308,9 +308,9 @@ namespace ImGuiVRHelper
 		auto& state = Overlay::State::GetSingleton();
 		if (state.debugPointer.active.load(std::memory_order_relaxed)) {
 			if (u)
-				*u = state.wandState.uvCoordinates.x;
+				*u = state.wandState.uvCoordinatesX.load(std::memory_order_relaxed);
 			if (v)
-				*v = state.wandState.uvCoordinates.y;
+				*v = state.wandState.uvCoordinatesY.load(std::memory_order_relaxed);
 			if (device_idx)
 				*device_idx = state.wandState.controllerIndex;
 			return true;
@@ -321,9 +321,9 @@ namespace ImGuiVRHelper
 			return false;
 
 		if (u)
-			*u = wand.uvCoordinates.x;
+			*u = wand.uvCoordinatesX.load(std::memory_order_relaxed);
 		if (v)
-			*v = wand.uvCoordinates.y;
+			*v = wand.uvCoordinatesY.load(std::memory_order_relaxed);
 		if (device_idx)
 			*device_idx = wand.controllerIndex;
 		return true;
@@ -335,8 +335,7 @@ namespace ImGuiVRHelper
 			m_combo_id_salt = std::random_device{}();
 			m_combo_id_salt_seeded = true;
 		}
-		// Odd multiplier => bijective mod 2^32 (every sequence value maps to a
-		// distinct id, so this can never collide), just not in ascending order.
+		// Odd multiplier keeps the mapping bijective mod 2^32.
 		constexpr ImGuiVRHelperPluginAPI::ComboId kOddMultiplier = 2654435761u;
 		ImGuiVRHelperPluginAPI::ComboId id;
 		do {
@@ -748,13 +747,13 @@ namespace ImGuiVRHelper
 		nlohmann::json j;
 		j["wand"] = {
 			{ "intersecting", state.wandState.isIntersecting },
-			{ "u", state.wandState.uvCoordinates.x },
-			{ "v", state.wandState.uvCoordinates.y },
+			{ "u", state.wandState.uvCoordinatesX.load(std::memory_order_relaxed) },
+			{ "v", state.wandState.uvCoordinatesY.load(std::memory_order_relaxed) },
 			{ "overridden", state.debugPointer.active.load(std::memory_order_relaxed) },
 		};
 		j["drag"] = {
-			{ "dragging", state.dragState.dragging },
-			{ "clientRequested", state.dragState.clientRequested },
+			{ "dragging", state.dragState.dragging.load(std::memory_order_relaxed) },
+			{ "clientRequested", state.dragState.clientRequested.load(std::memory_order_relaxed) },
 		};
 		j["held"] = {
 			{ "primary", wireMask(state.primaryControllerState) },
@@ -913,10 +912,6 @@ namespace ImGuiVRHelper
 		if (!Globals::IsReady())
 			return;
 
-		// Synthetic self-client: on_frame is a no-op since DispatchFrame
-		// renders the settings UI inline. RendersOnFocus/OwnCursor: it
-		// always renders and draws its own wand cursor (SettingsUI::Render),
-		// so both flags are set to match and avoid a duplicate compositor cursor.
 		m_self_client_id = RegisterClient(
 			kSelfClientName,
 			nullptr,
@@ -1143,9 +1138,10 @@ namespace ImGuiVRHelper
 		// tracked (headless null-driver testing), so it precedes every gate.
 		if (overlayState.debugPointer.active.load(std::memory_order_relaxed)) {
 			overlayState.wandState.isIntersecting = true;
-			overlayState.wandState.uvCoordinates = ImVec2(
-				overlayState.debugPointer.u.load(std::memory_order_relaxed),
-				overlayState.debugPointer.v.load(std::memory_order_relaxed));
+			overlayState.wandState.uvCoordinatesX.store(
+				overlayState.debugPointer.u.load(std::memory_order_relaxed), std::memory_order_relaxed);
+			overlayState.wandState.uvCoordinatesY.store(
+				overlayState.debugPointer.v.load(std::memory_order_relaxed), std::memory_order_relaxed);
 			return;
 		}
 
@@ -1566,8 +1562,8 @@ namespace ImGuiVRHelper
 		}
 
 		const bool recording = ComboRecording::IsActive();
-		const bool dragging = Overlay::State::GetSingleton().dragState.dragging;
-		const bool clientRequestedDrag = Overlay::State::GetSingleton().dragState.clientRequested;
+		const bool dragging = Overlay::State::GetSingleton().dragState.dragging.load(std::memory_order_relaxed);
+		const bool clientRequestedDrag = Overlay::State::GetSingleton().dragState.clientRequested.load(std::memory_order_relaxed);
 		const bool useLeases = Overlay::State::GetSingleton().settings.useInputLeases;
 
 		// Route-on-press leases: a press claims client / helper-drag / modal at its
@@ -1588,11 +1584,6 @@ namespace ImGuiVRHelper
 		bool maskInput = false;
 		bool suppressForwarding = false;
 		if (useLeases) {
-			// Drop all leases on a handedness flip or the overlay going
-			// hidden (Table::Reset()'s documented contract) — otherwise a
-			// button whose route was claimed under the old handedness/focus
-			// context keeps that stale route (or, worse, freezes as
-			// perpetually stripped) instead of being re-evaluated fresh.
 			const bool leftHandedNow = Input::IsLeftHanded();
 			const bool overlayVisibleNow = (focused != 0);
 			const bool dropLeases = (leftHandedNow != m_prevLeftHanded) ||
@@ -1610,13 +1601,6 @@ namespace ImGuiVRHelper
 			stripLeft = m_leases.StrippedBits(0);
 			stripRight = m_leases.StrippedBits(1);
 			if (dropLeases) {
-				// Reset() only clears ROUTING; a button already held (not a
-				// press edge this frame) keeps flowing since Update() above
-				// only assigns routes on press edges. Zero delivery for
-				// anything still held from before this frame so the client's
-				// own edge-diff observes a clean release, per Reset()'s
-				// contract — a genuine new press this same frame is
-				// unaffected (it's not part of ~buttons_pressed).
 				stripLeft |= baseFrame.left.buttons_held & ~baseFrame.left.buttons_pressed;
 				stripRight |= baseFrame.right.buttons_held & ~baseFrame.right.buttons_pressed;
 			}
@@ -1711,7 +1695,7 @@ namespace ImGuiVRHelper
 		// post-process texture InSceneOverlay samples. Skip when nothing's focused.
 		if (focused != 0) {
 			if (auto tex = GetClientPanelTexture(focused)) {
-				const bool dragging = overlayState.dragState.dragging &&
+				const bool dragging = overlayState.dragState.dragging.load(std::memory_order_relaxed) &&
 				                      overlayState.settings.enableDragToReposition;
 				const float tint[4] = {
 					dragging ? overlayState.settings.dragHighlightColor[0] : 0.0f,
