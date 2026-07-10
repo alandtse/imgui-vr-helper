@@ -232,7 +232,10 @@ namespace ImGuiVRHelper::SettingsUI
 			const ImU32 fillColor = ImGui::ColorConvertFloat4ToU32(
 				ImVec4(s.cursorColor[0], s.cursorColor[1], s.cursorColor[2], s.cursorColor[3]));
 			const ImU32 outlineColor = IM_COL32(0, 0, 0, static_cast<int>(kOutlineAlphaScale * s.cursorColor[3]));
-			const float scale = std::clamp(s.cursorSize, 0.5f, 3.0f);
+			// Normalized to the preview box's own max, not the raw setting range --
+			// otherwise the max cursorSize (3.0) overflows the box (e.g. the circle's
+			// outer radius would hit 121px in a 96px box).
+			const float scale = std::clamp(s.cursorSize, 0.5f, 3.0f) / 3.0f;
 
 			if (s.cursorStyle == Overlay::CursorStyle::Arrow) {
 				// Same 7-point outline as InSceneOverlay's CreateArrowTexture, scaled to fit
