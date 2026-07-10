@@ -132,87 +132,63 @@ namespace ImGuiVRHelper::WandPointing
 
 	void UpdateCursorFromWandPointing()
 	{
-		// One-to-one port of upstream/dev:src/Features/VR/WandPointing.cpp
-		// :104-145 (VR::UpdateCursorFromWandPointing). Same control flow,
-		// same gating, same MouseDrawCursor / WantSetMousePos handling on
-		// both branches. Helper-side adaptation: use Overlay::State /
-		// Settings instead of the SCS VR class members.
 		auto& state = Overlay::State::GetSingleton();
 		const auto& s = state.settings;
 
 		ImGuiIO& io = ImGui::GetIO();
 
-		// Synthetic pointer (devbench bridge): drive the cursor from the forced
-		// UV so an agent can aim the helper's own UI deterministically, even
-		// with no controllers tracked. Precedes every gate on purpose.
+		// Run real raycast first to compute the physical controller's actual
+		// intersection state, which is required for off-panel drag-to-reposition logic.
+		bool realIntersected = false;
+		if (s.enableWandPointing) {
+			namespace API = ImGuiVRHelperPluginAPI;
+			API::InputDeviceType pointingDevice;
+			if (s.attachMode == Overlay::AttachMode::ControllerOnly ||
+				s.attachMode == Overlay::AttachMode::Both) {
+				pointingDevice = (s.attachController == API::InputDeviceType::Primary) ?
+				                     API::InputDeviceType::Secondary :
+				                     API::InputDeviceType::Primary;
+			} else {
+				pointingDevice = API::InputDeviceType::Primary;
+			}
+
+			const auto controllerIndex = Util::GetControllerIndexForDevice(
+				pointingDevice, state.lastKnownLeftHandedMode);
+			if (controllerIndex != vr::k_unTrackedDeviceIndexInvalid) {
+				ImVec2 uv;
+				realIntersected = ComputeIntersection(controllerIndex, uv);
+				if (realIntersected) {
+					float screenX = uv.x * io.DisplaySize.x;
+					float screenY = uv.y * io.DisplaySize.y;
+					screenX = std::clamp(screenX, 0.0f, io.DisplaySize.x);
+					screenY = std::clamp(screenY, 0.0f, io.DisplaySize.y);
+					io.MousePos = ImVec2(screenX, screenY);
+					io.AddMousePosEvent(screenX, screenY);
+					io.WantSetMousePos = false;
+				} else {
+					state.wandState.isIntersecting = false;
+					io.WantSetMousePos = false;
+				}
+			} else {
+				state.wandState.isIntersecting = false;
+				io.WantSetMousePos = false;
+			}
+		} else {
+			state.wandState.isIntersecting = false;
+			io.WantSetMousePos = false;
+		}
+
+		// Synthetic pointer override: drive the cursor from the forced UV,
+		// but leave the physical state.wandState.isIntersecting intact to allow
+		// off-panel drag testing.
 		if (state.debugPointer.active.load(std::memory_order_relaxed)) {
-			// Clamp to [0,1] before it becomes state.wandState.uvCoordinates: that
-			// field is exposed to clients via GetPointer(), which documents (and
-			// ComputeIntersectionForOverlayType always maintains) a 0..1 range.
 			const float u = std::clamp(state.debugPointer.u.load(std::memory_order_relaxed), 0.0f, 1.0f);
 			const float v = std::clamp(state.debugPointer.v.load(std::memory_order_relaxed), 0.0f, 1.0f);
-			state.wandState.isIntersecting = true;
 			state.wandState.uvCoordinates = ImVec2(u, v);
 			const float x = u * io.DisplaySize.x;
 			const float y = v * io.DisplaySize.y;
 			io.MousePos = ImVec2(x, y);
 			io.AddMousePosEvent(x, y);
-			// Same no-warp rule as the real wand below: injection runs after the
-			// Win32 backend's NewFrame, so it wins without the OS-cursor clamp
-			// (WantSetMousePos=true would round-trip through the OS cursor,
-			// clamped to the mirror window's client area). MouseDrawCursor is
-			// left alone -- SettingsUI's single source of truth decides it from
-			// wandState.isIntersecting after this returns.
-			io.WantSetMousePos = false;
-			return;
-		}
-
-		if (!s.enableWandPointing)
-			return;
-
-		namespace API = ImGuiVRHelperPluginAPI;
-
-		// Pointing hand: opposite of menu's attach hand (controller-attached
-		// modes), otherwise primary. Matches dev's selector.
-		API::InputDeviceType pointingDevice;
-		if (s.attachMode == Overlay::AttachMode::ControllerOnly ||
-			s.attachMode == Overlay::AttachMode::Both) {
-			pointingDevice = (s.attachController == API::InputDeviceType::Primary) ?
-			                     API::InputDeviceType::Secondary :
-			                     API::InputDeviceType::Primary;
-		} else {
-			pointingDevice = API::InputDeviceType::Primary;
-		}
-
-		const auto controllerIndex = Util::GetControllerIndexForDevice(
-			pointingDevice, state.lastKnownLeftHandedMode);
-		if (controllerIndex == vr::k_unTrackedDeviceIndexInvalid) {
-			state.wandState.isIntersecting = false;
-			return;
-		}
-
-		ImVec2 uv;
-		const bool intersected = ComputeIntersection(controllerIndex, uv);
-		if (intersected) {
-			float screenX = uv.x * io.DisplaySize.x;
-			float screenY = uv.y * io.DisplaySize.y;
-			screenX = std::clamp(screenX, 0.0f, io.DisplaySize.x);
-			screenY = std::clamp(screenY, 0.0f, io.DisplaySize.y);
-			io.MousePos = ImVec2(screenX, screenY);
-			io.AddMousePosEvent(screenX, screenY);
-			// No WantSetMousePos warp: this runs AFTER the Win32 backend's
-			// NewFrame (see SettingsUI), so the injected position wins directly.
-			// Round-tripping through the OS cursor clamped the position to the
-			// mirror window's client area — a window smaller than the canvas
-			// dragged the cursor toward the window edge, diverging from the wand
-			// (and the composited dot) worse toward the panel edges.
-			io.WantSetMousePos = false;
-		} else {
-			// Wand off the panel: leave io.MousePos as the Win32 backend's OS
-			// mouse sample. Cursor visibility is decided once in
-			// SettingsUI::Render after NewFrame (shown at the wand or the mouse,
-			// hidden when neither is on the panel), so don't force it here.
-			state.wandState.isIntersecting = false;
 			io.WantSetMousePos = false;
 		}
 	}
