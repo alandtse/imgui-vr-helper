@@ -870,18 +870,10 @@ namespace ImGuiVRHelper
 		if (!Globals::IsReady())
 			return;
 
-		// Register a synthetic self-client. The on_frame callback is empty
-		// because the helper drives its own rendering inline in
-		// DispatchFrame (we don't need to round-trip through the public
-		// callback path).
-		// RendersOnFocus: the helper unconditionally renders its
-		// settings UI into the self-client RTV (DispatchFrame's
-		// SettingsUI::Render block), so it trivially honors the
-		// focus-render contract. OwnCursor: SettingsUI already draws its own
-		// wand-aware cursor (see the "single source of truth" MouseDrawCursor
-		// logic in SettingsUI::Render) rather than taking the compositor's
-		// pointer -- register the flag so the compositor agrees and doesn't
-		// draw a second one.
+		// Synthetic self-client: on_frame is a no-op since DispatchFrame
+		// renders the settings UI inline. RendersOnFocus/OwnCursor: it
+		// always renders and draws its own wand cursor (SettingsUI::Render),
+		// so both flags are set to match and avoid a duplicate compositor cursor.
 		m_self_client_id = RegisterClient(
 			kSelfClientName,
 			nullptr,
