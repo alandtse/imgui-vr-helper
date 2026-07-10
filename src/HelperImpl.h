@@ -76,16 +76,18 @@ namespace ImGuiVRHelper
 		/// the helper's Present detour. `dt` is seconds since previous call.
 		void DispatchFrame(float dt);
 
-		/// Returns the raw ID3D11Texture2D backing a client's panel, or
-		/// nullptr if the client doesn't exist or its texture isn't
+		/// Returns a strong ref to the ID3D11Texture2D backing a client's
+		/// panel, or null if the client doesn't exist or its texture isn't
 		/// allocated yet. Used by InSceneOverlay to feed the eye-render
-		/// compositing pass.
-		ID3D11Texture2D* GetClientPanelTexture(uint32_t client_id);
+		/// compositing pass. Strong ref (not a raw pointer) so the caller
+		/// holding it is immune to a concurrent UnregisterClient releasing
+		/// the last owning reference out from under an in-flight render.
+		winrt::com_ptr<ID3D11Texture2D> GetClientPanelTexture(uint32_t client_id);
 
 		/// Texture for the combo-rebind capture overlay while a recording is
-		/// active (else nullptr). InSceneOverlay composites it in a dedicated
+		/// active (else null). InSceneOverlay composites it in a dedicated
 		/// pass on top of the focused client so the capture reads as a modal.
-		ID3D11Texture2D* GetActiveRebindTexture();
+		winrt::com_ptr<ID3D11Texture2D> GetActiveRebindTexture();
 
 		/// Snapshot of all currently-registered HUD-mode clients
 		/// (kClientFlag_HUDMode set in their flags), returned as
@@ -100,7 +102,10 @@ namespace ImGuiVRHelper
 		struct HUDClientSnapshot
 		{
 			uint32_t client_id;
-			ID3D11Texture2D* texture;
+			// Strong ref, mirroring WorldQuadClientSnapshot below — a raw
+			// pointer here would race UnregisterClient the same way it did
+			// before that fix was applied to the world-quad path only.
+			winrt::com_ptr<ID3D11Texture2D> texture;
 		};
 		std::vector<HUDClientSnapshot> SnapshotHUDClients();
 
