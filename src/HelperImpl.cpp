@@ -32,6 +32,7 @@
 #include <wincodec.h>  // GUID_ContainerFormatPng
 
 #include <filesystem>
+#include <random>
 
 namespace
 {
@@ -312,6 +313,22 @@ namespace ImGuiVRHelper
 		return true;
 	}
 
+	ImGuiVRHelperPluginAPI::ComboId HelperImpl::NextComboIdLocked()
+	{
+		if (!m_combo_id_salt_seeded) {
+			m_combo_id_salt = std::random_device{}();
+			m_combo_id_salt_seeded = true;
+		}
+		// Odd multiplier => bijective mod 2^32 (every sequence value maps to a
+		// distinct id, so this can never collide), just not in ascending order.
+		constexpr ImGuiVRHelperPluginAPI::ComboId kOddMultiplier = 2654435761u;
+		ImGuiVRHelperPluginAPI::ComboId id;
+		do {
+			id = (m_next_combo_id++ * kOddMultiplier) ^ m_combo_id_salt;
+		} while (id == 0);  // 0 is RegisterCombo's "failed" sentinel
+		return id;
+	}
+
 	ImGuiVRHelperPluginAPI::ComboId HelperImpl::RegisterCombo(uint32_t client_id,
 		const ImGuiVRHelperPluginAPI::InputCombo* keys, std::size_t n, float timeout_s,
 		const char* label, ImGuiVRHelperPluginAPI::ComboRebindFn on_rebind, void* user)
@@ -340,7 +357,7 @@ namespace ImGuiVRHelper
 			}
 		}
 		std::scoped_lock lk{ m_mutex };
-		const auto id = m_next_combo_id++;
+		const auto id = NextComboIdLocked();
 		auto& rec = m_combos[id];
 		rec.client_id = client_id;
 		rec.label = label ? label : "";
