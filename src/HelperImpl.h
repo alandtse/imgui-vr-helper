@@ -352,6 +352,7 @@ namespace ImGuiVRHelper
 		// changes mid-hold can no longer strand a half-delivered press/release
 		// pair (the "clicks stop registering after grip-move" class).
 		InputLeases::Table m_leases;
+		bool m_prevLeftHanded = false;  ///< for detecting the handedness-flip Reset() edge
 		// Mirror of m_leases.StrippedBits() for DiagnosticsJson() (devbench's listener
 		// thread): m_leases itself is plain (non-atomic) state mutated only from
 		// DispatchToClients on the render thread, so a cross-thread read of it would
