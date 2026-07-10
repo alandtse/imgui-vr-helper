@@ -984,6 +984,9 @@ float4 main(PS_INPUT input) : SV_TARGET
 			if (SUCCEEDED(ctx->Map(g_res.cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
 				std::memcpy(mapped.pData, &cbData, sizeof(cbData));
 				ctx->Unmap(g_res.cb.get(), 0);
+			} else {
+				logs::warn("InSceneOverlay::DrawQuad: Map constant buffer failed; skipping draw");
+				return;
 			}
 
 			ctx->VSSetShader(g_res.vs.get(), nullptr, 0);
