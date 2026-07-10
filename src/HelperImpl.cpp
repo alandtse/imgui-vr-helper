@@ -870,22 +870,17 @@ namespace ImGuiVRHelper
 		if (!Globals::IsReady())
 			return;
 
-		// Register a synthetic self-client. The on_frame callback is empty
-		// because the helper drives its own rendering inline in
-		// DispatchFrame (we don't need to round-trip through the public
-		// callback path).
-		// RendersOnFocus: the helper unconditionally renders its
-		// settings UI into the self-client RTV (DispatchFrame's
-		// SettingsUI::Render block), so it trivially honors the
-		// focus-render contract. No kClientFlag_OwnCursor: the settings UI has no
-		// styled cursor of its own, so it takes the helper-composited pointer
-		// (the default) like any other client.
+		// Synthetic self-client: on_frame is a no-op since DispatchFrame
+		// renders the settings UI inline. RendersOnFocus/OwnCursor: it
+		// always renders and draws its own wand cursor (SettingsUI::Render),
+		// so both flags are set to match and avoid a duplicate compositor cursor.
 		m_self_client_id = RegisterClient(
 			kSelfClientName,
 			nullptr,
 			+[](const ImGuiVRHelperPluginAPI::Frame*, void*) { /* no-op */ },
 			nullptr,
-			ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus);
+			ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus |
+				ImGuiVRHelperPluginAPI::kClientFlag_OwnCursor);
 
 		// Synthetic HUD-mode client for the Settings::showHUDDemo smoke
 		// test. Always registered (zero overhead until showHUDDemo
