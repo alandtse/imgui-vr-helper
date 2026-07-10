@@ -304,9 +304,9 @@ namespace ImGuiVRHelper
 			return false;
 
 		if (u)
-			*u = wand.uvCoordinates.x;
+			*u = wand.uvCoordinatesX.load(std::memory_order_relaxed);
 		if (v)
-			*v = wand.uvCoordinates.y;
+			*v = wand.uvCoordinatesY.load(std::memory_order_relaxed);
 		if (device_idx)
 			*device_idx = wand.controllerIndex;
 		return true;
@@ -705,13 +705,13 @@ namespace ImGuiVRHelper
 		nlohmann::json j;
 		j["wand"] = {
 			{ "intersecting", state.wandState.isIntersecting },
-			{ "u", state.wandState.uvCoordinates.x },
-			{ "v", state.wandState.uvCoordinates.y },
+			{ "u", state.wandState.uvCoordinatesX.load(std::memory_order_relaxed) },
+			{ "v", state.wandState.uvCoordinatesY.load(std::memory_order_relaxed) },
 			{ "overridden", state.debugPointer.active.load(std::memory_order_relaxed) },
 		};
 		j["drag"] = {
-			{ "dragging", state.dragState.dragging },
-			{ "clientRequested", state.dragState.clientRequested },
+			{ "dragging", state.dragState.dragging.load(std::memory_order_relaxed) },
+			{ "clientRequested", state.dragState.clientRequested.load(std::memory_order_relaxed) },
 		};
 		j["held"] = {
 			{ "primary", wireMask(state.primaryControllerState) },
@@ -1105,9 +1105,10 @@ namespace ImGuiVRHelper
 		// tracked (headless null-driver testing), so it precedes every gate.
 		if (overlayState.debugPointer.active.load(std::memory_order_relaxed)) {
 			overlayState.wandState.isIntersecting = true;
-			overlayState.wandState.uvCoordinates = ImVec2(
-				overlayState.debugPointer.u.load(std::memory_order_relaxed),
-				overlayState.debugPointer.v.load(std::memory_order_relaxed));
+			overlayState.wandState.uvCoordinatesX.store(
+				overlayState.debugPointer.u.load(std::memory_order_relaxed), std::memory_order_relaxed);
+			overlayState.wandState.uvCoordinatesY.store(
+				overlayState.debugPointer.v.load(std::memory_order_relaxed), std::memory_order_relaxed);
 			return;
 		}
 
@@ -1527,8 +1528,8 @@ namespace ImGuiVRHelper
 		}
 
 		const bool recording = ComboRecording::IsActive();
-		const bool dragging = Overlay::State::GetSingleton().dragState.dragging;
-		const bool clientRequestedDrag = Overlay::State::GetSingleton().dragState.clientRequested;
+		const bool dragging = Overlay::State::GetSingleton().dragState.dragging.load(std::memory_order_relaxed);
+		const bool clientRequestedDrag = Overlay::State::GetSingleton().dragState.clientRequested.load(std::memory_order_relaxed);
 		const bool useLeases = Overlay::State::GetSingleton().settings.useInputLeases;
 
 		// Route-on-press leases: a press claims client / helper-drag / modal at its
@@ -1642,7 +1643,7 @@ namespace ImGuiVRHelper
 		// post-process texture InSceneOverlay samples. Skip when nothing's focused.
 		if (focused != 0) {
 			if (auto* tex = GetClientPanelTexture(focused)) {
-				const bool dragging = overlayState.dragState.dragging &&
+				const bool dragging = overlayState.dragState.dragging.load(std::memory_order_relaxed) &&
 				                      overlayState.settings.enableDragToReposition;
 				const float tint[4] = {
 					dragging ? overlayState.settings.dragHighlightColor[0] : 0.0f,

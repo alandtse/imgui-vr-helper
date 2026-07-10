@@ -677,9 +677,10 @@ namespace ImGuiVRHelper::SettingsUI
 					state.wandState.isIntersecting ? "yes" : "no");
 				if (state.wandState.isIntersecting) {
 					ImGui::Text("  UV: (%.3f, %.3f)",
-						state.wandState.uvCoordinates.x, state.wandState.uvCoordinates.y);
+						state.wandState.uvCoordinatesX.load(std::memory_order_relaxed),
+						state.wandState.uvCoordinatesY.load(std::memory_order_relaxed));
 				}
-				ImGui::Text("Drag active: %s", state.dragState.dragging ? "yes" : "no");
+				ImGui::Text("Drag active: %s", state.dragState.dragging.load(std::memory_order_relaxed) ? "yes" : "no");
 
 				// VR controller input diagnostics — migrated from Community
 				// Shaders' VR debug page. The helper owns the authoritative input
@@ -694,7 +695,8 @@ namespace ImGuiVRHelper::SettingsUI
 					state.wandState.isIntersecting ? "intersecting" : "none");
 				if (state.wandState.isIntersecting) {
 					ImGui::Text("    Wand UV (%.3f, %.3f), device %u",
-						state.wandState.uvCoordinates.x, state.wandState.uvCoordinates.y,
+						state.wandState.uvCoordinatesX.load(std::memory_order_relaxed),
+						state.wandState.uvCoordinatesY.load(std::memory_order_relaxed),
 						state.wandState.controllerIndex);
 				}
 
@@ -1276,7 +1278,7 @@ namespace ImGuiVRHelper::SettingsUI
 		// Drag mode disables both stick paths; OverlayDrag already owns
 		// the cursor and scroll behavior would interfere.
 		namespace API = ImGuiVRHelperPluginAPI;
-		const bool isDragging = vrState.dragState.dragging;
+		const bool isDragging = vrState.dragState.dragging.load(std::memory_order_relaxed);
 		const bool wandHandledCursor = settings.enableWandPointing &&
 		                               vrState.wandState.isIntersecting;
 
