@@ -81,10 +81,20 @@ namespace ImGuiVRHelper::Input
 
 		// ---- Handedness tracking ----------------------------------------
 
+		// Guards g_lastKnownLeftHanded/g_handednessInitialized plus
+		// Overlay::State's primaryControllerState/secondaryControllerState:
+		// FeedVREvent and DrainInjected write these from the input-poll
+		// thread while BuildFrame reads them from the render thread every
+		// Present. Without a lock, a handedness-flip reset here can wipe
+		// an in-flight OnEvent write, and BuildFrame can observe a torn
+		// InputDeviceState (256-entry ButtonState array) mid-update.
+		std::mutex g_controllerStateMutex;
+
 		bool g_lastKnownLeftHanded = false;
 		bool g_handednessInitialized = false;
 
-		void RefreshHandedness()
+		// Caller must hold g_controllerStateMutex.
+		void RefreshHandednessLocked()
 		{
 			const bool now = RE::BSOpenVRControllerDevice::IsLeftHandedMode();
 			if (!g_handednessInitialized || now != g_lastKnownLeftHanded) {
@@ -248,62 +258,66 @@ namespace ImGuiVRHelper::Input
 	void FeedVREvent(uint32_t device, uint32_t keyCode, bool pressed,
 		float thumbstickX, float thumbstickY)
 	{
-		RefreshHandedness();
-
 		const auto deviceEnum = static_cast<RE::INPUT_DEVICE>(device);
 		const bool isPrimary = RE::BSOpenVRControllerDevice::IsPrimaryController(deviceEnum);
 		const bool isSecondary = RE::BSOpenVRControllerDevice::IsSecondaryController(deviceEnum);
 		if (!isPrimary && !isSecondary)
 			return;
 
-		auto& state = Overlay::State::GetSingleton();
-		auto& target = isPrimary ? state.primaryControllerState : state.secondaryControllerState;
-
 		// Button event: update isPressed via OnEvent for the matching key.
 		const auto nowSecs = std::chrono::duration<double>(
 			std::chrono::steady_clock::now().time_since_epoch())
 		                         .count();
 
-		// Store on the CANONICAL key: some runtimes report a squeeze's press and
-		// release on different alternates (kGrip vs kGripAlt), and since both OR
-		// into one wire bit, splitting them across two entries leaves the OR (and
-		// thus GripClick) stuck held. Folding at store makes one physical button
-		// exactly one entry.
-		for (const auto& m : ButtonTable()) {
-			if (keyCode == m.reKey) {
-				target[m.canonicalKey].OnEvent(pressed, nowSecs);
-				break;
-			}
-		}
-
-		// Thumbstick axis: live update.
-		//
-		// Two changes from the obvious version:
-		//
-		// 1. Always update, even on (0, 0). The previous "skip on zero"
-		//    branch caused stick values to LATCH at the last non-zero
-		//    reading: BSInputDeviceManager only fires a thumbstick event
-		//    when the value changes, so a stick that ends a sweep at
-		//    (0.5, 0) and then returns to (0, 0) over a frame Skyrim
-		//    didn't observe could be missed entirely. The cursor would
-		//    keep drifting at "release speed" forever.
-		//
-		// 2. Snap micro-deflections to zero before storing. Hardware
-		//    drift on most controllers sits at 0.05-0.15 of full
-		//    deflection; below that, treating the stick as released is
-		//    objectively correct and saves every consumer (cursor,
-		//    scroll, drag-depth) from re-applying the same deadzone.
-		//    Threshold is fixed at 0.05 — settings.mouseDeadzone is the
-		//    USER-tunable threshold for *cursor speed scaling*, kept
-		//    higher (default 0.2) so the cursor only moves on
-		//    intentional pushes.
 		const size_t thumbIdx = static_cast<size_t>(
 			isPrimary ? RE::ControllerRole::Primary : RE::ControllerRole::Secondary);
 		constexpr float kHardwareDriftFloor = 0.05f;
 		const float snappedX = (std::abs(thumbstickX) < kHardwareDriftFloor) ? 0.0f : thumbstickX;
 		const float snappedY = (std::abs(thumbstickY) < kHardwareDriftFloor) ? 0.0f : thumbstickY;
-		target.thumbsticks[thumbIdx].x = snappedX;
-		target.thumbsticks[thumbIdx].y = snappedY;
+
+		{
+			std::scoped_lock lk{ g_controllerStateMutex };
+			RefreshHandednessLocked();
+
+			auto& state = Overlay::State::GetSingleton();
+			auto& target = isPrimary ? state.primaryControllerState : state.secondaryControllerState;
+
+			// Store on the CANONICAL key: some runtimes report a squeeze's press and
+			// release on different alternates (kGrip vs kGripAlt), and since both OR
+			// into one wire bit, splitting them across two entries leaves the OR (and
+			// thus GripClick) stuck held. Folding at store makes one physical button
+			// exactly one entry.
+			for (const auto& m : ButtonTable()) {
+				if (keyCode == m.reKey) {
+					target[m.canonicalKey].OnEvent(pressed, nowSecs);
+					break;
+				}
+			}
+
+			// Thumbstick axis: live update.
+			//
+			// Two changes from the obvious version:
+			//
+			// 1. Always update, even on (0, 0). The previous "skip on zero"
+			//    branch caused stick values to LATCH at the last non-zero
+			//    reading: BSInputDeviceManager only fires a thumbstick event
+			//    when the value changes, so a stick that ends a sweep at
+			//    (0.5, 0) and then returns to (0, 0) over a frame Skyrim
+			//    didn't observe could be missed entirely. The cursor would
+			//    keep drifting at "release speed" forever.
+			//
+			// 2. Snap micro-deflections to zero before storing. Hardware
+			//    drift on most controllers sits at 0.05-0.15 of full
+			//    deflection; below that, treating the stick as released is
+			//    objectively correct and saves every consumer (cursor,
+			//    scroll, drag-depth) from re-applying the same deadzone.
+			//    Threshold is fixed at 0.05 — settings.mouseDeadzone is the
+			//    USER-tunable threshold for *cursor speed scaling*, kept
+			//    higher (default 0.2) so the cursor only moves on
+			//    intentional pushes.
+			target.thumbsticks[thumbIdx].x = snappedX;
+			target.thumbsticks[thumbIdx].y = snappedY;
+		}
 
 		// Record into the diagnostics event log. Classify as a thumbstick
 		// event when the key isn't one of the mapped buttons.
@@ -318,11 +332,13 @@ namespace ImGuiVRHelper::Input
 
 	void InvalidateHandedness()
 	{
+		std::scoped_lock lk{ g_controllerStateMutex };
 		g_handednessInitialized = false;
 	}
 
 	bool IsLeftHanded()
 	{
+		std::scoped_lock lk{ g_controllerStateMutex };
 		return g_lastKnownLeftHanded;
 	}
 
@@ -339,8 +355,6 @@ namespace ImGuiVRHelper::Input
 
 	void BuildFrame(API::Frame& out, float dt)
 	{
-		RefreshHandedness();
-
 		out = {};
 		out.abi_version = API::kInputAbiVersion;
 		out.struct_size = sizeof(API::Frame);
@@ -351,9 +365,25 @@ namespace ImGuiVRHelper::Input
 			out.hmd.valid = 0;
 		}
 
-		// Map handedness onto left/right physical hands.
+		// Map handedness onto left/right physical hands. Snapshot the
+		// controller state under the lock (whole-struct copy) rather than
+		// reading Overlay::State's fields live — FeedVREvent/DrainInjected
+		// mutate them concurrently from the input-poll thread, and a live
+		// read here could observe a torn InputDeviceState or race a
+		// handedness-flip reset mid-update.
+		bool leftHanded;
+		RE::VRControllerState primarySnapshot;
+		RE::VRControllerState secondarySnapshot;
+		{
+			std::scoped_lock lk{ g_controllerStateMutex };
+			RefreshHandednessLocked();
+			auto& state = Overlay::State::GetSingleton();
+			leftHanded = g_lastKnownLeftHanded;
+			primarySnapshot = state.primaryControllerState;
+			secondarySnapshot = state.secondaryControllerState;
+		}
+
 		auto& state = Overlay::State::GetSingleton();
-		const bool leftHanded = g_lastKnownLeftHanded;
 		const auto primaryIdx = Util::GetControllerIndexForDevice(
 			ImGuiVRHelperPluginAPI::InputDeviceType::Primary, leftHanded);
 		const auto secondaryIdx = Util::GetControllerIndexForDevice(
@@ -362,11 +392,11 @@ namespace ImGuiVRHelper::Input
 		const size_t secondaryThumb = static_cast<size_t>(RE::ControllerRole::Secondary);
 
 		if (leftHanded) {
-			FillHand(out.left, state.primaryControllerState, primaryIdx, primaryThumb);
-			FillHand(out.right, state.secondaryControllerState, secondaryIdx, secondaryThumb);
+			FillHand(out.left, primarySnapshot, primaryIdx, primaryThumb);
+			FillHand(out.right, secondarySnapshot, secondaryIdx, secondaryThumb);
 		} else {
-			FillHand(out.right, state.primaryControllerState, primaryIdx, primaryThumb);
-			FillHand(out.left, state.secondaryControllerState, secondaryIdx, secondaryThumb);
+			FillHand(out.right, primarySnapshot, primaryIdx, primaryThumb);
+			FillHand(out.left, secondarySnapshot, secondaryIdx, secondaryThumb);
 		}
 
 		// Edge detection: compute pressed/released by diffing against the
@@ -415,6 +445,7 @@ namespace ImGuiVRHelper::Input
 		const auto nowSecs = std::chrono::duration<double>(
 			std::chrono::steady_clock::now().time_since_epoch())
 		                         .count();
+		std::scoped_lock lk{ g_controllerStateMutex };
 		for (const auto& e : pending) {
 			auto& target = e.primaryHand ? state.primaryControllerState :
 			                               state.secondaryControllerState;
