@@ -1660,7 +1660,13 @@ namespace ImGuiVRHelper
 			}
 
 			if (sn.on_frame) {
-				sn.on_frame(&perClient, sn.user);
+				try {
+					sn.on_frame(&perClient, sn.user);
+				} catch (const std::exception& e) {
+					logs::error("DispatchToClients: client {} threw std::exception: {}", sn.id, e.what());
+				} catch (...) {
+					logs::error("DispatchToClients: client {} threw unknown exception", sn.id);
+				}
 			}
 		}
 
