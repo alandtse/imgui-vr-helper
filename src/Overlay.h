@@ -244,7 +244,8 @@ namespace ImGuiVRHelper::Overlay
 	struct WandState
 	{
 		bool isIntersecting = false;
-		ImVec2 uvCoordinates = ImVec2(0.0f, 0.0f);
+		std::atomic<float> uvCoordinatesX = 0.0f;
+		std::atomic<float> uvCoordinatesY = 0.0f;
 		vr::TrackedDeviceIndex_t controllerIndex = vr::k_unTrackedDeviceIndexInvalid;
 		Vector3 rayOrigin = Vector3::Zero;
 		Vector3 rayDirection = Vector3::Zero;
@@ -264,7 +265,7 @@ namespace ImGuiVRHelper::Overlay
 
 	struct DragState
 	{
-		bool dragging = false;
+		std::atomic<bool> dragging = false;
 		vr::TrackedDeviceIndex_t controllerIndex = vr::k_unTrackedDeviceIndexInvalid;
 		bool isPrimary = false;
 		bool isSecondary = false;
@@ -293,7 +294,7 @@ namespace ImGuiVRHelper::Overlay
 		/// instead of the grip button, since the client — not raw grip state — owns the "still
 		/// held" signal here (grip itself may be bound to something else by the underlying game
 		/// while that client's menu is up, e.g. Skyrim's dialogue menu closes on grip).
-		bool clientRequested = false;
+		std::atomic<bool> clientRequested = false;
 	};
 
 	// ---- Singleton ------------------------------------------------------

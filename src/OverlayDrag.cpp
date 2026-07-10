@@ -63,13 +63,13 @@ namespace ImGuiVRHelper::OverlayDrag
 			auto& drag = state.dragState;
 			auto& s = state.settings;
 
-			const bool wasDragging = drag.dragging;
+			const bool wasDragging = drag.dragging.load(std::memory_order_relaxed);
 			const auto mode = drag.mode;
-			drag.dragging = false;
+			drag.dragging.store(false, std::memory_order_relaxed);
 			drag.controllerIndex = vr::k_unTrackedDeviceIndexInvalid;
 			drag.isPrimary = false;
 			drag.isSecondary = false;
-			drag.clientRequested = false;
+			drag.clientRequested.store(false, std::memory_order_relaxed);
 			if (!wasDragging)
 				return;
 			// Fixed-world stores a volatile world matrix that re-anchors as the
@@ -191,7 +191,7 @@ namespace ImGuiVRHelper::OverlayDrag
 			}
 
 			// Joystick depth control while gripped.
-			if (drag.dragging) {
+			if (drag.dragging.load(std::memory_order_relaxed)) {
 				RE::VRControllerState* gripController = nullptr;
 				size_t thumbIdx = 0;
 				if (drag.isPrimary) {
@@ -257,7 +257,7 @@ namespace ImGuiVRHelper::OverlayDrag
 			// involved (e.g. it's bound to something else by the underlying game while that
 			// client's menu is up), so checking it here would end the drag on the very first
 			// frame regardless of what the client wants.
-			const bool shouldContinue = drag.clientRequested ?
+			const bool shouldContinue = drag.clientRequested.load(std::memory_order_relaxed) ?
 			                                a_clientRequestedThisFrame :
 			                                GetGripPressed(drag.isPrimary, drag.isSecondary);
 			if (!shouldContinue) {
@@ -397,7 +397,7 @@ namespace ImGuiVRHelper::OverlayDrag
 						continue;
 					Matrix controllerMatrix = Util::HmdMatrix34ToMatrix(Util::Float3x4ToHmdMatrix34(rawMatrix));
 
-					drag.dragging = true;
+					drag.dragging.store(true, std::memory_order_relaxed);
 					drag.mode = mode.mode;
 					drag.controllerIndex = i;
 					drag.isPrimary = isLeft;
@@ -464,13 +464,13 @@ namespace ImGuiVRHelper::OverlayDrag
 				mode = DragState::Mode::HMD;
 			}
 
-			drag.dragging = true;
+			drag.dragging.store(true, std::memory_order_relaxed);
 			drag.mode = mode;
 			drag.controllerIndex = i;
 			drag.isPrimary = isLeft;
 			drag.isSecondary = isRight;
 			drag.startControllerMatrix = controllerMatrix;
-			drag.clientRequested = true;
+			drag.clientRequested.store(true, std::memory_order_relaxed);
 
 			switch (mode) {
 			case DragState::Mode::FixedWorld:
@@ -530,12 +530,12 @@ namespace ImGuiVRHelper::OverlayDrag
 			// dragState.dragging stuck true routes every subsequent VR button
 			// press to Route::HelperDrag (see HelperImpl::DispatchToClients)
 			// until CanPerform() happens to become true again.
-			if (state.dragState.dragging)
+			if (state.dragState.dragging.load(std::memory_order_relaxed))
 				ResetDragState();
 			return;
 		}
 
-		if (state.dragState.dragging) {
+		if (state.dragState.dragging.load(std::memory_order_relaxed)) {
 			UpdateActiveDrag(clientRequestedThisFrame);
 		} else if (clientRequestedThisFrame) {
 			TryStartClientRequestedDrag();

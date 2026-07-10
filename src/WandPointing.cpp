@@ -121,7 +121,8 @@ namespace ImGuiVRHelper::WandPointing
 
 		if (intersected) {
 			state.wandState.isIntersecting = true;
-			state.wandState.uvCoordinates = outUV;
+			state.wandState.uvCoordinatesX.store(outUV.x, std::memory_order_relaxed);
+			state.wandState.uvCoordinatesY.store(outUV.y, std::memory_order_relaxed);
 			state.wandState.controllerIndex = controllerIndex;
 			state.wandState.matchedOverlayType = matchedType;
 		} else {
@@ -184,7 +185,8 @@ namespace ImGuiVRHelper::WandPointing
 		if (state.debugPointer.active.load(std::memory_order_relaxed)) {
 			const float u = std::clamp(state.debugPointer.u.load(std::memory_order_relaxed), 0.0f, 1.0f);
 			const float v = std::clamp(state.debugPointer.v.load(std::memory_order_relaxed), 0.0f, 1.0f);
-			state.wandState.uvCoordinates = ImVec2(u, v);
+			state.wandState.uvCoordinatesX.store(u, std::memory_order_relaxed);
+			state.wandState.uvCoordinatesY.store(v, std::memory_order_relaxed);
 			const float x = u * io.DisplaySize.x;
 			const float y = v * io.DisplaySize.y;
 			io.MousePos = ImVec2(x, y);
