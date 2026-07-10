@@ -299,7 +299,18 @@ namespace ImGuiVRHelper
 				return false;
 		}
 
-		const auto& wand = Overlay::State::GetSingleton().wandState;
+		auto& state = Overlay::State::GetSingleton();
+		if (state.debugPointer.active.load(std::memory_order_relaxed)) {
+			if (u)
+				*u = state.wandState.uvCoordinates.x;
+			if (v)
+				*v = state.wandState.uvCoordinates.y;
+			if (device_idx)
+				*device_idx = state.wandState.controllerIndex;
+			return true;
+		}
+
+		const auto& wand = state.wandState;
 		if (!wand.isIntersecting)
 			return false;
 
@@ -669,7 +680,11 @@ namespace ImGuiVRHelper
 		const auto it = m_clients.find(m_focused_client);
 		if (it != m_clients.end() &&
 			(it->second.flags & ImGuiVRHelperPluginAPI::kClientFlag_PointerFocus) != 0) {
-			return Overlay::State::GetSingleton().wandState.isIntersecting;
+			auto& state = Overlay::State::GetSingleton();
+			if (state.debugPointer.active.load(std::memory_order_relaxed)) {
+				return true;
+			}
+			return state.wandState.isIntersecting;
 		}
 		return true;
 	}
@@ -1499,7 +1514,8 @@ namespace ImGuiVRHelper
 			}
 		}
 
-		const bool wandHit = Overlay::State::GetSingleton().wandState.isIntersecting;
+		const bool wandHit = Overlay::State::GetSingleton().wandState.isIntersecting ||
+		                     Overlay::State::GetSingleton().debugPointer.active.load(std::memory_order_relaxed);
 
 		// Render the helper's own settings UI into its self-client panel before
 		// the client loop so the eye composite picks up the latest pixels.
