@@ -319,8 +319,7 @@ namespace ImGuiVRHelper
 			m_combo_id_salt = std::random_device{}();
 			m_combo_id_salt_seeded = true;
 		}
-		// Odd multiplier => bijective mod 2^32 (every sequence value maps to a
-		// distinct id, so this can never collide), just not in ascending order.
+		// Odd multiplier keeps the mapping bijective mod 2^32.
 		constexpr ImGuiVRHelperPluginAPI::ComboId kOddMultiplier = 2654435761u;
 		ImGuiVRHelperPluginAPI::ComboId id;
 		do {
