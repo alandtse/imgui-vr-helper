@@ -870,10 +870,6 @@ namespace ImGuiVRHelper
 		if (!Globals::IsReady())
 			return;
 
-		// Synthetic self-client: on_frame is a no-op since DispatchFrame
-		// renders the settings UI inline. RendersOnFocus/OwnCursor: it
-		// always renders and draws its own wand cursor (SettingsUI::Render),
-		// so both flags are set to match and avoid a duplicate compositor cursor.
 		m_self_client_id = RegisterClient(
 			kSelfClientName,
 			nullptr,
