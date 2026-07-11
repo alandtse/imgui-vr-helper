@@ -85,6 +85,7 @@ namespace ImGuiVRHelper::Overlay
 			s.baseHeight = static_cast<int>(tomlGet<int64_t>(t, "baseHeight", s.baseHeight));
 			s.hudSupersample = static_cast<int>(tomlGet<int64_t>(t, "hudSupersample", s.hudSupersample));
 			s.toastTopFraction = tomlGet<float>(t, "toastTopFraction", s.toastTopFraction);
+			s.useRuntimeOverlay = tomlGet<bool>(t, "useRuntimeOverlay", s.useRuntimeOverlay);
 			// Guard against a hand-edited TOML allocating an enormous panel (each is
 			// baseW*baseH*supersample^2*4 bytes) and OOMing the GPU at startup.
 			s.baseWidth = std::clamp(s.baseWidth, 640, 7680);
@@ -195,7 +196,13 @@ namespace ImGuiVRHelper::Overlay
 				<< "baseWidth = " << s.baseWidth << "\n"
 				<< "baseHeight = " << s.baseHeight << "\n"
 				<< "hudSupersample = " << s.hudSupersample << "  # 1-3\n"
-				<< "toastTopFraction = " << s.toastTopFraction << "  # 0-1\n";
+				<< "toastTopFraction = " << s.toastTopFraction << "  # 0-1\n\n"
+
+				<< "# Composite the focused menu as a native runtime overlay layer (SteamVR\n"
+				<< "# overlay / OpenComposite OpenXR quad) instead of drawing into the eye\n"
+				<< "# buffers — immune to temporal upscalers and frame generation. Falls back\n"
+				<< "# to in-scene rendering when the runtime lacks overlay support. Experimental.\n"
+				<< "useRuntimeOverlay = " << (s.useRuntimeOverlay ? "true" : "false") << "\n";
 
 			auto combosToToml = [](const std::vector<ImGuiVRHelperPluginAPI::InputCombo>& v) {
 				std::string r = "[";

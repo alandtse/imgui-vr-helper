@@ -126,7 +126,10 @@ void main(uint3 tid : SV_DispatchThreadID)
 		desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 		desc.SampleDesc.Count = 1;
 		desc.Usage = D3D11_USAGE_DEFAULT;
-		desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+		// RENDER_TARGET so RuntimeOverlay can bake the wand cursor into the
+		// output before handing it to IVROverlay::SetOverlayTexture.
+		desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE |
+		                 D3D11_BIND_RENDER_TARGET;
 		if (FAILED(device->CreateTexture2D(&desc, nullptr, g_res.dstTex.put()))) {
 			logs::error("OverlayTinter: post-process texture creation failed");
 			return false;

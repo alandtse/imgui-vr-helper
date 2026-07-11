@@ -12,12 +12,26 @@
 
 #pragma once
 
+#include <SimpleMath.h>
 #include <openvr.h>
+
+#include "Overlay.h"
 
 struct ID3D11Texture2D;
 
 namespace ImGuiVRHelper::InSceneOverlay
 {
+	/// Resolve the focused panel's anchor transform for one attach point.
+	/// Shared by the in-scene passes and the runtime-overlay path so the two
+	/// can't drift. `outAnchor` is the panel transform BEFORE the menu scale
+	/// is applied; `outHeadSpace` is true when it's in HMD-local space
+	/// (compose with the HMD pose for a tracking-space transform), false when
+	/// it's already in tracking space. Returns false when the attach point's
+	/// tracking data isn't available this frame.
+	bool ResolveAnchorWorld(Overlay::OverlayType type, const Overlay::Settings& s,
+		const Overlay::State& state, DirectX::SimpleMath::Matrix& outAnchor,
+		bool& outHeadSpace);
+
 	/// Install the IVRCompositor::Submit detour. Idempotent. Call once
 	/// after OpenVR is available (end of InitD3D thunk).
 	void Install();
@@ -28,6 +42,14 @@ namespace ImGuiVRHelper::InSceneOverlay
 	/// arrays); pass nullptr to render to the full target.
 	void RenderForEye(vr::EVREye eye, ID3D11Texture2D* targetTexture,
 		const vr::VRTextureBounds_t* bounds);
+
+	/// Draw the helper's wand cursor marker directly into a panel texture at
+	/// the current wand hit UV (same style/size the in-scene cursor pass
+	/// uses). Used by the runtime-overlay path, where the panel is composited
+	/// above the eye buffers and an in-scene marker would be occluded. The
+	/// texture needs D3D11_BIND_RENDER_TARGET. Render thread only. No-op
+	/// while the wand is off the panel.
+	void RenderCursorIntoPanel(ID3D11Texture2D* panel);
 
 	/// Render-path fault latch. Disabled when another VR overlay host (e.g.
 	/// Community Shaders) already owns the in-scene overlay, or when a vrclient
