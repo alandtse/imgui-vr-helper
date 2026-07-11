@@ -51,12 +51,7 @@ namespace ImGuiVRHelper::OverlayDrag
 			return role != vr::TrackedControllerRole_Invalid;
 		}
 
-		// Cleanly ends an in-progress drag: clears drag state and, for
-		// FixedWorld mode, persists where the menu ended up. Named (not a
-		// local lambda) so Update() can also call it when CanPerform() flips
-		// false mid-drag, not just when UpdateActiveDrag's own release check
-		// fires — otherwise a drag frozen mid-gesture never clears and every
-		// subsequent VR button press keeps routing to Route::HelperDrag.
+		// Shared drag teardown for release and abort paths.
 		void ResetDragState()
 		{
 			auto& state = Overlay::State::GetSingleton();
@@ -525,11 +520,6 @@ namespace ImGuiVRHelper::OverlayDrag
 		state.repositionRequested = false;
 
 		if (!CanPerform()) {
-			// A drag in progress when the overlay is hidden/settings toggled off/
-			// vrSystem transiently drops must end cleanly, not freeze: leaving
-			// dragState.dragging stuck true routes every subsequent VR button
-			// press to Route::HelperDrag (see HelperImpl::DispatchToClients)
-			// until CanPerform() happens to become true again.
 			if (state.dragState.dragging)
 				ResetDragState();
 			return;
