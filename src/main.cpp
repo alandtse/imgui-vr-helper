@@ -21,10 +21,8 @@ namespace
 {
 	using namespace ImGuiVRHelperPluginAPI;
 
-	/// Returns an interface pointer for the requested revision, or nullptr
-	/// if the requested revision is newer than this build supports. Called
-	/// directly by a client plugin's own code across the DLL boundary, so an
-	/// exception here must not unwind into a caller that never expects it.
+	/// Returns an interface pointer for the requested revision, or nullptr if
+	/// unsupported.
 	void* GetApiFunction(uint32_t revision) noexcept
 	{
 		try {
@@ -157,10 +155,6 @@ namespace
 			break;
 		}
 	} catch (const std::exception& e) {
-		// SKSE's dispatcher calls this directly; an exception unwinding into
-		// it is undefined behavior across the plugin boundary. Swallow and
-		// log instead of letting one bad lifecycle stage take the process
-		// down (see the equivalent guard on hk_Present's DispatchFrame call).
 		logs::error("OnSKSELifecycle: exception handling message type {}: {}",
 			msg ? static_cast<uint32_t>(msg->type) : 0u, e.what());
 	} catch (...) {
@@ -199,8 +193,6 @@ namespace
 				msg->sender ? msg->sender : "<unknown>");
 		}
 	} catch (const std::exception& e) {
-		// Same rationale as OnSKSELifecycle: SKSE's dispatcher calls this
-		// directly, so a throw must not cross back into it.
 		logs::error("OnPluginMessage: exception from sender '{}': {}",
 			msg && msg->sender ? msg->sender : "<unknown>", e.what());
 	} catch (...) {
