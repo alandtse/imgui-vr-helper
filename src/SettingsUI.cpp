@@ -225,21 +225,15 @@ namespace ImGuiVRHelper::SettingsUI
 			const ImVec2 size = ImGui::GetItemRectSize();
 			const ImVec2 center(origin.x + size.x * 0.5f, origin.y + size.y * 0.5f);
 
-			// Mock panel background so the pointer's contrast reads the way it will in-game.
 			dl->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + size.y),
 				kPreviewBgColor, kPreviewBgRounding);
 
 			const ImU32 fillColor = ImGui::ColorConvertFloat4ToU32(
 				ImVec4(s.cursorColor[0], s.cursorColor[1], s.cursorColor[2], s.cursorColor[3]));
 			const ImU32 outlineColor = IM_COL32(0, 0, 0, static_cast<int>(kOutlineAlphaScale * s.cursorColor[3]));
-			// Normalized to the preview box's own max, not the raw setting range --
-			// otherwise the max cursorSize (3.0) overflows the box (e.g. the circle's
-			// outer radius would hit 121px in a 96px box).
 			const float scale = std::clamp(s.cursorSize, 0.5f, 3.0f) / 3.0f;
 
 			if (s.cursorStyle == Overlay::CursorStyle::Arrow) {
-				// Same 7-point outline as InSceneOverlay's CreateArrowTexture, scaled to fit
-				// the preview box; tip anchored at the box center (its hotspot).
 				constexpr ImVec2 kPoly[7] = {
 					{ 0.00f, 0.00f }, { 0.00f, 1.00f }, { 0.28f, 0.73f }, { 0.46f, 1.10f },
 					{ 0.66f, 1.02f }, { 0.40f, 0.62f }, { 0.72f, 0.55f }
@@ -1411,10 +1405,6 @@ namespace ImGuiVRHelper::SettingsUI
 
 		ImGui::NewFrame();
 
-		// Cursor visibility (single source of truth, computed post-NewFrame so
-		// io.MousePos is final): draw whenever the position is in-bounds, using
-		// -FLT_MAX-out-of-bounds as the "hidden" signal regardless of input
-		// source. kClientFlag_OwnCursor keeps the compositor from drawing its own.
 		io.MouseDrawCursor =
 			io.MousePos.x >= 0.0f && io.MousePos.y >= 0.0f &&
 			io.MousePos.x < io.DisplaySize.x && io.MousePos.y < io.DisplaySize.y;
