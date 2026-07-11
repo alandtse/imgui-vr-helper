@@ -252,13 +252,6 @@ namespace ImGuiVRHelper::Hooks
 			g_renderDecisionMade = true;
 		}
 
-		// The 30-frame grace window above only bounds the *initial* race: a
-		// conflicting Community Shaders build can still install its Submit
-		// hook later than that (slow shader-cache warm-up, a stalled first VR
-		// frame), landing on top of ours after we've already claimed Submit.
-		// Keep polling at a low rate after the decision is made and stand
-		// down if CS ever takes the slot, rather than let both hosts drive
-		// the compositor indefinitely.
 		int g_postInstallCheckCounter = 0;
 		constexpr int kPostInstallCheckIntervalFrames = 30;
 
