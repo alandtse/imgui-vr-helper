@@ -1585,11 +1585,6 @@ namespace ImGuiVRHelper
 		bool maskInput = false;
 		bool suppressForwarding = false;
 		if (useLeases) {
-			// Drop all leases on a handedness flip or the overlay going
-			// hidden (Table::Reset()'s documented contract) — otherwise a
-			// button whose route was claimed under the old handedness/focus
-			// context keeps that stale route (or, worse, freezes as
-			// perpetually stripped) instead of being re-evaluated fresh.
 			const bool leftHandedNow = Input::IsLeftHanded();
 			const bool overlayVisibleNow = (focused != 0);
 			const bool dropLeases = (leftHandedNow != m_prevLeftHanded) ||
@@ -1607,13 +1602,6 @@ namespace ImGuiVRHelper
 			stripLeft = m_leases.StrippedBits(0);
 			stripRight = m_leases.StrippedBits(1);
 			if (dropLeases) {
-				// Reset() only clears ROUTING; a button already held (not a
-				// press edge this frame) keeps flowing since Update() above
-				// only assigns routes on press edges. Zero delivery for
-				// anything still held from before this frame so the client's
-				// own edge-diff observes a clean release, per Reset()'s
-				// contract — a genuine new press this same frame is
-				// unaffected (it's not part of ~buttons_pressed).
 				stripLeft |= baseFrame.left.buttons_held & ~baseFrame.left.buttons_pressed;
 				stripRight |= baseFrame.right.buttons_held & ~baseFrame.right.buttons_pressed;
 			}
