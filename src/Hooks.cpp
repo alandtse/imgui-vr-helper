@@ -26,6 +26,7 @@
 #include "HelperImpl.h"
 #include "InSceneOverlay.h"
 #include "Input.h"
+#include "RuntimeOverlay.h"
 #include "SettingsUI.h"
 #include "VRKeyboard.h"
 #include "internal/Detour.h"
@@ -104,6 +105,11 @@ namespace ImGuiVRHelper::Hooks
 						e.what());
 				}
 			}
+
+			// Runs even while the render path is disabled so an already-shown
+			// runtime overlay gets hidden; needs DispatchFrame's tinter output
+			// when active, hence after the block above.
+			RuntimeOverlay::RenderTick();
 
 			return g_originalPresent(This, SyncInterval, Flags);
 		}
@@ -311,6 +317,10 @@ namespace ImGuiVRHelper::Hooks
 			static void thunk(RE::BSTEventSource<RE::InputEvent*>* a_dispatcher,
 				RE::InputEvent* const* a_events)
 			{
+				// Before the disabled early-return so a shown runtime overlay
+				// still gets hidden after the render path latches off.
+				RuntimeOverlay::InputTick();
+
 				// If the overlay render path is disabled (e.g. Community Shaders
 				// hosts the in-scene overlay, or a VR fault latched us off),
 				// don't feed or swallow input — just chain through so nothing

@@ -680,6 +680,15 @@ namespace ImGuiVRHelper::SettingsUI
 
 			ImGui::Spacing();
 			ImGui::Separator();
+			ImGui::TextDisabled("Render path");
+			ImGui::Checkbox("Native VR overlay for menus (experimental)", &s.useRuntimeOverlay);
+			ImGui::TextDisabled(
+				"    Composites the focused menu as a runtime overlay layer, immune to\n"
+				"    upscalers and frame generation. Falls back to in-scene rendering\n"
+				"    when the runtime has no overlay support.");
+
+			ImGui::Spacing();
+			ImGui::Separator();
 			ImGui::TextDisabled("Banners");
 			ImGui::SliderFloat("Toast position", &s.toastTopFraction, 0.0f, 1.0f, "%.2f");
 			ImGui::TextDisabled("    Vertical placement of welcome/swap banners (0=top, 1=bottom).");
