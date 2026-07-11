@@ -59,8 +59,6 @@ namespace ImGuiVRHelper::VrikCompat
 			return;
 		}
 
-		// Calling into VRIK's own code, same as GetCameraOffset below — guard
-		// it the same way rather than let a throw cross the plugin boundary.
 		try {
 			g_vrik = static_cast<vrikPluginApi::IVrikInterface001*>(msg.getApiFunction(1));
 			if (g_vrik) {
