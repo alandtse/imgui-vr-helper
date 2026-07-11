@@ -17,6 +17,7 @@
 #include "HelperImpl.h"
 #include "Overlay.h"
 #include "OverlayTinter.h"
+#include "RuntimeOverlay.h"
 #include "VrikCompat.h"
 #include "internal/Detour.h"
 #include "internal/HUDGeometry.h"
@@ -1168,23 +1169,22 @@ float4 main(PS_INPUT input) : SV_TARGET
 	// between the two passes, which is exactly the kind of drift that caused the marker/panel
 	// divergence investigation. Returns false if the requested attach point's tracking data isn't
 	// available this frame (caller should skip its draw).
-	bool ResolveAnchor(Overlay::OverlayType type, const Overlay::Settings& s,
-		const Overlay::State& overlayState, const EyeMatrices& matrices,
-		Matrix& outAnchor, Matrix& outVpMat)
+	bool ResolveAnchorWorld(Overlay::OverlayType type, const Overlay::Settings& s,
+		const Overlay::State& state, Matrix& outAnchor, bool& outHeadSpace)
 	{
+		outHeadSpace = false;
 		if (type == Overlay::OverlayType::HMD) {
 			if (s.positioningMethod == Overlay::PositioningMethod::FixedWorld) {
-				outAnchor = overlayState.fixedWorld.m;
-				outVpMat = matrices.vpWorldSpace;
+				outAnchor = state.fixedWorld.m;
 			} else {
 				outAnchor = Matrix::CreateTranslation(s.hmdOffsetX, s.hmdOffsetY, s.hmdOffsetZ);
-				outVpMat = matrices.vpHeadSpace;
+				outHeadSpace = true;
 			}
 			return true;
 		}
 
 		const auto attachIdx = Util::GetControllerIndexForDevice(
-			s.attachController, overlayState.lastKnownLeftHandedMode);
+			s.attachController, state.lastKnownLeftHandedMode);
 		if (attachIdx == vr::k_unTrackedDeviceIndexInvalid)
 			return false;
 
@@ -1198,7 +1198,17 @@ float4 main(PS_INPUT input) : SV_TARGET
 		Matrix offset = Matrix::CreateTranslation(
 			s.controllerOffsetX, s.controllerOffsetY, s.controllerOffsetZ);
 		outAnchor = offset * controllerWorld;
-		outVpMat = matrices.vpWorldSpace;
+		return true;
+	}
+
+	bool ResolveAnchor(Overlay::OverlayType type, const Overlay::Settings& s,
+		const Overlay::State& overlayState, const EyeMatrices& matrices,
+		Matrix& outAnchor, Matrix& outVpMat)
+	{
+		bool headSpace = false;
+		if (!ResolveAnchorWorld(type, s, overlayState, outAnchor, headSpace))
+			return false;
+		outVpMat = headSpace ? matrices.vpHeadSpace : matrices.vpWorldSpace;
 		return true;
 	}
 
@@ -1700,10 +1710,13 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// Focused panel-mode client gate (existing semantics). Held as a
 		// strong ref for the rest of this function so a concurrent
 		// UnregisterClient on another thread can't free it out from under
-		// GetMenuSRV's CreateShaderResourceView call below.
+		// GetMenuSRV's CreateShaderResourceView call below. When the runtime
+		// hosts the panel (RuntimeOverlay), the panel and cursor passes stand
+		// down — the runtime composites the panel with the cursor baked in.
 		winrt::com_ptr<ID3D11Texture2D> menuTex;
 		bool wantPanelPass = false;
-		if (focused != 0 && s.attachMode != Overlay::AttachMode::None) {
+		if (focused != 0 && s.attachMode != Overlay::AttachMode::None &&
+			!RuntimeOverlay::IsHostingPanel()) {
 			menuTex = HelperImpl::GetSingleton().GetClientPanelTexture(focused);
 			wantPanelPass = (menuTex != nullptr);
 		}
@@ -1799,6 +1812,72 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// Drawn last so the rebind capture composites on top of the focused menu.
 		RenderRebindPass(ctx, matrices, s);
 
+		backup.Restore(ctx);
+	}
+
+	void RenderCursorIntoPanel(ID3D11Texture2D* panel)
+	{
+		auto& overlayState = Overlay::State::GetSingleton();
+		const auto& s = overlayState.settings;
+		const auto& wand = overlayState.wandState;
+		if (!panel || !wand.isIntersecting)
+			return;
+		if (!InitResources())
+			return;
+		auto* ctx = Globals::GetD3D().context;
+		auto* device = Globals::GetD3D().device;
+		if (!ctx || !device)
+			return;
+
+		EnsureCursorColorCurrent(device, s.cursorColor);
+		ID3D11ShaderResourceView* cursorSRV = s.cursorStyle == Overlay::CursorStyle::Arrow ?
+		                                          g_res.cursorArrowSRV.get() :
+		                                          g_res.cursorSRV.get();
+		if (!cursorSRV)
+			return;
+
+		// RTV cache keyed by texture pointer (the panel is reallocated only on
+		// a size change).
+		static winrt::com_ptr<ID3D11RenderTargetView> s_rtv;
+		static ID3D11Texture2D* s_rtvKey = nullptr;
+		if (s_rtvKey != panel) {
+			s_rtv = nullptr;
+			if (FAILED(device->CreateRenderTargetView(panel, nullptr, s_rtv.put()))) {
+				s_rtvKey = nullptr;
+				return;
+			}
+			s_rtvKey = panel;
+		}
+
+		D3D11_TEXTURE2D_DESC desc{};
+		panel->GetDesc(&desc);
+		if (!desc.Width || !desc.Height)
+			return;
+
+		StateBackup backup;
+		backup.Save(ctx);
+		ID3D11RenderTargetView* rtv = s_rtv.get();
+		ctx->OMSetRenderTargets(1, &rtv, nullptr);
+		D3D11_VIEWPORT vp{};
+		vp.Width = static_cast<float>(desc.Width);
+		vp.Height = static_cast<float>(desc.Height);
+		vp.MaxDepth = 1.0f;
+		ctx->RSSetViewports(1, &vp);
+
+		// Same on-panel footprint as the in-scene marker: a square whose side
+		// is kMarkerLocalSize of the panel width, centered on the hit UV.
+		constexpr float kMarkerLocalSize = 0.016f;
+		const float side = kMarkerLocalSize * s.cursorSize;
+		const float u = wand.uvCoordinatesX.load(std::memory_order_relaxed);
+		const float v = wand.uvCoordinatesY.load(std::memory_order_relaxed);
+		Matrix model = Matrix::CreateScale(
+						   2.0f * side,
+						   2.0f * side * static_cast<float>(desc.Width) / static_cast<float>(desc.Height),
+						   1.0f) *
+		               Matrix::CreateTranslation(u * 2.0f - 1.0f, 1.0f - v * 2.0f, 0.0f);
+		ConstantBufferData cb;
+		cb.wvp = model.Transpose();
+		DrawQuad(ctx, cb, cursorSRV);
 		backup.Restore(ctx);
 	}
 }
