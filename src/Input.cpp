@@ -81,13 +81,7 @@ namespace ImGuiVRHelper::Input
 
 		// ---- Handedness tracking ----------------------------------------
 
-		// Guards g_lastKnownLeftHanded/g_handednessInitialized plus
-		// Overlay::State's primaryControllerState/secondaryControllerState:
-		// FeedVREvent and DrainInjected write these from the input-poll
-		// thread while BuildFrame reads them from the render thread every
-		// Present. Without a lock, a handedness-flip reset here can wipe
-		// an in-flight OnEvent write, and BuildFrame can observe a torn
-		// InputDeviceState (256-entry ButtonState array) mid-update.
+		// Protect handedness plus controller snapshots across threads.
 		std::mutex g_controllerStateMutex;
 
 		bool g_lastKnownLeftHanded = false;
@@ -282,11 +276,7 @@ namespace ImGuiVRHelper::Input
 			auto& state = Overlay::State::GetSingleton();
 			auto& target = isPrimary ? state.primaryControllerState : state.secondaryControllerState;
 
-			// Store on the CANONICAL key: some runtimes report a squeeze's press and
-			// release on different alternates (kGrip vs kGripAlt), and since both OR
-			// into one wire bit, splitting them across two entries leaves the OR (and
-			// thus GripClick) stuck held. Folding at store makes one physical button
-			// exactly one entry.
+			// Store the canonical key so one physical button maps to one entry.
 			for (const auto& m : ButtonTable()) {
 				if (keyCode == m.reKey) {
 					target[m.canonicalKey].OnEvent(pressed, nowSecs);
@@ -294,27 +284,6 @@ namespace ImGuiVRHelper::Input
 				}
 			}
 
-			// Thumbstick axis: live update.
-			//
-			// Two changes from the obvious version:
-			//
-			// 1. Always update, even on (0, 0). The previous "skip on zero"
-			//    branch caused stick values to LATCH at the last non-zero
-			//    reading: BSInputDeviceManager only fires a thumbstick event
-			//    when the value changes, so a stick that ends a sweep at
-			//    (0.5, 0) and then returns to (0, 0) over a frame Skyrim
-			//    didn't observe could be missed entirely. The cursor would
-			//    keep drifting at "release speed" forever.
-			//
-			// 2. Snap micro-deflections to zero before storing. Hardware
-			//    drift on most controllers sits at 0.05-0.15 of full
-			//    deflection; below that, treating the stick as released is
-			//    objectively correct and saves every consumer (cursor,
-			//    scroll, drag-depth) from re-applying the same deadzone.
-			//    Threshold is fixed at 0.05 — settings.mouseDeadzone is the
-			//    USER-tunable threshold for *cursor speed scaling*, kept
-			//    higher (default 0.2) so the cursor only moves on
-			//    intentional pushes.
 			target.thumbsticks[thumbIdx].x = snappedX;
 			target.thumbsticks[thumbIdx].y = snappedY;
 		}
@@ -365,12 +334,6 @@ namespace ImGuiVRHelper::Input
 			out.hmd.valid = 0;
 		}
 
-		// Map handedness onto left/right physical hands. Snapshot the
-		// controller state under the lock (whole-struct copy) rather than
-		// reading Overlay::State's fields live — FeedVREvent/DrainInjected
-		// mutate them concurrently from the input-poll thread, and a live
-		// read here could observe a torn InputDeviceState or race a
-		// handedness-flip reset mid-update.
 		bool leftHanded;
 		RE::VRControllerState primarySnapshot;
 		RE::VRControllerState secondarySnapshot;
