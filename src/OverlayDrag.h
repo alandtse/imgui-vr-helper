@@ -14,8 +14,8 @@ namespace ImGuiVRHelper::OverlayDrag
 	void Update();
 
 	/// Returns true if drag input should be sampled at all. False when
-	/// drag is disabled in settings, the overlay is hidden, the diagnostics
-	/// test mode is active, or the OpenVR runtime is unavailable.
+	/// drag is disabled in settings, the overlay is hidden, or the OpenVR
+	/// runtime is unavailable.
 	bool CanPerform();
 
 	/// Recompute the fixed-world transform from the current HMD pose plus
