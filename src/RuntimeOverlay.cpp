@@ -87,7 +87,9 @@ namespace ImGuiVRHelper::RuntimeOverlay
 		// runtime is actually displaying the panel.
 		std::atomic<bool> g_shownAny{ false };
 		std::atomic<bool> g_hosting{ false };
-		bool g_failLogged = false;
+		// Written from both the render thread (StagePanelCopy) and, in Input
+		// mode, the input thread (ApplyToRuntime's CreateOverlay failure path).
+		std::atomic<bool> g_failLogged{ false };
 
 		SubmitThread DecideSubmitThread()
 		{
@@ -164,11 +166,14 @@ namespace ImGuiVRHelper::RuntimeOverlay
 					slot.transform = Util::MatrixToHmdMatrix34(
 						Matrix::CreateTranslation(s.hmdOffsetX, s.hmdOffsetY, s.hmdOffsetZ));
 				} else if (queryPoses() && poses[vr::k_unTrackedDeviceIndex_Hmd].bPoseIsValid) {
-					slot.visible = true;
-					slot.transform = Util::MatrixToHmdMatrix34(
-						Matrix::CreateTranslation(s.hmdOffsetX, s.hmdOffsetY, s.hmdOffsetZ) *
-						Util::HmdMatrix34ToMatrix(
-							poses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking));
+					Matrix anchor;
+					bool headSpace = false;
+					if (InSceneOverlay::ResolveAnchorWorld(Overlay::OverlayType::HMD, s, state, anchor, headSpace)) {
+						slot.visible = true;
+						slot.transform = Util::MatrixToHmdMatrix34(
+							anchor * Util::HmdMatrix34ToMatrix(
+										 poses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking));
+					}
 				}
 			}
 
@@ -389,7 +394,13 @@ namespace ImGuiVRHelper::RuntimeOverlay
 		}
 		if (InSceneOverlay::IsRenderPathDisabled())
 			f = DesiredFrame{};  // hide everything
-		ApplyToRuntime(f);
+		try {
+			ApplyToRuntime(f);
+		} catch (const std::exception& e) {
+			logs::error("RuntimeOverlay: disabled after runtime exception: {}", e.what());
+			g_submitThread.store(SubmitThread::Disabled, std::memory_order_release);
+			g_shownAny.store(false, std::memory_order_relaxed);
+		}
 	}
 
 	bool IsHostingPanel()

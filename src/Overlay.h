@@ -250,7 +250,9 @@ namespace ImGuiVRHelper::Overlay
 
 	struct WandState
 	{
-		bool isIntersecting = false;
+		// Written on the render thread by WandPointing::ComputeIntersection;
+		// also read from devbench's listener thread (DiagnosticsJson).
+		std::atomic<bool> isIntersecting = false;
 		std::atomic<float> uvCoordinatesX = 0.0f;
 		std::atomic<float> uvCoordinatesY = 0.0f;
 		vr::TrackedDeviceIndex_t controllerIndex = vr::k_unTrackedDeviceIndexInvalid;

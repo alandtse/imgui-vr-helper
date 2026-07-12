@@ -746,7 +746,7 @@ namespace ImGuiVRHelper
 
 		nlohmann::json j;
 		j["wand"] = {
-			{ "intersecting", state.wandState.isIntersecting },
+			{ "intersecting", state.wandState.isIntersecting.load(std::memory_order_relaxed) },
 			{ "u", state.wandState.uvCoordinatesX.load(std::memory_order_relaxed) },
 			{ "v", state.wandState.uvCoordinatesY.load(std::memory_order_relaxed) },
 			{ "overridden", state.debugPointer.active.load(std::memory_order_relaxed) },
