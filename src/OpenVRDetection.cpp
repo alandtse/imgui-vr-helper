@@ -108,6 +108,15 @@ namespace VRDetection
 
 	RuntimeType DetectRuntimeType(const std::string& dllPath, const std::string& version, uint64_t fileSize)
 	{
+		// Ground truth first: real SteamVR loads vrclient_x64.dll in-process;
+		// OpenComposite-family runtimes never do. The version/size heuristic
+		// below can't tell them apart -- the stock Valve openvr_api.dll is
+		// ALSO 1.0.10.0 at ~600KB on some installs, which used to misreport
+		// SteamVR as OpenComposite.
+		if (GetModuleHandleW(L"vrclient_x64.dll") != nullptr) {
+			return RuntimeType::SteamVR;
+		}
+
 		// OpenComposite DLLs are typically small (~600KB) with version 1.0.10.0.
 		if (version == "1.0.10.0" && fileSize < 700000) {
 			return RuntimeType::OpenComposite;

@@ -8,6 +8,7 @@
 #include "Globals.h"
 #include "HelperImpl.h"
 #include "InSceneOverlay.h"
+#include "OpenVRDetection.h"
 #include "Overlay.h"
 #include "OverlayTinter.h"
 #include "internal/VRUtils.h"
@@ -90,21 +91,19 @@ namespace ImGuiVRHelper::RuntimeOverlay
 
 		SubmitThread DecideSubmitThread()
 		{
-			// Ground truth for the thread policy: real SteamVR loads vrclient
-			// in-process (IVROverlay calls must stay off the render thread),
-			// while OpenComposite-family runtimes never do (in-process; their
-			// SetOverlayTexture needs the render thread's D3D context). The
-			// DLL-heuristic VRDetection::runtimeType misclassifies the stock
-			// Valve loader as OpenComposite, so it must not be used here.
-			if (GetModuleHandleW(L"vrclient_x64.dll") != nullptr) {
-				logs::info(
-					"RuntimeOverlay: SteamVR (vrclient in process); submitting from the input thread");
+			// SteamVR: IVROverlay calls must stay off the render thread (the
+			// vrclient contention race). VRDetection::runtimeType is ground
+			// truth here (it checks for vrclient_x64.dll in-process).
+			if (VRDetection::LastResult().runtimeType == VRDetection::RuntimeType::SteamVR) {
+				logs::info("RuntimeOverlay: SteamVR detected; submitting from the input thread");
 				return SubmitThread::Input;
 			}
 
-			// In-process runtime: fetching the interface here (render thread)
-			// is safe. VR_IsInterfaceVersionValid is unreliable on these
-			// builds, so ask the game's OpenVR context directly.
+			// OpenComposite-family runtimes are in-process, so fetching the
+			// interface here (render thread) is safe; their SetOverlayTexture
+			// needs the render thread's D3D context anyway.
+			// VR_IsInterfaceVersionValid is unreliable on these builds, so ask
+			// the game's OpenVR context directly rather than trust the probe.
 			Util::OpenVRContext ctx;
 			if (!ctx.HasOverlay()) {
 				logs::info("RuntimeOverlay: runtime exposes no IVROverlay; staying in-scene");
