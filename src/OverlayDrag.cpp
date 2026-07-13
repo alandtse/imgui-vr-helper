@@ -447,14 +447,27 @@ namespace ImGuiVRHelper::OverlayDrag
 			const bool isLeft = role == vr::ETrackedControllerRole::TrackedControllerRole_LeftHand;
 			const bool isRight = role == vr::ETrackedControllerRole::TrackedControllerRole_RightHand;
 
-			// Same mode selection UpdateActiveDrag's switch expects: FixedWorld takes priority
-			// (it's independent of attachMode, and the default positioning method), otherwise
-			// whichever attach mode is configured.
+			// Derive mode from wand.matchedOverlayType -- the SAME anchor the hit test resolved
+			// against to land the wand on the Move button this frame (InSceneOverlay's
+			// RenderCursorPass/ResolveAnchor use it identically). Re-deriving mode from
+			// positioningMethod/attachMode independently here would duplicate ResolveAnchorWorld's
+			// branching a third time and risks drifting out of sync with it (as happened before:
+			// FixedWorld was checked ahead of attachMode, disagreeing with both the renderer, which
+			// never consults positioningMethod for a Controller-type anchor, and TryStartNewDrag's
+			// own priority order). Guard mirrors RenderCursorPass's attachStillValid check: if
+			// attachMode changed since the hit was computed, bail rather than resolve a stale mode.
+			const auto matchedType = state.wandState.matchedOverlayType;
+			const bool attachStillValid = matchedType == Overlay::OverlayType::HMD ?
+			                                  (s.attachMode == AttachMode::HMDOnly || s.attachMode == AttachMode::Both) :
+			                                  (s.attachMode == AttachMode::ControllerOnly || s.attachMode == AttachMode::Both);
+			if (!attachStillValid)
+				return;
+
 			DragState::Mode mode;
-			if (s.positioningMethod == PositioningMethod::FixedWorld) {
-				mode = DragState::Mode::FixedWorld;
-			} else if (s.attachMode == AttachMode::ControllerOnly) {
+			if (matchedType == Overlay::OverlayType::Controller) {
 				mode = DragState::Mode::Controller;
+			} else if (s.positioningMethod == PositioningMethod::FixedWorld) {
+				mode = DragState::Mode::FixedWorld;
 			} else {
 				mode = DragState::Mode::HMD;
 			}
