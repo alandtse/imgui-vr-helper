@@ -434,6 +434,13 @@ namespace ImGuiVRHelper::OverlayDrag
 			if (!system)
 				return;
 
+			// Requires a live hit, not just a last-known one: matchedOverlayType/controllerIndex
+			// below are only updated while intersecting (WandPointing::ComputeIntersection), so
+			// without this check they'd hold a stale anchor/hand from whenever the wand last hit
+			// any panel.
+			if (!state.wandState.isIntersecting)
+				return;
+
 			const vr::TrackedDeviceIndex_t i = state.wandState.controllerIndex;
 			if (i == vr::k_unTrackedDeviceIndexInvalid)
 				return;
@@ -447,20 +454,11 @@ namespace ImGuiVRHelper::OverlayDrag
 			const bool isLeft = role == vr::ETrackedControllerRole::TrackedControllerRole_LeftHand;
 			const bool isRight = role == vr::ETrackedControllerRole::TrackedControllerRole_RightHand;
 
-			// Derive mode from wand.matchedOverlayType -- the SAME anchor the hit test resolved
-			// against to land the wand on the Move button this frame (InSceneOverlay's
-			// RenderCursorPass/ResolveAnchor use it identically). Re-deriving mode from
-			// positioningMethod/attachMode independently here would duplicate ResolveAnchorWorld's
-			// branching a third time and risks drifting out of sync with it (as happened before:
-			// FixedWorld was checked ahead of attachMode, disagreeing with both the renderer, which
-			// never consults positioningMethod for a Controller-type anchor, and TryStartNewDrag's
-			// own priority order). Guard mirrors RenderCursorPass's attachStillValid check: if
-			// attachMode changed since the hit was computed, bail rather than resolve a stale mode.
+			// Derive mode from wand.matchedOverlayType -- the same anchor the renderer resolved
+			// against this frame -- instead of re-deriving it from positioningMethod/attachMode,
+			// which risks disagreeing with the renderer's own resolution.
 			const auto matchedType = state.wandState.matchedOverlayType;
-			const bool attachStillValid = matchedType == Overlay::OverlayType::HMD ?
-			                                  (s.attachMode == AttachMode::HMDOnly || s.attachMode == AttachMode::Both) :
-			                                  (s.attachMode == AttachMode::ControllerOnly || s.attachMode == AttachMode::Both);
-			if (!attachStillValid)
+			if (!Overlay::IsAttachModeCompatible(matchedType, s.attachMode))
 				return;
 
 			DragState::Mode mode;
