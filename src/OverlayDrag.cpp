@@ -483,6 +483,7 @@ namespace ImGuiVRHelper::OverlayDrag
 			switch (mode) {
 			case DragState::Mode::FixedWorld:
 				drag.initialControllerMatrix = drag.startControllerMatrix;
+				drag.initialControllerMatrixInverse = drag.initialControllerMatrix.Invert();
 				drag.initialOverlayMatrix = state.fixedWorld.m;
 				break;
 			case DragState::Mode::Controller:
