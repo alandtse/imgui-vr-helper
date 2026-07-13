@@ -434,6 +434,13 @@ namespace ImGuiVRHelper::OverlayDrag
 			if (!system)
 				return;
 
+			// Requires a live hit, not just a last-known one: matchedOverlayType/controllerIndex
+			// below are only updated while intersecting (WandPointing::ComputeIntersection), so
+			// without this check they'd hold a stale anchor/hand from whenever the wand last hit
+			// any panel.
+			if (!state.wandState.isIntersecting)
+				return;
+
 			const vr::TrackedDeviceIndex_t i = state.wandState.controllerIndex;
 			if (i == vr::k_unTrackedDeviceIndexInvalid)
 				return;
@@ -447,14 +454,18 @@ namespace ImGuiVRHelper::OverlayDrag
 			const bool isLeft = role == vr::ETrackedControllerRole::TrackedControllerRole_LeftHand;
 			const bool isRight = role == vr::ETrackedControllerRole::TrackedControllerRole_RightHand;
 
-			// Same mode selection UpdateActiveDrag's switch expects: FixedWorld takes priority
-			// (it's independent of attachMode, and the default positioning method), otherwise
-			// whichever attach mode is configured.
+			// Derive mode from wand.matchedOverlayType -- the same anchor the renderer resolved
+			// against this frame -- instead of re-deriving it from positioningMethod/attachMode,
+			// which risks disagreeing with the renderer's own resolution.
+			const auto matchedType = state.wandState.matchedOverlayType;
+			if (!Overlay::IsAttachModeCompatible(matchedType, s.attachMode))
+				return;
+
 			DragState::Mode mode;
-			if (s.positioningMethod == PositioningMethod::FixedWorld) {
-				mode = DragState::Mode::FixedWorld;
-			} else if (s.attachMode == AttachMode::ControllerOnly) {
+			if (matchedType == Overlay::OverlayType::Controller) {
 				mode = DragState::Mode::Controller;
+			} else if (s.positioningMethod == PositioningMethod::FixedWorld) {
+				mode = DragState::Mode::FixedWorld;
 			} else {
 				mode = DragState::Mode::HMD;
 			}
@@ -470,6 +481,7 @@ namespace ImGuiVRHelper::OverlayDrag
 			switch (mode) {
 			case DragState::Mode::FixedWorld:
 				drag.initialControllerMatrix = drag.startControllerMatrix;
+				drag.initialControllerMatrixInverse = drag.initialControllerMatrix.Invert();
 				drag.initialOverlayMatrix = state.fixedWorld.m;
 				break;
 			case DragState::Mode::Controller:

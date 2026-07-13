@@ -92,6 +92,16 @@ namespace ImGuiVRHelper::Overlay
 		Controller,
 	};
 
+	/// Whether attachMode still renders an anchor of this type. Shared by every
+	/// consumer of a previously-resolved OverlayType (a wand hit, a cached drag
+	/// mode) so "is this anchor still live" has one definition instead of each
+	/// call site re-deriving it and risking drift.
+	constexpr bool IsAttachModeCompatible(OverlayType type, AttachMode attachMode)
+	{
+		return type == OverlayType::HMD ? (attachMode == AttachMode::HMDOnly || attachMode == AttachMode::Both) :
+		                                  (attachMode == AttachMode::ControllerOnly || attachMode == AttachMode::Both);
+	}
+
 	/// Style of the helper-composited wand pointer (drawn for every focused
 	/// client that doesn't set kClientFlag_OwnCursor). Both anchor their hotspot
 	/// at the exact wand hit; this is a presentation choice.

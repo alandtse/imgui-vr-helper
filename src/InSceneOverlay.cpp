@@ -1299,10 +1299,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		// Settings changed since the hit was computed this tick (e.g. attach mode switched
 		// mid-frame) — skip rather than resolve a stale anchor for a mode that's no longer active.
-		const bool attachStillValid = wand.matchedOverlayType == Overlay::OverlayType::HMD ?
-		                                  (s.attachMode == Overlay::AttachMode::HMDOnly || s.attachMode == Overlay::AttachMode::Both) :
-		                                  (s.attachMode == Overlay::AttachMode::ControllerOnly || s.attachMode == Overlay::AttachMode::Both);
-		if (!attachStillValid)
+		if (!Overlay::IsAttachModeCompatible(wand.matchedOverlayType, s.attachMode))
 			return;
 
 		Matrix anchor, vpMat;
