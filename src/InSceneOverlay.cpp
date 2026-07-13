@@ -215,6 +215,11 @@ float4 main(PS_INPUT input) : SV_TARGET
 			winrt::com_ptr<ID3D11Buffer> ib;
 			winrt::com_ptr<ID3D11Buffer> cb;
 			winrt::com_ptr<ID3D11BlendState> blendState;
+			// RenderCursorIntoPanel composites onto OverlayTinter's panel canvas, where the
+			// destination's existing alpha must be preserved (see its own blend-state comment);
+			// blendState above draws onto the live eye buffer, whose alpha is inert, so it keeps
+			// the simpler overwrite semantics rather than taking on panel-canvas requirements.
+			winrt::com_ptr<ID3D11BlendState> panelCompositeBlendState;
 			winrt::com_ptr<ID3D11DepthStencilState> depthState;
 			winrt::com_ptr<ID3D11RasterizerState> rasterizerState;
 			winrt::com_ptr<ID3D11SamplerState> sampler;
@@ -709,24 +714,33 @@ float4 main(PS_INPUT input) : SV_TARGET
 				g_res.instanceCapacity = kInitialInstances;
 			}
 
-			// Blend state: standard "over" alpha compositing (Porter-Duff), matched across
-			// RGB and alpha. DestBlendAlpha must be INV_SRC_ALPHA, not ZERO: a draw target
-			// isn't always freshly cleared before this state is used -- RenderCursorIntoPanel
-			// draws the cursor quad onto the panel canvas AFTER the panel's own alpha is
-			// already there, and ZERO would overwrite (rather than preserve) that alpha
-			// wherever the cursor texture is transparent, punching a hole in the panel's
-			// backdrop shaped like the cursor's bounding quad.
+			// Blend state: standard alpha blending so the menu doesn't paint
+			// black over the eye render where it's transparent. Draws with this
+			// state land on the live eye buffer, which is never a target this
+			// code clears -- its own alpha is inert, so overwriting dest alpha
+			// (ZERO) rather than accumulating it is fine here.
 			D3D11_BLEND_DESC blendDesc = {};
 			blendDesc.RenderTarget[0].BlendEnable = TRUE;
 			blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
 			blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
 			blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
 			blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-			blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+			blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
 			blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
 			blendDesc.RenderTarget[0].RenderTargetWriteMask = 0x0F;
 			if (FAILED(device->CreateBlendState(&blendDesc, g_res.blendState.put()))) {
 				logs::error("InSceneOverlay: blend state creation failed");
+				return false;
+			}
+
+			// Standard "over" compositing for both RGB and alpha, used only by
+			// RenderCursorIntoPanel: it draws onto OverlayTinter's panel canvas
+			// AFTER the panel's own alpha is already there, so DestBlendAlpha
+			// must accumulate (INV_SRC_ALPHA) instead of discarding (ZERO)
+			// whatever alpha the destination already had.
+			blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+			if (FAILED(device->CreateBlendState(&blendDesc, g_res.panelCompositeBlendState.put()))) {
+				logs::error("InSceneOverlay: panel composite blend state creation failed");
 				return false;
 			}
 
@@ -984,7 +998,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// ---- Quad draw --------------------------------------------------
 
 		void DrawQuad(ID3D11DeviceContext* ctx, const ConstantBufferData& cbData,
-			ID3D11ShaderResourceView* srv)
+			ID3D11ShaderResourceView* srv, ID3D11BlendState* blendState = nullptr)
 		{
 			D3D11_MAPPED_SUBRESOURCE mapped;
 			if (SUCCEEDED(ctx->Map(g_res.cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
@@ -1014,7 +1028,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 			ctx->IASetInputLayout(g_res.inputLayout.get());
 			ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-			ctx->OMSetBlendState(g_res.blendState.get(), nullptr, 0xFFFFFFFF);
+			ctx->OMSetBlendState(blendState ? blendState : g_res.blendState.get(), nullptr, 0xFFFFFFFF);
 			ctx->OMSetDepthStencilState(g_res.depthState.get(), 0);
 			ctx->RSSetState(g_res.rasterizerState.get());
 
@@ -1882,7 +1896,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		               Matrix::CreateTranslation(u * 2.0f - 1.0f, 1.0f - v * 2.0f, 0.0f);
 		ConstantBufferData cb;
 		cb.wvp = model.Transpose();
-		DrawQuad(ctx, cb, cursorSRV);
+		DrawQuad(ctx, cb, cursorSRV, g_res.panelCompositeBlendState.get());
 		backup.Restore(ctx);
 	}
 }
