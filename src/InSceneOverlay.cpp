@@ -709,15 +709,20 @@ float4 main(PS_INPUT input) : SV_TARGET
 				g_res.instanceCapacity = kInitialInstances;
 			}
 
-			// Blend state: standard alpha blending so the menu doesn't paint
-			// black over the eye render where it's transparent.
+			// Blend state: standard "over" alpha compositing (Porter-Duff), matched across
+			// RGB and alpha. DestBlendAlpha must be INV_SRC_ALPHA, not ZERO: a draw target
+			// isn't always freshly cleared before this state is used -- RenderCursorIntoPanel
+			// draws the cursor quad onto the panel canvas AFTER the panel's own alpha is
+			// already there, and ZERO would overwrite (rather than preserve) that alpha
+			// wherever the cursor texture is transparent, punching a hole in the panel's
+			// backdrop shaped like the cursor's bounding quad.
 			D3D11_BLEND_DESC blendDesc = {};
 			blendDesc.RenderTarget[0].BlendEnable = TRUE;
 			blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
 			blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
 			blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
 			blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-			blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+			blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
 			blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
 			blendDesc.RenderTarget[0].RenderTargetWriteMask = 0x0F;
 			if (FAILED(device->CreateBlendState(&blendDesc, g_res.blendState.put()))) {
