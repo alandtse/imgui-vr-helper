@@ -1084,7 +1084,10 @@ namespace ImGuiVRHelperPluginAPI
 
 		static int CompareCI(const std::string& a, const std::string& b)
 		{
-			const std::size_t n = std::min(a.size(), b.size());
+			// Parenthesized to defeat windows.h's min() macro (this header pulls <d3d11.h>) without
+			// requiring every consumer to define NOMINMAX -- some, like Modex, rely on the bare
+			// min/max macros elsewhere in their own code, so a consumer-side NOMINMAX isn't safe.
+			const std::size_t n = (std::min)(a.size(), b.size());
 			for (std::size_t i = 0; i < n; ++i) {
 				const int ca = std::tolower(static_cast<unsigned char>(a[i]));
 				const int cb = std::tolower(static_cast<unsigned char>(b[i]));
