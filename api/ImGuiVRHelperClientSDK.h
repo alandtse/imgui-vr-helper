@@ -350,7 +350,11 @@ namespace ImGuiVRHelperPluginAPI
 		/// predates 002 or the runtime has no keyboard.
 		void PumpKeyboard()
 		{
-			if (!m_helper002 || !IsConnected()) {
+			// A caller can end up here with no ImGui context current -- most often
+			// its own context torn down mid-shutdown while this hook still fires
+			// once more. ImGui::GetIO() dereferences GImGui unchecked in release
+			// builds, so bail instead of an AV on a null context.
+			if (!m_helper002 || !IsConnected() || !ImGui::GetCurrentContext()) {
 				if (m_kbShown && m_helper002)
 					m_helper002->SetKeyboardActive(m_id, false, "");
 				m_kbShown = false;
@@ -521,7 +525,7 @@ namespace ImGuiVRHelperPluginAPI
 		/// so button edges stay current without poking IO.
 		void PumpInput(bool active, float scrollDeadzone = 0.15f)
 		{
-			if (!IsConnected())
+			if (!IsConnected() || !ImGui::GetCurrentContext())
 				return;
 
 			uint32_t held = 0;
@@ -796,7 +800,7 @@ namespace ImGuiVRHelperPluginAPI
 		/// until the panel exists.
 		bool ApplyPanelDisplaySize()
 		{
-			if (!IsConnected())
+			if (!IsConnected() || !ImGui::GetCurrentContext())
 				return false;
 			PanelHandle panel{};
 			if (!m_helper->GetPanel(m_id, &panel) || !panel.width || !panel.height)
