@@ -398,7 +398,7 @@ namespace ImGuiVRHelper::SettingsUI
 									switch (s.ColumnUserID) {
 									case kCol_ID:
 										cmp = (a.client_id < b.client_id) ? -1 : (a.client_id > b.client_id) ? 1 :
-									                                                                           0;
+										                                                                       0;
 										break;
 									case kCol_Name:
 										cmp = a.name.compare(b.name);
@@ -410,14 +410,14 @@ namespace ImGuiVRHelper::SettingsUI
 										{
 											int ra = modeRank(a), rb = modeRank(b);
 											cmp = (ra < rb) ? -1 : (ra > rb) ? 1 :
-										                                       0;
+											                                   0;
 										}
 										break;
 									case kCol_State:
 										{
 											int ra = stateRank(a), rb = stateRank(b);
 											cmp = (ra < rb) ? -1 : (ra > rb) ? 1 :
-										                                       0;
+											                                   0;
 										}
 										break;
 									default:
