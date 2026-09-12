@@ -260,11 +260,45 @@ namespace ImGuiVRHelper::RuntimeOverlay
 				} else {
 					ov->SetOverlayTransformAbsolute(slot.handle, TrackingOrigin(), &pose.transform);
 				}
+
+				// SetOverlayTexture needs the runtime's unproxied interface: the
+				// game's proxied IVROverlay (ctx.overlay) lacks texture-submission
+				// permission on SteamVR and silently fails with
+				// VROverlayError_PermissionDenied (see BSOpenVR.h's
+				// GetCleanIVROverlay doc). Every other call above is fine on the
+				// proxy.
+				auto* texOverlay = RE::BSOpenVR::GetCleanIVROverlay();
+				if (!texOverlay)
+					texOverlay = ov;
 				vr::Texture_t tex{ f.texture.get(), vr::TextureType_DirectX, vr::ColorSpace_Auto };
-				ov->SetOverlayTexture(slot.handle, &tex);
+				if (const auto texErr = texOverlay->SetOverlayTexture(slot.handle, &tex);
+					texErr != vr::VROverlayError_None) {
+					if (!g_failLogged) {
+						logs::warn("RuntimeOverlay: SetOverlayTexture failed ({}); staying in-scene",
+							ov->GetOverlayErrorNameFromEnum(texErr));
+						g_failLogged = true;
+					}
+					continue;  // blank texture -- don't show or mark hosted
+				}
+
 				if (!slot.shown) {
-					ov->ShowOverlay(slot.handle);
+					if (const auto showErr = ov->ShowOverlay(slot.handle);
+						showErr != vr::VROverlayError_None) {
+						if (!g_failLogged) {
+							logs::warn("RuntimeOverlay: ShowOverlay failed ({}); staying in-scene",
+								ov->GetOverlayErrorNameFromEnum(showErr));
+							g_failLogged = true;
+						}
+						continue;
+					}
 					slot.shown = true;
+					// One-shot positive confirmation the overlay is actually
+					// showing pixels, so a working session doesn't rely on
+					// absence of failure logs.
+					static std::atomic<bool> successLogged{ false };
+					if (!successLogged.exchange(true)) {
+						logs::info("RuntimeOverlay: panel now hosted via IVROverlay '{}'", slot.key);
+					}
 				}
 				shownAny = true;
 			}
