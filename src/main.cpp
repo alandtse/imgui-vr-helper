@@ -115,19 +115,7 @@ namespace
 				// would never execute. kPostPostLoad fires before the
 				// renderer is up, so the thunk catches the original
 				// call. This matches SCS's XSEPlugin.cpp:81-86 pattern.
-				const auto info = VRDetection::Detect();
-				logs::info("OpenVR runtime detection:");
-				logs::info("  available={} compatible={} probing_ok={}",
-					info.isAvailable, info.isCompatible, info.probingSucceeded);
-				logs::info("  runtime={} version={} dll_size={}",
-					VRDetection::RuntimeTypeToString(info.runtimeType),
-					info.version, info.fileSize);
-				if (!info.dllPath.empty()) {
-					logs::info("  dll_path={}", info.dllPath);
-				}
-				logs::info("  interfaces: system={} overlay={} compositor={}",
-					info.hasSystemInterface, info.hasOverlayInterface,
-					info.hasCompositorInterface);
+				VRDetection::LogDetectionResult(VRDetection::Detect());
 
 				ImGuiVRHelper::Hooks::Install();
 

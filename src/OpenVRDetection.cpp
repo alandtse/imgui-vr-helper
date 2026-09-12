@@ -176,4 +176,18 @@ namespace VRDetection
 		g_lastResult = result;
 		return result;
 	}
+
+	void LogDetectionResult(const OpenVRDetectionResult& info)
+	{
+		logs::info("OpenVR runtime detection:");
+		logs::info("  available={} compatible={} probing_ok={}",
+			info.isAvailable, info.isCompatible, info.probingSucceeded);
+		logs::info("  runtime={} version={} dll_size={}",
+			RuntimeTypeToString(info.runtimeType), info.version, info.fileSize);
+		if (!info.dllPath.empty()) {
+			logs::info("  dll_path={}", info.dllPath);
+		}
+		logs::info("  interfaces: system={} overlay={} compositor={}",
+			info.hasSystemInterface, info.hasOverlayInterface, info.hasCompositorInterface);
+	}
 }
