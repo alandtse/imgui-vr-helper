@@ -26,6 +26,7 @@
 #include "HelperImpl.h"
 #include "InSceneOverlay.h"
 #include "Input.h"
+#include "OpenVRDetection.h"
 #include "RuntimeOverlay.h"
 #include "SettingsUI.h"
 #include "VRKeyboard.h"
@@ -481,6 +482,20 @@ namespace ImGuiVRHelper::Hooks
 				}
 
 				Globals::SetD3D(device, context, swapchain);
+
+				// The startup probe (main.cpp, kPostPostLoad) can run before
+				// the game's VR_Init has loaded vrclient_x64.dll, misreporting
+				// real SteamVR as OpenComposite (the stock Valve openvr_api.dll
+				// matches OpenComposite's version/size heuristic on some
+				// installs). D3D init happens after VR_Init for a VR game, so
+				// vrclient is loaded by now if it's ever going to be -- re-probe
+				// and correct the cached result/log if the verdict changed.
+				const auto previousRuntime = VRDetection::LastResult().runtimeType;
+				const auto info = VRDetection::Detect();
+				if (info.runtimeType != previousRuntime) {
+					logs::info("OpenVR runtime detection corrected after D3D init:");
+					VRDetection::LogDetectionResult(info);
+				}
 
 				// Now that we have the swapchain, install the Present
 				// detour so the helper has a per-frame tick.
