@@ -348,6 +348,10 @@ namespace ImGuiVRHelper::RuntimeOverlay
 			auto target = g_staging[g_stagingNext];
 			g_stagingNext ^= 1;
 			d3dCtx->CopyResource(target.get(), src);
+			// The compositor opens this D3D11_RESOURCE_MISC_SHARED handle
+			// cross-process from vrclient's own thread; without a flush it may
+			// see a not-yet-submitted copy.
+			d3dCtx->Flush();
 			return target;
 		}
 
