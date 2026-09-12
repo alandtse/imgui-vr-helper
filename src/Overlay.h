@@ -252,8 +252,8 @@ namespace ImGuiVRHelper::Overlay
 		/// (SteamVR overlay / OpenComposite OpenXR quad) instead of drawing it
 		/// into the eye buffers, keeping it sharp under temporal upscalers and
 		/// frame generation. Falls back to the in-scene path when the runtime
-		/// has no usable overlay support. Experimental; default off.
-		bool useRuntimeOverlay = false;
+		/// has no usable overlay support, or when a submit call fails.
+		bool useRuntimeOverlay = true;
 	};
 
 	// ---- Runtime state --------------------------------------------------
