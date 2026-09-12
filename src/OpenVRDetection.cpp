@@ -141,8 +141,16 @@ namespace VRDetection
 			return RuntimeType::OpenComposite;
 		}
 
-		if (lowerPath.find("steamvr") != std::string::npos ||
-			lowerPath.find("steam") != std::string::npos) {
+		// NOTE: deliberately no bare "steam" substring check here. openvr_api.dll
+		// almost always lives inside the game's own install folder, and that
+		// folder is nearly always under some "...Steam.../SteamLibrary/..."
+		// path regardless of which VR runtime is actually loaded -- OpenComposite
+		// installs included. That false positive is exactly what happened on a
+		// real OCU session: dll_path contained "SteamLibrary", so this branch
+		// reported SteamVR for a genuinely in-process OpenComposite runtime.
+		// "steamvr" (the runtime's own install folder name) is specific enough
+		// to keep.
+		if (lowerPath.find("steamvr") != std::string::npos) {
 			return RuntimeType::SteamVR;
 		}
 
