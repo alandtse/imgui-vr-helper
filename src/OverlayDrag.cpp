@@ -297,8 +297,8 @@ namespace ImGuiVRHelper::OverlayDrag
 							return false;
 
 						InputDeviceType opposite = (s.attachController == InputDeviceType::Primary) ?
-					                                   InputDeviceType::Secondary :
-					                                   InputDeviceType::Primary;
+						                               InputDeviceType::Secondary :
+						                               InputDeviceType::Primary;
 						vr::TrackedDeviceIndex_t oppositeIndex = Util::GetControllerIndexForDevice(
 							opposite, state.lastKnownLeftHandedMode);
 						if (oppositeIndex == vr::k_unTrackedDeviceIndexInvalid)
