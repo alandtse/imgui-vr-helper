@@ -230,16 +230,16 @@ namespace ImGuiVRHelper::Hooks
 
 			LogCSVersion();
 
-			// The conflicting (current) CS hooks Submit itself: stand down so we
-			// don't double-drive the VR runtime.
+			// CS already owns Submit (e.g. its submit-stage VR upscaling).
+			// Our thunk chains onto whatever's in the slot without touching
+			// texture format/dimensions, so it's safe to install on top
+			// rather than stand down.
 			if (CSOwnsSubmitHook()) {
-				logs::error(
-					"Community Shaders owns IVRCompositor::Submit; standing down "
-					"imgui-vr-helper's in-scene overlay to avoid a duplicate VR "
-					"overlay host (vrclient 'device or resource busy' crash). Update "
-					"to a Community Shaders build that delegates its VR overlay to "
-					"imgui-vr-helper to re-enable.");
-				InSceneOverlay::DisableRenderPath("Community Shaders owns the in-scene overlay");
+				logs::info(
+					"Community Shaders owns IVRCompositor::Submit; chaining "
+					"imgui-vr-helper's in-scene overlay onto Community Shaders' "
+					"Submit hook.");
+				InstallRenderPath();
 				g_renderDecisionMade = true;
 				return;
 			}
@@ -271,13 +271,10 @@ namespace ImGuiVRHelper::Hooks
 			g_postInstallCheckCounter = 0;
 
 			if (CSOwnsSubmitHook()) {
-				logs::error(
+				logs::info(
 					"Community Shaders claimed IVRCompositor::Submit after "
 					"imgui-vr-helper had already installed its own in-scene "
-					"overlay hook; standing down to avoid a duplicate VR "
-					"overlay host (vrclient 'device or resource busy' crash).");
-				InSceneOverlay::DisableRenderPath(
-					"Community Shaders claimed Submit after imgui-vr-helper installed");
+					"overlay hook; both are already chained, nothing to do.");
 			}
 		}
 
