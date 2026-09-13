@@ -28,7 +28,7 @@ repos:
   - repo: https://github.com/JohnnyMorganz/stylua
     rev: v2.5.2
     hooks:
-      - id: stylua
+      - id: stylua-github
         args: ["--config-path", "stylua.toml"]
         files: \.(lua)$
         exclude: ^lib/
