@@ -58,9 +58,16 @@ namespace VRDetection
 	/// Caches its result for LastResult().
 	OpenVRDetectionResult Detect();
 
-	/// The result of the most recent Detect() call (run once at startup).
-	/// All-default (isAvailable == false) until Detect() has run.
+	/// The result of the most recent Detect() call. Can go stale: the
+	/// startup call (main.cpp, kPostPostLoad) can run before the game's
+	/// VR_Init has loaded vrclient_x64.dll, misreporting real SteamVR as
+	/// OpenComposite. Hooks.cpp re-probes after D3D init (by which point
+	/// vrclient is loaded if it's ever going to be) and updates this.
 	const OpenVRDetectionResult& LastResult();
 
 	const char* RuntimeTypeToString(RuntimeType type);
+
+	/// Log a full detection result at info level, in the standard multi-line
+	/// format. Shared by the startup probe and any later re-probe.
+	void LogDetectionResult(const OpenVRDetectionResult& info);
 }
