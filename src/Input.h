@@ -112,4 +112,13 @@ namespace ImGuiVRHelper::Input
 	/// Drain queued synthetic events into controller state. Input thread
 	/// only (called from the PollInputDevices thunk).
 	void DrainInjected();
+
+	/// Apply a synthetic button event to controller state immediately, no
+	/// queue. For a caller that already shares a thread/frame with the
+	/// readers (BuildFrame, SettingsUI's raw pump) -- e.g. HelperImpl's poke
+	/// hysteresis, called from DispatchFrame on the render thread just before
+	/// BuildFrame reads this same state. InjectButton's cross-thread queue
+	/// would add a full input-thread round-trip of latency here for no
+	/// benefit; still thread-safe (same mutex FeedVREvent/DrainInjected use).
+	void SetSyntheticButtonState(bool primaryHand, uint32_t keyCode, bool pressed);
 }

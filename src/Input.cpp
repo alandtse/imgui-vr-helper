@@ -362,6 +362,12 @@ namespace ImGuiVRHelper::Input
 			FillHand(out.left, secondarySnapshot, secondaryIdx, secondaryThumb);
 		}
 
+		// Poke (direct-touch) click hysteresis lives in HelperImpl::UpdatePokeContact
+		// instead of here: it synthesizes a real kTrigger press via
+		// Input::SetSyntheticButtonState, so it needs to run where the fresh
+		// isIntersecting/depthMeters are computed (HelperImpl::UpdateWandPointer)
+		// rather than duplicating that read here.
+
 		// Edge detection: compute pressed/released by diffing against the
 		// previous frame's held bitmask.
 		const uint32_t leftHeld = out.left.buttons_held;
@@ -393,6 +399,26 @@ namespace ImGuiVRHelper::Input
 			return;
 		}
 		g_injectQueue.push_back({ primaryHand, keyCode, pressed });
+	}
+
+	void SetSyntheticButtonState(bool primaryHand, uint32_t keyCode, bool pressed)
+	{
+		// Unlike InjectButton, this mutates state[Canonical(keyCode)] directly
+		// instead of queuing for DrainInjected -- for a caller (HelperImpl's
+		// poke hysteresis) that already runs on the same thread and same frame
+		// as the readers (BuildFrame, SettingsUI's raw pump), routing through
+		// the cross-thread queue only adds a full input-thread round-trip of
+		// latency before the press becomes visible, which is exactly the
+		// "doesn't feel immediate" this was written to fix. InjectButton's
+		// queue is still correct for devbench, which calls from a genuinely
+		// different thread and has no same-frame ordering to preserve.
+		auto& state = Overlay::State::GetSingleton();
+		const auto nowSecs = std::chrono::duration<double>(
+			std::chrono::steady_clock::now().time_since_epoch())
+		                         .count();
+		std::scoped_lock lk{ g_controllerStateMutex };
+		auto& target = primaryHand ? state.primaryControllerState : state.secondaryControllerState;
+		target[Canonical(keyCode)].OnEvent(pressed, nowSecs);
 	}
 
 	void DrainInjected()
