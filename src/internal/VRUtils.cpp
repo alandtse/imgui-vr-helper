@@ -103,6 +103,66 @@ namespace ImGuiVRHelper::Util
 								   vr::TrackedControllerRole_RightHand),
 				std::memory_order_relaxed);
 		}
+
+		// Controller "tip" transform cache, one slot per possible tracked
+		// device index. `attempted` gates re-querying: a failed lookup (no
+		// render model name yet, e.g. right after connect) retries on the
+		// next call, but once IVRRenderModels has actually answered --
+		// success or a definitive "no tip component" -- there is nothing left
+		// to learn for this device while it stays connected, so it's never
+		// touched again.
+		struct TipCacheEntry
+		{
+			std::atomic<bool> attempted{ false };
+			std::atomic<bool> valid{ false };
+			vr::HmdMatrix34_t localToDevice{};
+		};
+		TipCacheEntry g_tipCache[vr::k_unMaxTrackedDeviceCount];
+
+		bool EnsureControllerTipCache(vr::TrackedDeviceIndex_t index)
+		{
+			if (index >= vr::k_unMaxTrackedDeviceCount)
+				return false;
+			auto& entry = g_tipCache[index];
+			if (entry.attempted.load(std::memory_order_acquire))
+				return entry.valid.load(std::memory_order_relaxed);
+
+			auto* openvr = RE::BSOpenVR::GetSingleton();
+			if (!openvr || !openvr->vrSystem)
+				return false;  // OpenVR not up yet -- don't latch, retry later
+
+			char renderModelName[vr::k_unMaxPropertyStringSize] = {};
+			vr::ETrackedPropertyError propErr = vr::TrackedProp_UnknownProperty;
+			const uint32_t nameLen = openvr->vrSystem->GetStringTrackedDeviceProperty(
+				index, vr::Prop_RenderModelName_String, renderModelName,
+				sizeof(renderModelName), &propErr);
+			if (propErr != vr::TrackedProp_Success || nameLen == 0)
+				return false;  // e.g. device not yet fully connected -- retry later
+
+			auto* models = RE::BSOpenVR::GetIVRRenderModels();
+			// A definitive answer from here on: no IVRRenderModels at all
+			// (OpenComposite, the headless null-driver harness), or this model
+			// genuinely has no "tip" component. Either way, latch -- there's
+			// nothing that changes while this device stays connected.
+			entry.attempted.store(true, std::memory_order_relaxed);
+			if (!models)
+				return false;
+
+			// GetComponentState's own doc: static components (unlike buttons/
+			// triggers) return a consistent value independent of controller
+			// state, so zeroed dummy state is correct here, not a shortcut.
+			vr::VRControllerState_t dummyState{};
+			vr::RenderModel_ControllerMode_State_t dummyMode{};
+			vr::RenderModel_ComponentState_t component{};
+			if (!models->GetComponentState(renderModelName, vr::k_pch_Controller_Component_Tip,
+					&dummyState, &dummyMode, &component)) {
+				return false;
+			}
+
+			entry.localToDevice = component.mTrackingToComponentLocal;
+			entry.valid.store(true, std::memory_order_relaxed);
+			return true;
+		}
 	}
 
 	bool CachedEyeToHead(vr::EVREye eye, vr::HmdMatrix34_t& out)
@@ -110,6 +170,14 @@ namespace ImGuiVRHelper::Util
 		if (!EnsureStaticCache())
 			return false;
 		out = g_static.eyeToHead[static_cast<int>(eye)];
+		return true;
+	}
+
+	bool CachedControllerTipLocal(vr::TrackedDeviceIndex_t index, vr::HmdMatrix34_t& out)
+	{
+		if (!EnsureControllerTipCache(index))
+			return false;
+		out = g_tipCache[index].localToDevice;
 		return true;
 	}
 
