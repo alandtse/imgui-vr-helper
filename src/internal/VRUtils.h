@@ -72,6 +72,20 @@ namespace ImGuiVRHelper::Util
 	/// One-time-cached raw projection tangents. Returns false until populated.
 	bool CachedProjectionRaw(vr::EVREye eye, float& left, float& right, float& bottom, float& top);
 
+	/// Model-specific "tip" transform (local-to-device) for the controller at
+	/// `index`, from that controller's render model "tip" component -- Valve's
+	/// own documented laser-pointing anchor (openvr.h's
+	/// k_pch_Controller_Component_Tip: "For controllers with an unambiguous
+	/// 'tip' (used for 'laser-pointing')"), vendor-calibrated per model instead
+	/// of a guessed offset. Cached per device index after first success --
+	/// IVRRenderModels::GetComponentState's own doc says static components
+	/// return a consistent value, so this never needs re-querying while the
+	/// device stays connected. Returns false (leaving `out` untouched) if
+	/// unavailable -- no IVRRenderModels (OpenComposite, the headless
+	/// null-driver harness), no render model name yet, or no "tip" component
+	/// on this model -- callers should fall back to an approximation.
+	bool CachedControllerTipLocal(vr::TrackedDeviceIndex_t index, vr::HmdMatrix34_t& out);
+
 	/// Map InputDeviceType {Primary,Secondary} to an OpenVR tracked device
 	/// index, accounting for the player's handedness. Serves a low-rate-cached
 	/// left/right index (a couple of vrclient lookups every ~90 calls).
