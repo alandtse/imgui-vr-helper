@@ -43,6 +43,15 @@ namespace VRDetection
 		bool probingSucceeded = false;
 	};
 
+	/// Ground truth for "is this really SteamVR": real SteamVR loads
+	/// vrclient_x64.dll in-process; OpenComposite-family runtimes never do.
+	/// Live-checked (not cached) -- vrclient_x64.dll loads only once the
+	/// game calls VR_Init, which can be well after Detect() first runs, so
+	/// callers that need an up-to-date answer (e.g. deciding whether
+	/// IVROverlay calls are safe on the render thread) should call this
+	/// directly instead of trusting a possibly-stale LastResult().
+	bool IsVrclientLoaded();
+
 	/// Probe loaded openvr_api.dll for the standard interface versions.
 	bool ProbeRuntimeInterfaces(OpenVRDetectionResult& result);
 

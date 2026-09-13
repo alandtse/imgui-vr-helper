@@ -681,11 +681,11 @@ namespace ImGuiVRHelper::SettingsUI
 			ImGui::Spacing();
 			ImGui::Separator();
 			ImGui::TextDisabled("Render path");
-			ImGui::Checkbox("Native VR overlay for menus (experimental)", &s.useRuntimeOverlay);
+			ImGui::Checkbox("Native VR overlay for menus", &s.useRuntimeOverlay);
 			ImGui::TextDisabled(
 				"    Composites the focused menu as a runtime overlay layer, immune to\n"
 				"    upscalers and frame generation. Falls back to in-scene rendering\n"
-				"    when the runtime has no overlay support.");
+				"    when the runtime has no overlay support, or a submit call fails.");
 
 			ImGui::Spacing();
 			ImGui::Separator();

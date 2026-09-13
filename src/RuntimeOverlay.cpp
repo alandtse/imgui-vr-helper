@@ -94,9 +94,15 @@ namespace ImGuiVRHelper::RuntimeOverlay
 		SubmitThread DecideSubmitThread()
 		{
 			// SteamVR: IVROverlay calls must stay off the render thread (the
-			// vrclient contention race). VRDetection::runtimeType is ground
-			// truth here (it checks for vrclient_x64.dll in-process).
-			if (VRDetection::LastResult().runtimeType == VRDetection::RuntimeType::SteamVR) {
+			// vrclient contention race). Check vrclient_x64.dll live rather
+			// than trust VRDetection::LastResult() -- that's a one-shot probe
+			// from early startup, before the game's VR_Init has necessarily
+			// loaded vrclient_x64.dll, so it can go stale with a false
+			// OpenComposite verdict on a real SteamVR install (the stock
+			// Valve openvr_api.dll matches the OpenComposite version/size
+			// heuristic on some installs). This runs lazily, well after
+			// startup, so vrclient is loaded by now if it's ever going to be.
+			if (VRDetection::IsVrclientLoaded()) {
 				logs::info("RuntimeOverlay: SteamVR detected; submitting from the input thread");
 				return SubmitThread::Input;
 			}
@@ -342,6 +348,10 @@ namespace ImGuiVRHelper::RuntimeOverlay
 			auto target = g_staging[g_stagingNext];
 			g_stagingNext ^= 1;
 			d3dCtx->CopyResource(target.get(), src);
+			// The compositor opens this D3D11_RESOURCE_MISC_SHARED handle
+			// cross-process from vrclient's own thread; without a flush it may
+			// see a not-yet-submitted copy.
+			d3dCtx->Flush();
 			return target;
 		}
 
