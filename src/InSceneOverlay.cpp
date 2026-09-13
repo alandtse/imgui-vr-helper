@@ -1548,11 +1548,12 @@ float4 main(PS_INPUT input) : SV_TARGET
 			// Game unit -> OpenVR metre, scaled by the same room-scale factor skyrimXf's invScale
 			// already carries, so the depth compare matches how billboards are positioned.
 			depthParams.gameToMeter = kSkyrimUnitToMeter * skyrimXf.invScale;
-			// sceneDepth's actual resource size vs the submit target's — an upscaling pipeline can
-			// leave depth at a lower internal render resolution (see the SceneDepthInfo comment).
+			// Dynamic resolution shrinks the rendered region without resizing the depth texture.
+			// Combine its current scale with the depth/submit resource-size ratio.
 			if (depthInfo.depthW > 0.0f && depthInfo.depthH > 0.0f && submitW > 0.0f && submitH > 0.0f) {
-				depthParams.depthScale[0] = depthInfo.depthW / submitW;
-				depthParams.depthScale[1] = depthInfo.depthH / submitH;
+				const auto& state = RE::BSGraphics::State::GetSingleton()->GetRuntimeData();
+				depthParams.depthScale[0] = depthInfo.depthW * state.dynamicResolutionWidthRatio / submitW;
+				depthParams.depthScale[1] = depthInfo.depthH * state.dynamicResolutionHeightRatio / submitH;
 				depthParams.depthTestEnable = 1.0f;
 			}
 		}
