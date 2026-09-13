@@ -38,7 +38,11 @@ namespace ImGuiVRHelperPluginAPI
 		BY = 1,            ///< RE Keys::kBY              (1)  — Y (left) / B (right) face button
 		Menu = 2,          ///< system menu / app menu   (varies by controller)
 		System = 3,        ///< system / home button     (varies)
-		TriggerClick = 4,  ///< RE Keys::kTrigger         (33) — analog trigger pulled past click threshold
+		TriggerClick = 4,  ///< RE Keys::kTrigger         (33) — analog trigger pulled past click threshold.
+						   ///< Also set by the helper's own poke (direct-touch) detection while the wand
+						   ///< is on-panel (kFrameFlag_PointerInPanel) -- indistinguishable from a real
+						   ///< trigger pull by design, so this bit is genuine hardware state OR its
+						   ///< on-panel equivalent, never a synthesized press while off-panel.
 		GripClick = 5,     ///< RE Keys::kGrip            (2)  — grip pressed; kGripAlt (34) folded in
 		StickClick = 6,    ///< RE Keys::kJoystickTrigger (32) — thumbstick pressed in
 		PadClick = 7,      ///< RE Keys::kTouchpadClick   (35) — touchpad clicked; kTouchpadAlt (36) folded in
