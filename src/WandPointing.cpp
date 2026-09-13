@@ -23,8 +23,21 @@ namespace ImGuiVRHelper::WandPointing
 	using DirectX::SimpleMath::Matrix;
 	using DirectX::SimpleMath::Vector3;
 
+	ImGuiVRHelperPluginAPI::InputDeviceType GetPointingDevice()
+	{
+		namespace API = ImGuiVRHelperPluginAPI;
+		const auto& s = Overlay::State::GetSingleton().settings;
+		if (s.attachMode == Overlay::AttachMode::ControllerOnly ||
+			s.attachMode == Overlay::AttachMode::Both) {
+			return (s.attachController == API::InputDeviceType::Primary) ?
+			           API::InputDeviceType::Secondary :
+			           API::InputDeviceType::Primary;
+		}
+		return API::InputDeviceType::Primary;
+	}
+
 	bool ComputeIntersectionForOverlayType(Overlay::OverlayType type,
-		vr::TrackedDeviceIndex_t controllerIndex, ImVec2& outUV)
+		vr::TrackedDeviceIndex_t controllerIndex, ImVec2& outUV, float& outDepthMeters)
 	{
 		auto& state = Overlay::State::GetSingleton();
 		const auto& s = state.settings;
@@ -39,6 +52,19 @@ namespace ImGuiVRHelper::WandPointing
 
 		state.wandState.rayOrigin = rayOrigin;
 		state.wandState.rayDirection = rayDir;
+
+		// Poke's touch point: prefer the render model's own "tip" component
+		// (vendor-calibrated per controller model -- see CachedControllerTipLocal),
+		// falling back to a fixed forward offset from the tracked origin when
+		// unavailable (OpenComposite, the headless null-driver harness, or a
+		// model with no "tip" component).
+		Vector3 tipOrigin;
+		vr::HmdMatrix34_t tipLocal;
+		if (Util::CachedControllerTipLocal(controllerIndex, tipLocal)) {
+			tipOrigin = (Util::HmdMatrix34ToMatrix(tipLocal) * controllerWorld).Translation();
+		} else {
+			tipOrigin = rayOrigin + rayDir * Overlay::Config::kPokeTipOffsetMeters;
+		}
 
 		Matrix overlayWorld;
 		if (type == Overlay::OverlayType::HMD) {
@@ -81,6 +107,28 @@ namespace ImGuiVRHelper::WandPointing
 		Vector3 localOrigin = Vector3::Transform(rayOrigin, worldToOverlay);
 		Vector3 localDir = Vector3::TransformNormal(rayDir, worldToOverlay);
 
+		Vector3 localTip = Vector3::Transform(tipOrigin, worldToOverlay);
+
+		// localTip.z is in CreateScaleMatrix-normalized units (the invert
+		// above divides out menuScale); undo that for a physical distance.
+		outDepthMeters = localTip.z * s.menuScale;
+
+		// Poke: in front of the shell's near boundary, skip the ray and
+		// project the tip point straight onto the plane. No lower bound --
+		// once past the plane, ANY depth stays in poke mode (there is no
+		// physically sensible laser hit "from behind"), so pushing all the
+		// way through can't flicker back to the ray-t math below and force a
+		// spurious release (confirmed live: it did, right at a symmetric
+		// shell's far boundary, before this was one-sided).
+		if (outDepthMeters < Overlay::Config::kPokeShellMeters) {
+			if (localTip.x < -0.5f || localTip.x > 0.5f ||
+				localTip.y < -0.5f || localTip.y > 0.5f)
+				return false;
+			outUV.x = localTip.x + 0.5f;
+			outUV.y = 0.5f - localTip.y;
+			return true;
+		}
+
 		if (std::abs(localDir.z) < 1e-6f)
 			return false;
 
@@ -105,15 +153,16 @@ namespace ImGuiVRHelper::WandPointing
 
 		bool intersected = false;
 		Overlay::OverlayType matchedType = Overlay::OverlayType::HMD;
+		float depthMeters = 0.0f;
 		if (attach == Overlay::AttachMode::HMDOnly || attach == Overlay::AttachMode::Both) {
-			if (ComputeIntersectionForOverlayType(Overlay::OverlayType::HMD, controllerIndex, outUV)) {
+			if (ComputeIntersectionForOverlayType(Overlay::OverlayType::HMD, controllerIndex, outUV, depthMeters)) {
 				intersected = true;
 				matchedType = Overlay::OverlayType::HMD;
 			}
 		}
 		if (!intersected &&
 			(attach == Overlay::AttachMode::ControllerOnly || attach == Overlay::AttachMode::Both)) {
-			if (ComputeIntersectionForOverlayType(Overlay::OverlayType::Controller, controllerIndex, outUV)) {
+			if (ComputeIntersectionForOverlayType(Overlay::OverlayType::Controller, controllerIndex, outUV, depthMeters)) {
 				intersected = true;
 				matchedType = Overlay::OverlayType::Controller;
 			}
@@ -123,6 +172,7 @@ namespace ImGuiVRHelper::WandPointing
 			state.wandState.isIntersecting = true;
 			state.wandState.uvCoordinatesX.store(outUV.x, std::memory_order_relaxed);
 			state.wandState.uvCoordinatesY.store(outUV.y, std::memory_order_relaxed);
+			state.wandState.depthMeters.store(depthMeters, std::memory_order_relaxed);
 			state.wandState.controllerIndex = controllerIndex;
 			state.wandState.matchedOverlayType = matchedType;
 		} else {
@@ -142,16 +192,7 @@ namespace ImGuiVRHelper::WandPointing
 		// intersection state, which is required for off-panel drag-to-reposition logic.
 		bool realIntersected = false;
 		if (s.enableWandPointing) {
-			namespace API = ImGuiVRHelperPluginAPI;
-			API::InputDeviceType pointingDevice;
-			if (s.attachMode == Overlay::AttachMode::ControllerOnly ||
-				s.attachMode == Overlay::AttachMode::Both) {
-				pointingDevice = (s.attachController == API::InputDeviceType::Primary) ?
-				                     API::InputDeviceType::Secondary :
-				                     API::InputDeviceType::Primary;
-			} else {
-				pointingDevice = API::InputDeviceType::Primary;
-			}
+			const auto pointingDevice = GetPointingDevice();
 
 			const auto controllerIndex = Util::GetControllerIndexForDevice(
 				pointingDevice, state.lastKnownLeftHandedMode);

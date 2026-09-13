@@ -45,6 +45,33 @@ namespace ImGuiVRHelper::Overlay
 		inline constexpr float kMinMenuScale = 0.1f;
 		inline constexpr float kMaxMenuScale = 5.0f;
 
+		// Poke (direct-touch) interaction. In front of kPokeShellMeters of the
+		// panel plane (one-sided -- ANY depth past the plane stays in poke mode,
+		// no far boundary, so pushing all the way through can't flicker back to
+		// the laser's ray-t<0 dead zone), WandPointing projects a tip point
+		// straight onto the plane instead of casting a ray. 12cm is wider than
+		// the click engage/release band below purely so the shell's near
+		// boundary itself doesn't sit inside a single frame's hand-speed travel
+		// (a hand crossing at ~2 m/s covers ~2cm/frame at 90Hz) -- a thin shell
+		// can miss the transition on entry.
+		inline constexpr float kPokeShellMeters = 0.12f;
+		// Forward offset (meters, along the controller's own forward axis) from
+		// the OpenVR tracked origin to the point poke tests against. The tracked
+		// reference point sits well back from where a controller visually looks
+		// touched (grip/sensor ring, not the tip) -- confirmed live: without
+		// this, poke only engaged once the WHOLE controller had passed through
+		// the panel, not when its tip first touched. Approximate; varies by
+		// controller model (Vive wands are longer than Index/Touch), so this is
+		// a single compromise default, not a measured constant.
+		inline constexpr float kPokeTipOffsetMeters = 0.08f;
+		// Click hysteresis: engage when the controller crosses 5mm PAST the
+		// plane, release only once it backs out to 20mm in FRONT of it. The
+		// wide, asymmetric band (engage near the plane, release well clear of
+		// it) is what keeps a hand hovering at contact depth from chattering --
+		// a tight symmetric band re-triggers on tremor alone.
+		inline constexpr float kPokeEngageDepthMeters = -0.005f;
+		inline constexpr float kPokeReleaseDepthMeters = 0.020f;
+
 		// Fraction of each eye's view the HUD quad covers (see hudCoverage). Min/max
 		// are shared by the settings slider and the render-time clamp so the two
 		// can't disagree.
@@ -265,6 +292,12 @@ namespace ImGuiVRHelper::Overlay
 		std::atomic<bool> isIntersecting = false;
 		std::atomic<float> uvCoordinatesX = 0.0f;
 		std::atomic<float> uvCoordinatesY = 0.0f;
+		// Signed perpendicular distance from the pointing controller to the
+		// matched panel's plane, in meters (negative = past the plane). Only
+		// meaningful when isIntersecting; consumed by HelperImpl::UpdatePokeContact's
+		// poke-click hysteresis (see Config::kPokeEngage/ReleaseDepth), called
+		// from DispatchFrame on the render thread.
+		std::atomic<float> depthMeters = 0.0f;
 		vr::TrackedDeviceIndex_t controllerIndex = vr::k_unTrackedDeviceIndexInvalid;
 		Vector3 rayOrigin = Vector3::Zero;
 		Vector3 rayDirection = Vector3::Zero;
