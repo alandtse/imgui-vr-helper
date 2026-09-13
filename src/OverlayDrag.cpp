@@ -32,18 +32,24 @@ namespace ImGuiVRHelper::OverlayDrag
 
 	namespace
 	{
-		bool GetGripPressed(bool isLeft, bool isRight)
+		// Live-polled, not the cached isPressed bit fed by Hooks.cpp's PollInputDevices
+		// hook: a discrete grip button-release INPUT_EVENT can go missing (a known
+		// quirk with capacitive/force-sensor grips, e.g. Index, under custom SteamVR
+		// bindings), which would otherwise latch isPressed true forever -- stranding
+		// the drag in "move mode" (and, via InputLeases routing any button pressed
+		// while the drag is active to a lifetime-stripped route, taking trigger
+		// clicks down with it). Polling live self-heals within one frame of the
+		// physical release regardless of whether the game ever sent that event.
+		bool GetGripPressed(vr::TrackedDeviceIndex_t deviceIndex)
 		{
-			auto& state = Overlay::State::GetSingleton();
-			const bool leftHanded = state.lastKnownLeftHandedMode;
-
-			if (isLeft) {
-				return leftHanded ? state.primaryControllerState[RE::BSOpenVRControllerDevice::Keys::kGrip].isPressed : state.secondaryControllerState[RE::BSOpenVRControllerDevice::Keys::kGrip].isPressed;
-			}
-			if (isRight) {
-				return leftHanded ? state.secondaryControllerState[RE::BSOpenVRControllerDevice::Keys::kGrip].isPressed : state.primaryControllerState[RE::BSOpenVRControllerDevice::Keys::kGrip].isPressed;
-			}
-			return false;
+			RE::BSOpenVR* openvr = RE::BSOpenVR::GetSingleton();
+			auto* system = openvr ? openvr->vrSystem : nullptr;
+			if (!system || deviceIndex == vr::k_unTrackedDeviceIndexInvalid)
+				return false;
+			vr::VRControllerState_t controllerState{};
+			if (!system->GetControllerState(deviceIndex, &controllerState, sizeof(controllerState)))
+				return false;
+			return (controllerState.ulButtonPressed & vr::ButtonMaskFromId(vr::k_EButton_Grip)) != 0;
 		}
 
 		bool CanStartAny(vr::ETrackedControllerRole role)
@@ -254,7 +260,7 @@ namespace ImGuiVRHelper::OverlayDrag
 			// frame regardless of what the client wants.
 			const bool shouldContinue = drag.clientRequested ?
 			                                a_clientRequestedThisFrame :
-			                                GetGripPressed(drag.isPrimary, drag.isSecondary);
+			                                GetGripPressed(drag.controllerIndex);
 			if (!shouldContinue) {
 				ResetDragState();
 			}
@@ -384,7 +390,7 @@ namespace ImGuiVRHelper::OverlayDrag
 
 					if (!mode.canStart(role))
 						continue;
-					if (!GetGripPressed(isLeft, isRight))
+					if (!GetGripPressed(i))
 						continue;
 
 					float rawMatrix[3][4];
