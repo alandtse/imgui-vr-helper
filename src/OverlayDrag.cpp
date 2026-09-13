@@ -32,14 +32,7 @@ namespace ImGuiVRHelper::OverlayDrag
 
 	namespace
 	{
-		// Live-polled, not the cached isPressed bit fed by Hooks.cpp's PollInputDevices
-		// hook: a discrete grip button-release INPUT_EVENT can go missing (a known
-		// quirk with capacitive/force-sensor grips, e.g. Index, under custom SteamVR
-		// bindings), which would otherwise latch isPressed true forever -- stranding
-		// the drag in "move mode" (and, via InputLeases routing any button pressed
-		// while the drag is active to a lifetime-stripped route, taking trigger
-		// clicks down with it). Polling live self-heals within one frame of the
-		// physical release regardless of whether the game ever sent that event.
+		// Live-polled, not the cached isPressed bit: a missed grip-release event (a known Index-controller quirk) would otherwise latch the drag forever.
 		bool GetGripPressed(vr::TrackedDeviceIndex_t deviceIndex)
 		{
 			RE::BSOpenVR* openvr = RE::BSOpenVR::GetSingleton();
