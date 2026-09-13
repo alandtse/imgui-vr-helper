@@ -254,6 +254,9 @@ float4 main(PS_INPUT input) : SV_TARGET
 			{
 				winrt::com_ptr<ID3D11RenderTargetView> rtv;
 				ID3D11Texture2D* texture = nullptr;
+				// Last texture pointer for which RTV creation failed, so we
+				// log once per distinct texture instead of every frame.
+				ID3D11Texture2D* lastFailedTexture = nullptr;
 			};
 			CachedRTV cachedEyeRTVs[2];
 
@@ -806,6 +809,19 @@ float4 main(PS_INPUT input) : SV_TARGET
 			D3D11_TEXTURE2D_DESC texDesc;
 			tex->GetDesc(&texDesc);
 
+			// A texture without this bind flag can never become an RTV; warn
+			// once and bail instead of retrying (and logging) every frame.
+			if (!(texDesc.BindFlags & D3D11_BIND_RENDER_TARGET)) {
+				static std::atomic<bool> warned{ false };
+				if (!warned.exchange(true, std::memory_order_relaxed)) {
+					logs::warn(
+						"InSceneOverlay: eye texture isn't render-target capable (bindFlags={:#x}); "
+						"in-scene eye overlay disabled for this session (common under OpenComposite)",
+						texDesc.BindFlags);
+				}
+				return nullptr;
+			}
+
 			D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
 			rtvDesc.Format = texDesc.Format;
 			if (texDesc.ArraySize > 1) {
@@ -827,11 +843,15 @@ float4 main(PS_INPUT input) : SV_TARGET
 			}
 
 			if (FAILED(Globals::GetD3D().device->CreateRenderTargetView(tex, &rtvDesc, cached.rtv.put()))) {
-				logs::error("InSceneOverlay: failed to create eye RTV (fmt={}, samples={})",
-					static_cast<uint32_t>(texDesc.Format), texDesc.SampleDesc.Count);
+				if (cached.lastFailedTexture != tex) {
+					cached.lastFailedTexture = tex;
+					logs::error("InSceneOverlay: failed to create eye RTV (fmt={}, samples={})",
+						static_cast<uint32_t>(texDesc.Format), texDesc.SampleDesc.Count);
+				}
 				return nullptr;
 			}
 			cached.texture = tex;
+			cached.lastFailedTexture = nullptr;
 			return cached.rtv.get();
 		}
 
