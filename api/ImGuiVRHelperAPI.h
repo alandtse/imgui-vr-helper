@@ -297,4 +297,24 @@ namespace ImGuiVRHelperPluginAPI
 	/// Handshake for revision 005. Returns nullptr if the installed helper predates 005.
 	IImGuiVRHelperInterface005* GetImGuiVRHelperInterface005();
 
+	/// Revision 006. Adds a per-client HUD plane: a kClientFlag_HUDMode client can
+	/// override the helper's global HUD depth/coverage for its own panel. A visor or
+	/// helmet-frame overlay wants a plane much nearer than the ~1 m subtitle depth and
+	/// wider than the view (coverage > 1 over-fills the FOV so the frame's edges never
+	/// show a gap). Obtain via GetImGuiVRHelperInterface006(); nullptr against a helper
+	/// older than 006.
+	struct IImGuiVRHelperInterface006 : IImGuiVRHelperInterface005
+	{
+		/// Override this HUD-mode client's plane. `depth_m` is the head-locked distance in
+		/// meters (clamped to [0.2, 5]); `coverage` is the fraction of each eye's view the
+		/// plane fills (clamped to [0.2, 1.6]; > 1 over-fills). A value <= 0 for either
+		/// restores the helper's global setting for that parameter. The plane stays
+		/// eye-independent (stereo-fused at `depth_m`). No-op for unknown ids or clients
+		/// that didn't set kClientFlag_HUDMode.
+		virtual void SetHudPlane(uint32_t client_id, float depth_m, float coverage) = 0;
+	};
+
+	/// Handshake for revision 006. Returns nullptr if the installed helper predates 006.
+	IImGuiVRHelperInterface006* GetImGuiVRHelperInterface006();
+
 }  // namespace ImGuiVRHelperPluginAPI

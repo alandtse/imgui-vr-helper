@@ -200,6 +200,7 @@ namespace ImGuiVRHelperPluginAPI
 			m_helper003 = GetImGuiVRHelperInterface003();
 			m_helper004 = GetImGuiVRHelperInterface004();
 			m_helper005 = GetImGuiVRHelperInterface005();
+			m_helper006 = GetImGuiVRHelperInterface006();
 			return true;
 		}
 
@@ -272,6 +273,21 @@ namespace ImGuiVRHelperPluginAPI
 			if (!m_helper005 || !IsConnected())
 				return;
 			m_helper005->RequestReposition(m_id);
+		}
+
+		/// True if the helper supports per-client HUD planes (interface 006).
+		[[nodiscard]] bool HasHudPlane() const { return m_helper006 != nullptr; }
+
+		/// Override this kClientFlag_HUDMode client's plane: head-locked distance in meters
+		/// and the fraction of each eye's view it fills (> 1 over-fills, for visor/helmet
+		/// frames). <= 0 for either keeps the helper's global setting. Call once after
+		/// Connect (the helper keeps it for the life of the client). No-op when
+		/// disconnected or against a helper older than 006 (the global plane is used).
+		void SetHudPlane(float depthMeters, float coverage)
+		{
+			if (!m_helper006 || !IsConnected())
+				return;
+			m_helper006->SetHudPlane(m_id, depthMeters, coverage);
 		}
 
 		/// True when the helper routed in-scene focus to this client this frame
@@ -1174,6 +1190,7 @@ namespace ImGuiVRHelperPluginAPI
 		IImGuiVRHelperInterface002* m_helper002 = nullptr;  // null if helper predates 002 (no VR keyboard)
 		IImGuiVRHelperInterface003* m_helper003 = nullptr;  // null if helper predates 003 (no off-panel combos)
 		IImGuiVRHelperInterface004* m_helper004 = nullptr;  // null if helper predates 004 (no world quads)
+		IImGuiVRHelperInterface006* m_helper006 = nullptr;  // null if helper predates 006 (global HUD plane only)
 		IImGuiVRHelperInterface005* m_helper005 = nullptr;  // null if helper predates 005 (no client-driven reposition)
 		uint32_t m_flags = 0;                               // registration flags (kClientFlag_OwnCursor gates the software cursor)
 		uint32_t m_id = 0;

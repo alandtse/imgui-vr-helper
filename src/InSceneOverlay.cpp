@@ -1145,12 +1145,14 @@ float4 main(PS_INPUT input) : SV_TARGET
 		float projL[4], projR[4];
 		Util::CachedProjectionRaw(vr::Eye_Left, projL[0], projL[1], projL[2], projL[3]);
 		Util::CachedProjectionRaw(vr::Eye_Right, projR[0], projR[1], projR[2], projR[3]);
-		const HUDQuad hudQuad = ComputeHUDQuad(projL, projR, hudDepth, coverage);
-
-		const Matrix hudModel =
-			Matrix::CreateScale(hudQuad.width, hudQuad.height, 1.0f) *
-			Matrix::CreateTranslation(0.0f, hudQuad.centerY, -hudDepth);
-		const Matrix hudWvp = (hudModel * matrices.vpHeadSpace).Transpose();
+		const auto planeWvp = [&](float depth, float cover) {
+			const HUDQuad quad = ComputeHUDQuad(projL, projR, depth, cover);
+			const Matrix model =
+				Matrix::CreateScale(quad.width, quad.height, 1.0f) *
+				Matrix::CreateTranslation(0.0f, quad.centerY, -depth);
+			return (model * matrices.vpHeadSpace).Transpose();
+		};
+		const Matrix hudWvp = planeWvp(hudDepth, coverage);
 
 		// Iteration = registration order, so later HUD layers draw on top.
 		for (const auto& hud : hudClients) {
@@ -1161,6 +1163,9 @@ float4 main(PS_INPUT input) : SV_TARGET
 				continue;
 			ConstantBufferData cb;
 			cb.wvp = hudWvp;
+			if (hud.depth > 0.0f || hud.coverage > 0.0f) {
+				cb.wvp = planeWvp(hud.depth > 0.0f ? hud.depth : hudDepth, hud.coverage > 0.0f ? hud.coverage : coverage);
+			}
 			DrawQuad(ctx, cb, hudSRV);
 		}
 	}
