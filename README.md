@@ -86,7 +86,7 @@ g_vr.RenderFrame();      // VR: flat panel only; flat screen / no helper: your n
   });
   ```
 
-  HUD-mode clients bypass focus gating and are composited at a fixed, HMD-relative depth (~1.5m forward).
+  HUD-mode clients bypass focus gating and are composited at a fixed, HMD-relative depth (~1.5m forward). A client that needs a nearer or wider plane (a visor or helmet frame) can call `SetHudPlane(depthMeters, coverage)` once after `Connect`; coverage above 1 over-fills each eye's view. It is a no-op against a pre-006 helper (`HasHudPlane()` returns false), which keeps the global plane.
 
 - **World-anchored overlays (World-Quad Mode):** For 2D content that should stay pinned in the scene (subtitles, damage numbers, nameplates) rather than ride the head-locked HUD plane, connect with `kClientFlag_WorldQuad`. Draw your text into the client panel as usual, then each frame submit billboards that sample sub-rects of that panel at world positions:
 

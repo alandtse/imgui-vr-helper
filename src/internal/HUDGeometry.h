@@ -7,6 +7,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 
 namespace ImGuiVRHelper::InSceneOverlay
 {
@@ -17,6 +18,30 @@ namespace ImGuiVRHelper::InSceneOverlay
 		float height = 0.0f;
 		float centerY = 0.0f;
 	};
+
+	/// Per-client HUD plane override, in meters and as a fraction of the view.
+	/// A zero field means "use the helper's global setting".
+	struct HUDPlaneOverride
+	{
+		float depth = 0.0f;
+		float coverage = 0.0f;
+	};
+
+	inline constexpr float kMinHUDPlaneDepth = 0.2f;
+	inline constexpr float kMaxHUDPlaneDepth = 5.0f;
+	inline constexpr float kMinHUDPlaneCoverage = 0.2f;
+	inline constexpr float kMaxHUDPlaneCoverage = 1.6f;
+
+	/// Clamps a client-supplied plane override; non-finite or non-positive values
+	/// reset that field to "use the global setting".
+	inline HUDPlaneOverride SanitizeHUDPlaneOverride(float depth, float coverage)
+	{
+		const auto sanitize = [](float v, float lo, float hi) {
+			return (std::isfinite(v) && v > 0.0f) ? std::clamp(v, lo, hi) : 0.0f;
+		};
+		return { sanitize(depth, kMinHUDPlaneDepth, kMaxHUDPlaneDepth),
+			sanitize(coverage, kMinHUDPlaneCoverage, kMaxHUDPlaneCoverage) };
+	}
 
 	/// Build an EYE-INDEPENDENT HUD panel so it stereo-converges: a single
 	/// head-centred (X=0) quad at `hudDepth`, sized to the larger of the two

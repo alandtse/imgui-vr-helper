@@ -21,6 +21,7 @@
 #include "ToastHUD.h"
 #include "VRKeyboard.h"
 #include "WandPointing.h"
+#include "internal/HUDGeometry.h"
 #include "internal/Profiler.h"
 #include "internal/VRUtils.h"
 
@@ -597,9 +598,20 @@ namespace ImGuiVRHelper
 				continue;  // never painted, or idle → skip the composite
 			if (!EnsureClientTextureLocked(rec))
 				continue;
-			out.push_back({ id, rec.texture });
+			out.push_back({ id, rec.texture, rec.hudDepth, rec.hudCoverage });
 		}
 		return out;
+	}
+
+	void HelperImpl::SetHudPlane(uint32_t client_id, float depth_m, float coverage)
+	{
+		std::scoped_lock lk{ m_mutex };
+		auto it = m_clients.find(client_id);
+		if (it == m_clients.end() || (it->second.flags & ImGuiVRHelperPluginAPI::kClientFlag_HUDMode) == 0)
+			return;
+		const auto plane = InSceneOverlay::SanitizeHUDPlaneOverride(depth_m, coverage);
+		it->second.hudDepth = plane.depth;
+		it->second.hudCoverage = plane.coverage;
 	}
 
 	void HelperImpl::SubmitWorldQuads(uint32_t client_id,

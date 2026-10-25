@@ -4,6 +4,8 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <limits>
+
 #include "internal/HUDGeometry.h"
 
 using Catch::Approx;
@@ -62,4 +64,35 @@ TEST_CASE("vertically-offset frustum yields a non-zero centerY", "[hud]")
 	// centerY = 0.5 * (top − bottom) * depth = 0.5 * (1.5 − 0.5) = 0.5
 	REQUIRE(q.height == Approx(2.0f));
 	REQUIRE(q.centerY == Approx(0.5f));
+}
+
+TEST_CASE("plane override clamps to the supported range", "[hud]")
+{
+	using ImGuiVRHelper::InSceneOverlay::SanitizeHUDPlaneOverride;
+
+	const auto high = SanitizeHUDPlaneOverride(99.0f, 9.0f);
+	REQUIRE(high.depth == Approx(5.0f));
+	REQUIRE(high.coverage == Approx(1.6f));
+
+	const auto low = SanitizeHUDPlaneOverride(0.01f, 0.01f);
+	REQUIRE(low.depth == Approx(0.2f));
+	REQUIRE(low.coverage == Approx(0.2f));
+
+	const auto mid = SanitizeHUDPlaneOverride(0.6f, 1.15f);
+	REQUIRE(mid.depth == Approx(0.6f));
+	REQUIRE(mid.coverage == Approx(1.15f));
+}
+
+TEST_CASE("plane override treats non-positive and non-finite as unset", "[hud]")
+{
+	using ImGuiVRHelper::InSceneOverlay::SanitizeHUDPlaneOverride;
+
+	const auto unset = SanitizeHUDPlaneOverride(0.0f, -1.0f);
+	REQUIRE(unset.depth == 0.0f);
+	REQUIRE(unset.coverage == 0.0f);
+
+	const float nan = std::numeric_limits<float>::quiet_NaN();
+	const auto bad = SanitizeHUDPlaneOverride(nan, std::numeric_limits<float>::infinity());
+	REQUIRE(bad.depth == 0.0f);
+	REQUIRE(bad.coverage == 0.0f);
 }

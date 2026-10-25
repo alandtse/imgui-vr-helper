@@ -14,7 +14,7 @@
 
 namespace ImGuiVRHelper
 {
-	class HelperImpl final : public ImGuiVRHelperPluginAPI::IImGuiVRHelperInterface005
+	class HelperImpl final : public ImGuiVRHelperPluginAPI::IImGuiVRHelperInterface006
 	{
 	public:
 		static HelperImpl& GetSingleton();
@@ -69,6 +69,9 @@ namespace ImGuiVRHelper
 		// IImGuiVRHelperInterface005 (client-driven reposition drag).
 		void RequestReposition(uint32_t client_id) override;
 
+		// IImGuiVRHelperInterface006 (per-client HUD plane).
+		void SetHudPlane(uint32_t client_id, float depth_m, float coverage) override;
+
 		// Helper-internal entry points (not part of the public API).
 
 		/// Build the per-frame Frame snapshot via Input::BuildFrame and
@@ -106,6 +109,9 @@ namespace ImGuiVRHelper
 			// pointer here would race UnregisterClient the same way it did
 			// before that fix was applied to the world-quad path only.
 			winrt::com_ptr<ID3D11Texture2D> texture;
+			// Per-client plane override (SetHudPlane); <= 0 = use the global setting.
+			float depth = 0.0f;
+			float coverage = 0.0f;
 		};
 		std::vector<HUDClientSnapshot> SnapshotHUDClients();
 
@@ -425,6 +431,9 @@ namespace ImGuiVRHelper
 		// hudForceDisabled lets the debug UI hide a layer to isolate it.
 		uint64_t lastPanelFrame = 0;
 		bool hudForceDisabled = false;
+		// Per-client HUD plane override (interface 006); <= 0 = global setting.
+		float hudDepth = 0.0f;
+		float hudCoverage = 0.0f;
 
 		// Helper-owned panel render target. Allocated lazily on the first
 		// GetPanel call after InitD3D has fired. Format is fixed at
