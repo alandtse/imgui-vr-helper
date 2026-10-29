@@ -30,20 +30,17 @@ namespace ImGuiVRHelper::OverlayTinter
 	/// texture, UAV, SRV, and constant buffer are all created.
 	bool EnsureResources();
 
+	/// Render-thread only. Call before client callbacks each frame, even if
+	/// Dispatch will be skipped, so old panel pixels cannot become current.
+	void InvalidateOutput();
+
 	/// Copy `srcPanel` into the helper's post-process texture, blending
 	/// `tint` (RGBA — alpha is the lerp factor toward tint.rgb). Pass
 	/// {0,0,0,0} for "no tint" (the source is copied through unchanged).
-	/// Idempotent within a frame; re-dispatches if called multiple times.
+	/// Re-dispatches if called multiple times. Any failure invalidates output.
 	void Dispatch(ID3D11Texture2D* srcPanel, const float tint[4]);
 
-	/// SRV for the post-process texture, suitable as input to
-	/// InSceneOverlay's composite. Returns nullptr if EnsureResources
-	/// hasn't succeeded yet.
-	ID3D11ShaderResourceView* GetOutputSRV();
-
-	/// Underlying texture for the post-process output. OverlayManager
-	/// uses this when handing the tinted result to SteamVR via
-	/// IVROverlay::SetOverlayTexture (which wants a raw texture, not an
-	/// SRV). Returns nullptr if EnsureResources hasn't succeeded yet.
-	ID3D11Texture2D* GetOutputTexture();
+	/// SRV for the latest successful dispatch in this frame, only if it was
+	/// produced from expectedSource. Otherwise nullptr: use the original panel.
+	ID3D11ShaderResourceView* GetOutputSRV(ID3D11Texture2D* expectedSource);
 }

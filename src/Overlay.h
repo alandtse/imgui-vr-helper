@@ -275,12 +275,8 @@ namespace ImGuiVRHelper::Overlay
 		/// top-center. Clamped to [0, 1]. Default 0.18 (near the top).
 		float toastTopFraction = 0.18f;
 
-		/// Composite the focused menu through the runtime's IVROverlay layer
-		/// (SteamVR overlay / OpenComposite OpenXR quad) instead of drawing it
-		/// into the eye buffers, keeping it sharp under temporal upscalers and
-		/// frame generation. Falls back to the in-scene path when the runtime
-		/// has no usable overlay support, or when a submit call fails.
-		bool useRuntimeOverlay = true;
+		/// Retained for config compatibility; native menu hosting is disabled for safety.
+		bool useRuntimeOverlay = false;
 	};
 
 	// ---- Runtime state --------------------------------------------------

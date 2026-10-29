@@ -1896,6 +1896,7 @@ namespace ImGuiVRHelper
 	void HelperImpl::DispatchFrame(float dt)
 	{
 		ZoneScopedN("Helper::DispatchFrame");
+		OverlayTinter::InvalidateOutput();
 		++m_frameCounter;  // HUD-idle skipping compares GetPanel access against this
 		UpdateWandPointer();
 

@@ -15,10 +15,12 @@
 
 #include "Globals.h"
 #include "HelperImpl.h"
+#include "Input.h"
 #include "Overlay.h"
 #include "OverlayTinter.h"
 #include "RuntimeOverlay.h"
 #include "VrikCompat.h"
+#include "internal/D3D11StateGuard.h"
 #include "internal/Detour.h"
 #include "internal/HUDGeometry.h"
 #include "internal/Profiler.h"
@@ -968,53 +970,6 @@ float4 main(PS_INPUT input) : SV_TARGET
 			return result;
 		}
 
-		// ---- D3D11 state save/restore -----------------------------------
-
-		struct StateBackup
-		{
-			ID3D11RenderTargetView* rtvs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
-			ID3D11DepthStencilView* dsv = nullptr;
-			D3D11_VIEWPORT viewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
-			UINT numViewports = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
-			ID3D11RasterizerState* raster = nullptr;
-			ID3D11BlendState* blend = nullptr;
-			FLOAT blendFactor[4]{};
-			UINT sampleMask = 0;
-			ID3D11DepthStencilState* depth = nullptr;
-			UINT stencilRef = 0;
-
-			void Save(ID3D11DeviceContext* ctx)
-			{
-				ctx->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtvs, &dsv);
-				ctx->RSGetViewports(&numViewports, viewports);
-				ctx->RSGetState(&raster);
-				ctx->OMGetBlendState(&blend, blendFactor, &sampleMask);
-				ctx->OMGetDepthStencilState(&depth, &stencilRef);
-			}
-
-			void Restore(ID3D11DeviceContext* ctx)
-			{
-				ctx->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtvs, dsv);
-				ctx->RSSetViewports(numViewports, viewports);
-				ctx->OMSetBlendState(blend, blendFactor, sampleMask);
-				ctx->OMSetDepthStencilState(depth, stencilRef);
-				if (raster) {
-					ctx->RSSetState(raster);
-					raster->Release();
-				}
-				if (blend)
-					blend->Release();
-				if (depth)
-					depth->Release();
-				for (auto* r : rtvs) {
-					if (r)
-						r->Release();
-				}
-				if (dsv)
-					dsv->Release();
-			}
-		};
-
 		// ---- Quad draw --------------------------------------------------
 
 		void DrawQuad(ID3D11DeviceContext* ctx, const ConstantBufferData& cbData,
@@ -1373,10 +1328,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// it says nothing about whether the underlying wand UV corresponds to where content
 		// actually is, which is the open question here.
 		{
-			using Keys = RE::BSOpenVRControllerDevice::Keys;
 			static bool prevTriggerHeld = false;
-			const bool triggerHeld = overlayState.primaryControllerState[Keys::kTrigger].isPressed ||
-			                         overlayState.secondaryControllerState[Keys::kTrigger].isPressed;
+			const bool triggerHeld = Input::IsEitherTriggerPressed();
 			if (triggerHeld && !prevTriggerHeld) {
 				Matrix panelModel = Overlay::Config::CreateScaleMatrix(s.menuScale) * anchor;
 				Matrix panelMvp = panelModel * vpMat;
@@ -1543,7 +1496,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// Bind the instanced quad pipeline ONCE for the pass. Slot 0 = the unit-quad VB
 		// (per-vertex); slot 1 = the per-instance buffer (wvp rows + uv transform), bound per
 		// client below since it can be regrown. Each client's billboards then draw in a single
-		// DrawIndexedInstanced. State is restored by the caller's StateBackup.
+		// DrawIndexedInstanced. State is isolated by the caller's scoped guard.
 		struct VT
 		{
 			XMFLOAT3 p;
@@ -1784,7 +1737,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		const bool dragging = overlayState.dragState.dragging.load(std::memory_order_relaxed) && s.enableDragToReposition;
 		ID3D11ShaderResourceView* panelSRV = nullptr;
 		if (wantPanelPass) {
-			panelSRV = dragging ? OverlayTinter::GetOutputSRV() : GetMenuSRV(menuTex.get());
+			panelSRV = dragging ? OverlayTinter::GetOutputSRV(menuTex.get()) : GetMenuSRV(menuTex.get());
 			if (!panelSRV)
 				panelSRV = GetMenuSRV(menuTex.get());
 		}
@@ -1810,9 +1763,11 @@ float4 main(PS_INPUT input) : SV_TARGET
 		if (!wantPanelPass && hudClients.empty() && worldClients.empty())
 			return;
 
-		// Save current render state so we don't clobber Skyrim's submit.
-		StateBackup backup;
-		backup.Save(ctx);
+		Util::D3D11StateGuard stateGuard(ctx);
+		if (!stateGuard.IsValid()) {
+			DisableRenderPath("D3D11 state isolation unavailable");
+			return;
+		}
 
 		// Bind our RTV; no DSV (we don't read/write depth).
 		ctx->OMSetRenderTargets(1, &rtv, nullptr);
@@ -1853,8 +1808,6 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		// Drawn last so the rebind capture composites on top of the focused menu.
 		RenderRebindPass(ctx, matrices, s);
-
-		backup.Restore(ctx);
 	}
 
 	void RenderCursorIntoPanel(ID3D11Texture2D* panel)
@@ -1896,8 +1849,9 @@ float4 main(PS_INPUT input) : SV_TARGET
 		if (!desc.Width || !desc.Height)
 			return;
 
-		StateBackup backup;
-		backup.Save(ctx);
+		Util::D3D11StateGuard stateGuard(ctx);
+		if (!stateGuard.IsValid())
+			return;
 		ID3D11RenderTargetView* rtv = s_rtv.get();
 		ctx->OMSetRenderTargets(1, &rtv, nullptr);
 		D3D11_VIEWPORT vp{};
@@ -1920,6 +1874,5 @@ float4 main(PS_INPUT input) : SV_TARGET
 		ConstantBufferData cb;
 		cb.wvp = model.Transpose();
 		DrawQuad(ctx, cb, cursorSRV, g_res.panelCompositeBlendState.get());
-		backup.Restore(ctx);
 	}
 }

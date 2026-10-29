@@ -160,6 +160,8 @@ set_kind("binary")
 set_default(false)
 set_group("tests")
 add_packages("catch2", "directxtk")
+-- WARP-backed pipeline-state isolation regression tests (no VR/game needed).
+add_syslinks("d3d11", "d3dcompiler", "dxgi")
 -- <openvr.h> comes from CommonLibVR's vendored copy (the same header the plugin
 -- compiles against), not the xrepo openvr package (which nests it as openvr/).
 add_includedirs("src", "api", "lib/commonlibsse-ng/extern/openvr/headers")

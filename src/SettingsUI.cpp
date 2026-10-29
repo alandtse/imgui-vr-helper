@@ -681,11 +681,13 @@ namespace ImGuiVRHelper::SettingsUI
 			ImGui::Spacing();
 			ImGui::Separator();
 			ImGui::TextDisabled("Render path");
-			ImGui::Checkbox("Native VR overlay for menus", &s.useRuntimeOverlay);
+			bool nativeOverlayActive = false;
+			ImGui::BeginDisabled();
+			ImGui::Checkbox("Native VR overlay for menus (temporarily unavailable)", &nativeOverlayActive);
+			ImGui::EndDisabled();
 			ImGui::TextDisabled(
-				"    Composites the focused menu as a runtime overlay layer, immune to\n"
-				"    upscalers and frame generation. Falls back to in-scene rendering\n"
-				"    when the runtime has no overlay support, or a submit call fails.");
+				"    Disabled for safety after reported GPU crashes.\n"
+				"    Menus use in-scene rendering, including with older configurations.");
 
 			ImGui::Spacing();
 			ImGui::Separator();
@@ -716,7 +718,7 @@ namespace ImGuiVRHelper::SettingsUI
 						ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Active & compatible");
 					else
 						ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f), "Detected; interfaces not ready");
-					ImGui::Text("Runtime: %s", VRDetection::RuntimeTypeToString(vrInfo.runtimeType));
+					ImGui::Text("Runtime hint (unverified): %s", VRDetection::RuntimeTypeToString(vrInfo.runtimeType));
 					if (!vrInfo.dllPath.empty())
 						ImGui::Text("DLL: %s", vrInfo.dllPath.c_str());
 					ImGui::Text("Version: %s   Size: %llu bytes",
