@@ -68,6 +68,9 @@ namespace ImGuiVRHelper::Input
 	/// known value, refreshed by FeedVREvent).
 	bool IsLeftHanded();
 
+	/// Thread-safe trigger snapshot for render-side cursor diagnostics.
+	bool IsEitherTriggerPressed();
+
 	/// Reset all latched edge-detection state. Call when transitioning
 	/// from hidden to visible overlay so the first visible frame doesn't
 	/// look like a flood of edge events.

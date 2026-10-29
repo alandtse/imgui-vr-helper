@@ -24,6 +24,18 @@ the mod author.
 - All binds are rebindable in the settings, saved to
   `Data/SKSE/Plugins/ImGuiVRHelper.toml`.
 
+### Native overlay safety
+
+The experimental **Native VR overlay for menus** path is temporarily disabled
+following GPU crashes that stopped when users turned it off. Menus render
+in-scene even if an older config has `useRuntimeOverlay=true`; no config edit
+is required. Native hosting will remain unavailable until runtime ownership
+and texture-consumption synchronization are validated. See the
+[crash investigation](docs/investigations/2026-10-28-runtime-overlay-crashes.md).
+
+Helper graphics passes require D3D11.1 context-state isolation. If unavailable,
+the helper skips the affected pass rather than modifying unprotected game state.
+
 ## Developers
 
 Bring an existing ImGui menu into VR in four steps.

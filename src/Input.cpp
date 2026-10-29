@@ -311,6 +311,15 @@ namespace ImGuiVRHelper::Input
 		return g_lastKnownLeftHanded;
 	}
 
+	bool IsEitherTriggerPressed()
+	{
+		std::scoped_lock lk{ g_controllerStateMutex };
+		using Keys = RE::BSOpenVRControllerDevice::Keys;
+		const auto& state = Overlay::State::GetSingleton();
+		return state.primaryControllerState[Keys::kTrigger].isPressed ||
+		       state.secondaryControllerState[Keys::kTrigger].isPressed;
+	}
+
 	void ResetEdgeState()
 	{
 		g_edges = {};

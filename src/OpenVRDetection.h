@@ -43,13 +43,9 @@ namespace VRDetection
 		bool probingSucceeded = false;
 	};
 
-	/// Ground truth for "is this really SteamVR": real SteamVR loads
-	/// vrclient_x64.dll in-process; OpenComposite-family runtimes never do.
-	/// Live-checked (not cached) -- vrclient_x64.dll loads only once the
-	/// game calls VR_Init, which can be well after Detect() first runs, so
-	/// callers that need an up-to-date answer (e.g. deciding whether
-	/// IVROverlay calls are safe on the render thread) should call this
-	/// directly instead of trusting a possibly-stale LastResult().
+	/// Live module-presence query only. OCU can itself use this filename,
+	/// and both runtimes can be loaded together. This does NOT identify the
+	/// active backend and must never select a submission thread.
 	bool IsVrclientLoaded();
 
 	/// Probe loaded openvr_api.dll for the standard interface versions.
@@ -59,19 +55,17 @@ namespace VRDetection
 	/// loaded openvr_api.dll module.
 	void GatherDLLInfo(OpenVRDetectionResult& result);
 
-	/// Heuristic classification of the openvr_api.dll: SteamVR vs
-	/// OpenComposite, based on path, version, and file size.
+	/// Legacy diagnostic hint based on module names/path/version/size.
+	/// Not evidence of active runtime ownership; never use for thread policy.
 	RuntimeType DetectRuntimeType(const std::string& dllPath, const std::string& version, uint64_t fileSize);
 
 	/// Full detection: gather DLL info, classify runtime, probe interfaces.
 	/// Caches its result for LastResult().
 	OpenVRDetectionResult Detect();
 
-	/// The result of the most recent Detect() call. Can go stale: the
-	/// startup call (main.cpp, kPostPostLoad) can run before the game's
-	/// VR_Init has loaded vrclient_x64.dll, misreporting real SteamVR as
-	/// OpenComposite. Hooks.cpp re-probes after D3D init (by which point
-	/// vrclient is loaded if it's ever going to be) and updates this.
+	/// The result of the most recent Detect() call. Startup metadata can go
+	/// stale; Hooks.cpp re-probes after D3D init. Even then runtimeType is
+	/// only a diagnostic hint, not a verified active-backend classification.
 	const OpenVRDetectionResult& LastResult();
 
 	const char* RuntimeTypeToString(RuntimeType type);

@@ -7,7 +7,9 @@
 
 #include "Globals.h"
 #include "Overlay.h"
+#include "internal/D3D11StateGuard.h"
 
+#include <algorithm>
 #include <d3dcompiler.h>
 
 #pragma comment(lib, "d3dcompiler.lib")
@@ -54,6 +56,7 @@ void main(uint3 tid : SV_DispatchThreadID)
 			UINT dstWidth = 0;
 			UINT dstHeight = 0;
 			bool initialized = false;
+			winrt::com_ptr<ID3D11Texture2D> outputSource;
 		};
 
 		Resources g_res;
@@ -66,6 +69,9 @@ void main(uint3 tid : SV_DispatchThreadID)
 		if (!Globals::IsReady())
 			return false;
 		auto* device = Globals::GetD3D().device;
+
+		g_res.cs = nullptr;
+		g_res.cb = nullptr;
 
 		// Compile the compute shader.
 		winrt::com_ptr<ID3DBlob> csBlob, errorBlob;
@@ -126,10 +132,7 @@ void main(uint3 tid : SV_DispatchThreadID)
 		desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 		desc.SampleDesc.Count = 1;
 		desc.Usage = D3D11_USAGE_DEFAULT;
-		// RENDER_TARGET so RuntimeOverlay can bake the wand cursor into the
-		// output before handing it to IVROverlay::SetOverlayTexture.
-		desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE |
-		                 D3D11_BIND_RENDER_TARGET;
+		desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
 		if (FAILED(device->CreateTexture2D(&desc, nullptr, g_res.dstTex.put()))) {
 			logs::error("OverlayTinter: post-process texture creation failed");
 			return false;
@@ -147,8 +150,14 @@ void main(uint3 tid : SV_DispatchThreadID)
 		return true;
 	}
 
+	void InvalidateOutput()
+	{
+		g_res.outputSource = nullptr;
+	}
+
 	void Dispatch(ID3D11Texture2D* srcPanel, const float tint[4])
 	{
+		InvalidateOutput();
 		if (!srcPanel)
 			return;
 		if (!EnsureResources())
@@ -172,29 +181,24 @@ void main(uint3 tid : SV_DispatchThreadID)
 			return;
 		}
 
-		// Update tint constant buffer.
-		D3D11_MAPPED_SUBRESOURCE mapped;
-		if (SUCCEEDED(ctx->Map(g_res.cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-			CBData data{};
-			data.tint[0] = tint[0];
-			data.tint[1] = tint[1];
-			data.tint[2] = tint[2];
-			data.tint[3] = tint[3];
-			std::memcpy(mapped.pData, &data, sizeof(data));
-			ctx->Unmap(g_res.cb.get(), 0);
+		Util::D3D11StateGuard stateGuard(ctx);
+		if (!stateGuard.IsValid()) {
+			static bool warned = false;
+			if (!warned) {
+				logs::warn("OverlayTinter: D3D11 state isolation unavailable; skipping tint dispatch");
+				warned = true;
+			}
+			return;
 		}
 
-		// Save state we touch (CS-stage SRV/UAV/CB and the active CS).
-		ID3D11ShaderResourceView* oldSRV = nullptr;
-		ID3D11UnorderedAccessView* oldUAV = nullptr;
-		ID3D11Buffer* oldCB = nullptr;
-		ID3D11ComputeShader* oldCS = nullptr;
-		ctx->CSGetShaderResources(0, 1, &oldSRV);
-		ctx->CSGetUnorderedAccessViews(0, 1, &oldUAV);
-		ctx->CSGetConstantBuffers(0, 1, &oldCB);
-		ctx->CSGetShader(&oldCS, nullptr, nullptr);
+		D3D11_MAPPED_SUBRESOURCE mapped{};
+		if (FAILED(ctx->Map(g_res.cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+			return;
+		CBData data{};
+		std::copy_n(tint, 4, data.tint);
+		std::memcpy(mapped.pData, &data, sizeof(data));
+		ctx->Unmap(g_res.cb.get(), 0);
 
-		// Bind + dispatch.
 		ID3D11ShaderResourceView* srvPtr = srcSRV.get();
 		ID3D11UnorderedAccessView* uavPtr = g_res.dstUAV.get();
 		ID3D11Buffer* cbPtr = g_res.cb.get();
@@ -202,39 +206,12 @@ void main(uint3 tid : SV_DispatchThreadID)
 		ctx->CSSetShaderResources(0, 1, &srvPtr);
 		ctx->CSSetUnorderedAccessViews(0, 1, &uavPtr, nullptr);
 		ctx->CSSetConstantBuffers(0, 1, &cbPtr);
-
-		const UINT groupsX = (srcDesc.Width + 7) / 8;
-		const UINT groupsY = (srcDesc.Height + 7) / 8;
-		ctx->Dispatch(groupsX, groupsY, 1);
-
-		// Restore state. Important: clear our SRV/UAV bindings before
-		// returning to avoid hazards if the texture gets bound as RTV later.
-		ID3D11ShaderResourceView* nullSRV = nullptr;
-		ID3D11UnorderedAccessView* nullUAV = nullptr;
-		ctx->CSSetShaderResources(0, 1, &nullSRV);
-		ctx->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
-
-		ctx->CSSetShaderResources(0, 1, &oldSRV);
-		ctx->CSSetUnorderedAccessViews(0, 1, &oldUAV, nullptr);
-		ctx->CSSetConstantBuffers(0, 1, &oldCB);
-		ctx->CSSetShader(oldCS, nullptr, 0);
-		if (oldSRV)
-			oldSRV->Release();
-		if (oldUAV)
-			oldUAV->Release();
-		if (oldCB)
-			oldCB->Release();
-		if (oldCS)
-			oldCS->Release();
+		ctx->Dispatch((srcDesc.Width + 7) / 8, (srcDesc.Height + 7) / 8, 1);
+		g_res.outputSource.copy_from(srcPanel);
 	}
 
-	ID3D11ShaderResourceView* GetOutputSRV()
+	ID3D11ShaderResourceView* GetOutputSRV(ID3D11Texture2D* expectedSource)
 	{
-		return g_res.dstSRV.get();
-	}
-
-	ID3D11Texture2D* GetOutputTexture()
-	{
-		return g_res.initialized ? g_res.dstTex.get() : nullptr;
+		return expectedSource && g_res.outputSource.get() == expectedSource ? g_res.dstSRV.get() : nullptr;
 	}
 }
