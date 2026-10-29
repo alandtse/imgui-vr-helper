@@ -99,6 +99,14 @@ g_vr.RenderFrame();      // VR: flat panel only; flat screen / no helper: your n
 
   HUD-mode clients bypass focus gating and are composited at a fixed, HMD-relative depth (~1.5m forward). A client that needs a nearer or wider plane (a visor or helmet frame) can call `SetHudPlane(depthMeters, coverage)` once after `Connect`; coverage above 1 over-fills each eye's view. It is a no-op against a pre-006 helper (`HasHudPlane()` returns false), which keeps the global plane.
 
+  Per-client depth supports `[0.01, 5]` metres; `<= 0` still resets to the global
+  plane. Depths below 0.2 m are experimental, not a comfort or visibility
+  guarantee: stereo eye separation can move an extremely close plane out of
+  view. A slider whose zero means "closest" must send `max(value, 0.01f)`;
+  sending literal zero means reset. Older interface-006 builds clamp positive
+  depths to 0.2 m, so interface support alone does not prove this range exists.
+  Global HUD, menu, and world-quad depth settings are unchanged.
+
 - **World-anchored overlays (World-Quad Mode):** For 2D content that should stay pinned in the scene (subtitles, damage numbers, nameplates) rather than ride the head-locked HUD plane, connect with `kClientFlag_WorldQuad`. Draw your text into the client panel as usual, then each frame submit billboards that sample sub-rects of that panel at world positions:
 
   ```cpp

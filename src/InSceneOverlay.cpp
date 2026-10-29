@@ -23,6 +23,7 @@
 #include "internal/D3D11StateGuard.h"
 #include "internal/Detour.h"
 #include "internal/HUDGeometry.h"
+#include "internal/HUDProjection.h"
 #include "internal/Profiler.h"
 #include "internal/VRUtils.h"
 
@@ -916,7 +917,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		struct EyeMatrices
 		{
-			Matrix vpHeadSpace;   // for HMD-relative attach mode
+			Matrix vpHeadSpace;  // for HMD-relative attach mode
+			Matrix vpHUDHeadSpace;
 			Matrix vpWorldSpace;  // for controller-attached and fixed-world
 			Vector3 hmdPos;       // HMD position (standing space) from the SAME pose as vpWorldSpace
 			bool valid = false;
@@ -963,6 +965,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 				left * nearZ, right * nearZ, bottom * nearZ, top * nearZ, nearZ, farZ);
 
 			result.vpHeadSpace = eyeToHead.Invert() * proj;
+			result.vpHUDHeadSpace = eyeToHead.Invert() * ComputeHUDProjection(left, right, bottom, top);
 			Matrix eyeToWorld = eyeToHead * hmdWorld;
 			result.vpWorldSpace = eyeToWorld.Invert() * proj;
 			result.hmdPos = hmdWorld.Translation();  // share the vpWorldSpace pose with world-quad facing
@@ -1105,7 +1108,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 			const Matrix model =
 				Matrix::CreateScale(quad.width, quad.height, 1.0f) *
 				Matrix::CreateTranslation(0.0f, quad.centerY, -depth);
-			return (model * matrices.vpHeadSpace).Transpose();
+			return (model * matrices.vpHUDHeadSpace).Transpose();
 		};
 		const Matrix hudWvp = planeWvp(hudDepth, coverage);
 
@@ -1119,7 +1122,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 			ConstantBufferData cb;
 			cb.wvp = hudWvp;
 			if (hud.depth > 0.0f || hud.coverage > 0.0f) {
-				cb.wvp = planeWvp(hud.depth > 0.0f ? hud.depth : hudDepth, hud.coverage > 0.0f ? hud.coverage : coverage);
+				const auto plane = ResolveHUDPlane({ hud.depth, hud.coverage }, { hudDepth, coverage });
+				cb.wvp = planeWvp(plane.depth, plane.coverage);
 			}
 			DrawQuad(ctx, cb, hudSRV);
 		}

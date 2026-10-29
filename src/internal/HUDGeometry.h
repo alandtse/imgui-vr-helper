@@ -27,7 +27,7 @@ namespace ImGuiVRHelper::InSceneOverlay
 		float coverage = 0.0f;
 	};
 
-	inline constexpr float kMinHUDPlaneDepth = 0.2f;
+	inline constexpr float kMinHUDPlaneDepth = 0.01f;
 	inline constexpr float kMaxHUDPlaneDepth = 5.0f;
 	inline constexpr float kMinHUDPlaneCoverage = 0.2f;
 	inline constexpr float kMaxHUDPlaneCoverage = 1.6f;
@@ -41,6 +41,12 @@ namespace ImGuiVRHelper::InSceneOverlay
 		};
 		return { sanitize(depth, kMinHUDPlaneDepth, kMaxHUDPlaneDepth),
 			sanitize(coverage, kMinHUDPlaneCoverage, kMaxHUDPlaneCoverage) };
+	}
+
+	inline HUDPlaneOverride ResolveHUDPlane(HUDPlaneOverride plane, HUDPlaneOverride global)
+	{
+		return { plane.depth > 0.0f ? plane.depth : global.depth,
+			plane.coverage > 0.0f ? plane.coverage : global.coverage };
 	}
 
 	/// Build an EYE-INDEPENDENT HUD panel so it stereo-converges: a single
