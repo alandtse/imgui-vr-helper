@@ -151,6 +151,16 @@ Menu Framework**](https://github.com/alandtse/SKSE-Menu-Framework-3) are working
   helper hands back a `GetApiFunction` vtable, and every later call goes through it.
 - The helper owns the Present hook and OpenVR access on the correct thread; clients
   never touch OpenVR.
+- **Optional world occlusion** (`hudDepthOcclusion`, off by default) skips drawing
+  the scene behind parts of the HUD that are fully opaque. It writes the HUD plane's
+  depth into the game's main depth buffer before the first world batch, so the depth
+  test discards what the HUD covers while anything nearer still draws. Only the
+  layer's own canvas alpha decides (254+), so it can never drift from the composited
+  art; layers from several clients union automatically (nearest opaque layer wins).
+  It stays off whenever the combination isn't provably safe — Community Shaders
+  present (it rewrites depth-stencil state and reads near-plane depth), depth not
+  the main target, or an unrecognised/reversed camera projection — and then renders
+  the world normally. It cannot be verified without a headset, hence opt-in.
 
 ## Build
 

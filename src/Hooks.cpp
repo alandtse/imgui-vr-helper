@@ -24,6 +24,7 @@
 
 #include "Globals.h"
 #include "HelperImpl.h"
+#include "InSceneOcclusion.h"
 #include "InSceneOverlay.h"
 #include "Input.h"
 #include "OpenVRDetection.h"
@@ -209,6 +210,7 @@ namespace ImGuiVRHelper::Hooks
 			InSceneOverlay::Install();
 			SettingsUI::Init();
 			HelperImpl::GetSingleton().EnsureSelfClient();
+			HUDOcclusion::Install();
 		}
 
 		void DecideRenderPath()

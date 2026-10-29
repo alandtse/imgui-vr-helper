@@ -255,6 +255,15 @@ namespace ImGuiVRHelper::Overlay
 		/// [kMinHUDCoverage, kMaxHUDCoverage].
 		float hudCoverage = Config::kDefaultHUDCoverage;
 
+		/// Skip world rendering behind parts of the HUD that are fully opaque.
+		/// Pixels the HUD completely covers are hidden anyway, so drawing the
+		/// scene there is wasted work. Applies only where a layer's own canvas
+		/// is solid (alpha 254+) and the renderer combination is one the helper
+		/// can write depth into safely; otherwise the world draws normally.
+		/// Off by default: it writes depth into the game's main buffer, and only
+		/// a headset can confirm the result looks right.
+		bool hudDepthOcclusion = false;
+
 		/// Base resolution of every overlay panel texture, before HUD
 		/// supersampling. Higher = sharper but more VRAM; pick to suit the
 		/// headset/monitor. Common presets are offered in the settings UI

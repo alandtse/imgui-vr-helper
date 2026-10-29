@@ -81,6 +81,7 @@ namespace ImGuiVRHelper::Overlay
 			s.showHUDDemo = tomlGet<bool>(t, "showHUDDemo", s.showHUDDemo);
 			s.hudDepth = tomlGet<float>(t, "hudDepth", s.hudDepth);
 			s.hudCoverage = tomlGet<float>(t, "hudCoverage", s.hudCoverage);
+			s.hudDepthOcclusion = tomlGet<bool>(t, "hudDepthOcclusion", s.hudDepthOcclusion);
 			s.baseWidth = static_cast<int>(tomlGet<int64_t>(t, "baseWidth", s.baseWidth));
 			s.baseHeight = static_cast<int>(tomlGet<int64_t>(t, "baseHeight", s.baseHeight));
 			s.hudSupersample = static_cast<int>(tomlGet<int64_t>(t, "hudSupersample", s.hudSupersample));
@@ -188,6 +189,9 @@ namespace ImGuiVRHelper::Overlay
 			    << "# closer than that.\n"
 			    << "hudDepth = " << s.hudDepth << "  # meters\n"
 			    << "hudCoverage = " << s.hudCoverage << "  # 0.2-1.0 fraction of the view\n"
+			    << "# Skip drawing the world where the HUD is fully opaque (alpha 254+).\n"
+			    << "# Inactive when another renderer mod owns the depth buffer.\n"
+			    << "hudDepthOcclusion = " << (s.hudDepthOcclusion ? "true" : "false") << "\n"
 			    << "# Overlay panel texture resolution + supersampling (applied at panel\n"
 			    << "# allocation, so restart to take effect). baseWidth/Height is the logical\n"
 			    << "# panel size; hudSupersample multiplies it for view-filling panels (HUD\n"

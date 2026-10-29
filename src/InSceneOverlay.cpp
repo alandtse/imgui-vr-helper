@@ -1042,6 +1042,22 @@ float4 main(PS_INPUT input) : SV_TARGET
 			reinterpret_cast<void*>(SubmitDetour::original));
 	}
 
+	bool HUDPlaneWVP(vr::EVREye eye, float depth, float coverage, Matrix& outWvp)
+	{
+		const EyeMatrices matrices = ComputeEyeMatrices(eye);
+		if (!matrices.valid)
+			return false;
+		float projL[4], projR[4];
+		if (!Util::CachedProjectionRaw(vr::Eye_Left, projL[0], projL[1], projL[2], projL[3]) ||
+			!Util::CachedProjectionRaw(vr::Eye_Right, projR[0], projR[1], projR[2], projR[3]))
+			return false;
+		const HUDQuad quad = ComputeHUDQuad(projL, projR, depth, coverage);
+		const Matrix model = Matrix::CreateScale(quad.width, quad.height, 1.0f) *
+		                     Matrix::CreateTranslation(0.0f, quad.centerY, -depth);
+		outWvp = (model * matrices.vpHUDHeadSpace).Transpose();
+		return true;
+	}
+
 	bool IsRenderPathDisabled()
 	{
 		return g_renderDisabled.load(std::memory_order_relaxed);
@@ -1451,6 +1467,14 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 	// Skyrim world units -> metres. Must match FloatingSubtitles::ImGui::Renderer::kGameUnitToMeter.
 	constexpr float kSkyrimUnitToMeter = 0.01428f;
+
+	// Single source for game-unit -> metre (room scale included), shared by the
+	// world-quad depth compare and the HUD occlusion stamp so they can't drift.
+	float GameUnitsToMetres()
+	{
+		const SkyrimToTrackingXform skyrimXf = GetSkyrimToTrackingXform();
+		return kSkyrimUnitToMeter * (skyrimXf.valid ? skyrimXf.invScale : 1.0f);
+	}
 
 	// Room-local (world-aligned, x-right/y-forward/z-up) -> OpenVR tracking (x-right/y-up/
 	// z-toward-user) is an axis swap (x, z, -y); the room origin is the OpenVR standing origin, so
