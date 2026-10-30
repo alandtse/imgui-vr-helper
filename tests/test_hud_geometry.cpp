@@ -74,8 +74,8 @@ TEST_CASE("plane override clamps to the supported range", "[hud]")
 	REQUIRE(high.depth == Approx(5.0f));
 	REQUIRE(high.coverage == Approx(1.6f));
 
-	const auto low = SanitizeHUDPlaneOverride(0.01f, 0.01f);
-	REQUIRE(low.depth == Approx(0.2f));
+	const auto low = SanitizeHUDPlaneOverride(0.001f, 0.01f);
+	REQUIRE(low.depth == Approx(0.01f));
 	REQUIRE(low.coverage == Approx(0.2f));
 
 	const auto mid = SanitizeHUDPlaneOverride(0.6f, 1.15f);
@@ -95,4 +95,95 @@ TEST_CASE("plane override treats non-positive and non-finite as unset", "[hud]")
 	const auto bad = SanitizeHUDPlaneOverride(nan, std::numeric_limits<float>::infinity());
 	REQUIRE(bad.depth == 0.0f);
 	REQUIRE(bad.coverage == 0.0f);
+}
+
+TEST_CASE("effective HUD plane resolves each client field independently", "[hud]")
+{
+	using namespace ImGuiVRHelper::InSceneOverlay;
+	const HUDPlaneOverride global{ 1.5f, 0.5f };
+	for (const auto depth : { 0.0f, -1.0f, 0.001f, 0.01f, 0.6f, 9.0f,
+			 std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity() }) {
+		for (const auto coverage : { 0.0f, -1.0f, 0.01f, 0.5f, 1.15f, 9.0f,
+				 std::numeric_limits<float>::quiet_NaN() }) {
+			CAPTURE(depth, coverage);
+			const auto plane = SanitizeHUDPlaneOverride(depth, coverage);
+			const auto effective = ResolveHUDPlane(plane, global);
+			REQUIRE(effective.depth == Approx(plane.depth > 0.0f ? plane.depth : global.depth));
+			REQUIRE(effective.coverage == Approx(plane.coverage > 0.0f ? plane.coverage : global.coverage));
+		}
+	}
+	const auto near = ResolveHUDPlane(SanitizeHUDPlaneOverride(0.01f, 1.15f), global);
+	REQUIRE(near.depth == Approx(0.01f));
+	REQUIRE(near.coverage == Approx(1.15f));
+	const auto reset = ResolveHUDPlane(SanitizeHUDPlaneOverride(0.0f, 0.0f), global);
+	REQUIRE(reset.depth == Approx(global.depth));
+	REQUIRE(reset.coverage == Approx(global.coverage));
+}
+
+TEST_CASE("depth convention is resolved from the projection's depth scale", "[hud]")
+{
+	using ImGuiVRHelper::InSceneOverlay::DepthConvention;
+	using ImGuiVRHelper::InSceneOverlay::ResolveDepthConvention;
+
+	float m[16] = {};
+	m[0] = m[5] = 1.0f;
+	m[11] = 1.0f;
+	m[14] = 13.0f * (353840.0f / (353840.0f - 13.0f));
+	m[10] = -0.000036716f;
+	DepthConvention got = DepthConvention::Standard;
+	REQUIRE(ResolveDepthConvention(m, 13.0f, 353840.0f, got));
+	REQUIRE(got == DepthConvention::Reversed);
+
+	m[10] = -(353840.0f / (353840.0f - 13.0f));
+	REQUIRE(ResolveDepthConvention(m, 13.0f, 353840.0f, got));
+	REQUIRE(got == DepthConvention::Standard);
+
+	m[14] = 0.1f * (1000.0f / (1000.0f - 0.1f));
+	m[10] = -(0.1f / (1000.0f - 0.1f));
+	REQUIRE(ResolveDepthConvention(m, 0.1f, 1000.0f, got));
+	REQUIRE(got == DepthConvention::Reversed);
+	m[10] = -(1000.0f / (1000.0f - 0.1f));
+	REQUIRE(ResolveDepthConvention(m, 0.1f, 1000.0f, got));
+	REQUIRE(got == DepthConvention::Standard);
+	std::swap(m[11], m[14]);
+	REQUIRE(ResolveDepthConvention(m, 0.1f, 1000.0f, got));
+	REQUIRE(got == DepthConvention::Standard);
+}
+
+TEST_CASE("depth convention refuses inputs it cannot classify", "[hud]")
+{
+	using ImGuiVRHelper::InSceneOverlay::DepthConvention;
+	using ImGuiVRHelper::InSceneOverlay::ResolveDepthConvention;
+
+	float m[16] = {};
+	DepthConvention got = DepthConvention::Standard;
+
+	REQUIRE_FALSE(ResolveDepthConvention(m, 0.0f, 0.0f, got));
+
+	m[10] = 0.0f;
+	REQUIRE_FALSE(ResolveDepthConvention(m, 13.0f, 353840.0f, got));
+	m[10] = 0.5f;
+	REQUIRE_FALSE(ResolveDepthConvention(m, 13.0f, 353840.0f, got));
+
+	const float nan = std::numeric_limits<float>::quiet_NaN();
+	m[10] = nan;
+	REQUIRE_FALSE(ResolveDepthConvention(m, 13.0f, 353840.0f, got));
+	m[10] = -1.0f;
+	REQUIRE_FALSE(ResolveDepthConvention(m, nan, 353840.0f, got));
+	REQUIRE_FALSE(ResolveDepthConvention(nullptr, 13.0f, 353840.0f, got));
+
+	m[10] = -(13.0f / (353840.0f - 13.0f));
+	REQUIRE_FALSE(ResolveDepthConvention(m, 13.0f, 353840.0f, got));
+	m[0] = m[5] = 1.0f;
+	m[11] = 1.0f;
+	m[14] = 13.0f * (353840.0f / (353840.0f - 13.0f));
+	REQUIRE(ResolveDepthConvention(m, 13.0f, 353840.0f, got));
+	m[15] = 1.0f;
+	REQUIRE_FALSE(ResolveDepthConvention(m, 13.0f, 353840.0f, got));
+	m[15] = 0.0f;
+	m[14] *= 2.0f;
+	REQUIRE_FALSE(ResolveDepthConvention(m, 13.0f, 353840.0f, got));
+	m[14] = 13.0f * 14.0f;
+	m[10] = -13.0f;
+	REQUIRE_FALSE(ResolveDepthConvention(m, 13.0f, 14.0f, got));
 }

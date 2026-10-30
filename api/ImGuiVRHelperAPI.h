@@ -306,11 +306,12 @@ namespace ImGuiVRHelperPluginAPI
 	struct IImGuiVRHelperInterface006 : IImGuiVRHelperInterface005
 	{
 		/// Override this HUD-mode client's plane. `depth_m` is the head-locked distance in
-		/// meters (clamped to [0.2, 5]); `coverage` is the fraction of each eye's view the
+		/// meters (clamped to [0.01, 5]); `coverage` is the fraction of each eye's view the
 		/// plane fills (clamped to [0.2, 1.6]; > 1 over-fills). A value <= 0 for either
 		/// restores the helper's global setting for that parameter. The plane stays
 		/// eye-independent (stereo-fused at `depth_m`). No-op for unknown ids or clients
-		/// that didn't set kClientFlag_HUDMode.
+		/// that didn't set kClientFlag_HUDMode. Depths below 0.2 m are experimental and
+		/// may leave the stereo view.
 		virtual void SetHudPlane(uint32_t client_id, float depth_m, float coverage) = 0;
 	};
 

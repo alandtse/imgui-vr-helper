@@ -13,6 +13,8 @@
 
 #include "InSceneOverlay.h"
 
+#include "internal/HUDOcclusion.h"
+
 #include "Globals.h"
 #include "HelperImpl.h"
 #include "Input.h"
@@ -23,6 +25,7 @@
 #include "internal/D3D11StateGuard.h"
 #include "internal/Detour.h"
 #include "internal/HUDGeometry.h"
+#include "internal/HUDProjection.h"
 #include "internal/Profiler.h"
 #include "internal/VRUtils.h"
 
@@ -155,7 +158,7 @@ cbuffer DepthCB : register(b0)
 	float  depthTestEnable; // 1 = occlude against the scene, 0 = passthrough
 	float2 depthScale;      // sceneDepth texel size / submit texel size (upscaling can leave the
 	                        // depth buffer at a lower internal resolution than the submit target)
-	float  _pad;
+	float  reversedDepth;
 };
 struct PS_INPUT
 {
@@ -167,6 +170,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 	float4 col = shaderTexture.Sample(sampleType, input.uv);
 	if (depthTestEnable > 0.5f) {
 		float sd = sceneDepth.Load(int3(int2(input.pos.xy * depthScale), 0));
+		if (reversedDepth > 0.5f)
+			sd = 1.0 - sd;
 		float sceneMetres = (cameraData.w / (cameraData.x - sd * cameraData.z)) * gameToMeter;
 		float billMetres = (helperNear * helperFar) / (helperFar - input.pos.z * (helperFar - helperNear));
 		if (billMetres > sceneMetres + depthBias)
@@ -205,7 +210,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 			float depthTestEnable = 0.0f;
 			// sceneDepth texel size / submit texel size — see the SceneDepthInfo comment below.
 			float depthScale[2] = { 1.0f, 1.0f };
-			float pad = 0.0f;
+			float reversedDepth = 0.0f;
 		};
 
 		struct Resources
@@ -916,7 +921,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 		struct EyeMatrices
 		{
-			Matrix vpHeadSpace;   // for HMD-relative attach mode
+			Matrix vpHeadSpace;  // for HMD-relative attach mode
+			Matrix vpHUDHeadSpace;
 			Matrix vpWorldSpace;  // for controller-attached and fixed-world
 			Vector3 hmdPos;       // HMD position (standing space) from the SAME pose as vpWorldSpace
 			bool valid = false;
@@ -963,6 +969,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 				left * nearZ, right * nearZ, bottom * nearZ, top * nearZ, nearZ, farZ);
 
 			result.vpHeadSpace = eyeToHead.Invert() * proj;
+			result.vpHUDHeadSpace = eyeToHead.Invert() * ComputeHUDProjection(left, right, bottom, top);
 			Matrix eyeToWorld = eyeToHead * hmdWorld;
 			result.vpWorldSpace = eyeToWorld.Invert() * proj;
 			result.hmdPos = hmdWorld.Translation();  // share the vpWorldSpace pose with world-quad facing
@@ -1039,6 +1046,22 @@ float4 main(PS_INPUT input) : SV_TARGET
 			reinterpret_cast<void*>(SubmitDetour::original));
 	}
 
+	bool HUDPlaneWVP(vr::EVREye eye, float depth, float coverage, Matrix& outWvp)
+	{
+		const EyeMatrices matrices = ComputeEyeMatrices(eye);
+		if (!matrices.valid)
+			return false;
+		float projL[4], projR[4];
+		if (!Util::CachedProjectionRaw(vr::Eye_Left, projL[0], projL[1], projL[2], projL[3]) ||
+			!Util::CachedProjectionRaw(vr::Eye_Right, projR[0], projR[1], projR[2], projR[3]))
+			return false;
+		const HUDQuad quad = ComputeHUDQuad(projL, projR, depth, coverage);
+		const Matrix model = Matrix::CreateScale(quad.width, quad.height, 1.0f) *
+		                     Matrix::CreateTranslation(0.0f, quad.centerY, -depth);
+		outWvp = (model * matrices.vpHUDHeadSpace).Transpose();
+		return true;
+	}
+
 	bool IsRenderPathDisabled()
 	{
 		return g_renderDisabled.load(std::memory_order_relaxed);
@@ -1094,7 +1117,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 	{
 		ZoneScopedN("InScene::HUDPass");
 		HELPER_GPU_PASS("ImGuiVRHelper::HUDPass");
-		const float hudDepth = std::max(0.3f, s.hudDepth);  // sanity floor
+		const float hudDepth = std::max(Overlay::Config::kMinGlobalHUDDepthMetres, s.hudDepth);
 		const float coverage = std::clamp(s.hudCoverage, Overlay::Config::kMinHUDCoverage, Overlay::Config::kMaxHUDCoverage);
 
 		float projL[4], projR[4];
@@ -1105,7 +1128,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 			const Matrix model =
 				Matrix::CreateScale(quad.width, quad.height, 1.0f) *
 				Matrix::CreateTranslation(0.0f, quad.centerY, -depth);
-			return (model * matrices.vpHeadSpace).Transpose();
+			return (model * matrices.vpHUDHeadSpace).Transpose();
 		};
 		const Matrix hudWvp = planeWvp(hudDepth, coverage);
 
@@ -1119,7 +1142,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 			ConstantBufferData cb;
 			cb.wvp = hudWvp;
 			if (hud.depth > 0.0f || hud.coverage > 0.0f) {
-				cb.wvp = planeWvp(hud.depth > 0.0f ? hud.depth : hudDepth, hud.coverage > 0.0f ? hud.coverage : coverage);
+				const auto plane = ResolveHUDPlane({ hud.depth, hud.coverage }, { hudDepth, coverage });
+				cb.wvp = planeWvp(plane.depth, plane.coverage);
 			}
 			DrawQuad(ctx, cb, hudSRV);
 		}
@@ -1372,6 +1396,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 		float camFar = 0.0f;
 		float depthW = 0.0f;
 		float depthH = 0.0f;
+		bool reversedDepth = false;
+		bool conventionKnown = false;
 	};
 	SceneDepthInfo GetSceneDepthInfo()
 	{
@@ -1383,6 +1409,13 @@ float4 main(PS_INPUT input) : SV_TARGET
 		static REL::Relocation<std::uintptr_t> cameraData{ REL::RelocationID(517032, 403540) };
 		info.camNear = *reinterpret_cast<const float*>(cameraData.address() + 0x40);
 		info.camFar = *reinterpret_cast<const float*>(cameraData.address() + 0x44);
+		if (auto* shadowState = RE::BSGraphics::RendererShadowState::GetSingleton()) {
+			const auto eye = shadowState->GetVRRuntimeData().cameraData.getEye(0);
+			const auto* m = reinterpret_cast<const float*>(&eye.projMat);
+			DepthConvention convention = DepthConvention::Standard;
+			info.conventionKnown = ResolveDepthConvention(m, info.camNear, info.camFar, convention);
+			info.reversedDepth = convention == DepthConvention::Reversed;
+		}
 		if (info.srv) {
 			// The underlying resource's dimensions don't change without the SRV pointer itself
 			// changing (a new resource on an upscale-mode/resolution switch), so cache by pointer
@@ -1447,6 +1480,12 @@ float4 main(PS_INPUT input) : SV_TARGET
 
 	// Skyrim world units -> metres. Must match FloatingSubtitles::ImGui::Renderer::kGameUnitToMeter.
 	constexpr float kSkyrimUnitToMeter = 0.01428f;
+
+	float GameUnitsToMetres()
+	{
+		const SkyrimToTrackingXform skyrimXf = GetSkyrimToTrackingXform();
+		return kSkyrimUnitToMeter * (skyrimXf.valid ? skyrimXf.invScale : 1.0f);
+	}
 
 	// Room-local (world-aligned, x-right/y-forward/z-up) -> OpenVR tracking (x-right/y-up/
 	// z-toward-user) is an axis swap (x, z, -y); the room origin is the OpenVR standing origin, so
@@ -1518,7 +1557,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// the camera near/far look invalid, so the billboards still draw un-occluded.
 		SceneDepthInfo depthInfo = GetSceneDepthInfo();
 		WorldQuadDepthParams depthParams;
-		if (depthInfo.srv && depthInfo.camNear > 0.0f && depthInfo.camFar > depthInfo.camNear) {
+		if (depthInfo.srv && depthInfo.conventionKnown) {
+			depthParams.reversedDepth = depthInfo.reversedDepth ? 1.0f : 0.0f;
 			depthParams.cameraData[0] = depthInfo.camFar;
 			depthParams.cameraData[1] = depthInfo.camNear;
 			depthParams.cameraData[2] = depthInfo.camFar - depthInfo.camNear;

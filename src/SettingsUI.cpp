@@ -10,6 +10,7 @@
 #include "HelperImpl.h"
 #include "HudContext.h"
 #include "HudDisplay.h"
+#include "InSceneOcclusion.h"
 #include "Input.h"
 #include "OpenVRDetection.h"
 #include "Overlay.h"
@@ -634,6 +635,15 @@ namespace ImGuiVRHelper::SettingsUI
 			ImGui::SliderFloat("HUD coverage", &s.hudCoverage, Overlay::Config::kMinHUDCoverage,
 				Overlay::Config::kMaxHUDCoverage, "%.2f");
 			ImGui::TextDisabled("    Fraction of the view the HUD fills; 1.0 may clip at the lens.");
+
+			ImGui::Checkbox("Skip hidden world", &s.hudDepthOcclusion);
+			ImGui::TextDisabled("    Do not draw the scene behind opaque HUD pixels (experimental).");
+			if (s.hudDepthOcclusion) {
+				const char* status = HUDOcclusion::StatusText();
+				ImGui::TextDisabled("    %s", status);
+			} else {
+				ImGui::TextDisabled("    Off.");
+			}
 
 			ImGui::Spacing();
 			ImGui::Separator();

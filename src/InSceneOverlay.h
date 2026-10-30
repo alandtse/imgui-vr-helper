@@ -51,6 +51,13 @@ namespace ImGuiVRHelper::InSceneOverlay
 	/// while the wand is off the panel.
 	void RenderCursorIntoPanel(ID3D11Texture2D* panel);
 
+	/// HUD plane WVP for one eye; returns false if pose or projection is unavailable.
+	bool HUDPlaneWVP(vr::EVREye eye, float depth, float coverage,
+		DirectX::SimpleMath::Matrix& outWvp);
+
+	/// Game-unit-to-metre conversion, including room scale.
+	float GameUnitsToMetres();
+
 	/// Render-path fault latch. Disabled when another VR overlay host (e.g.
 	/// Community Shaders) already owns the in-scene overlay, or when a vrclient
 	/// call throws "device or resource busy" under contention. Once disabled,

@@ -72,6 +72,8 @@ namespace ImGuiVRHelper::Overlay
 		inline constexpr float kPokeEngageDepthMeters = -0.005f;
 		inline constexpr float kPokeReleaseDepthMeters = 0.020f;
 
+		inline constexpr float kMinGlobalHUDDepthMetres = 0.3f;
+
 		// Fraction of each eye's view the HUD quad covers (see hudCoverage). Min/max
 		// are shared by the settings slider and the render-time clamp so the two
 		// can't disagree.
@@ -254,6 +256,9 @@ namespace ImGuiVRHelper::Overlay
 		/// shrink it toward a comfortable window. Clamped to
 		/// [kMinHUDCoverage, kMaxHUDCoverage].
 		float hudCoverage = Config::kDefaultHUDCoverage;
+
+		/// Opt-in world depth/stencil stamping behind opaque HUD pixels (alpha 254+).
+		bool hudDepthOcclusion = false;
 
 		/// Base resolution of every overlay panel texture, before HUD
 		/// supersampling. Higher = sharper but more VRAM; pick to suit the

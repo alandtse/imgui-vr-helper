@@ -85,8 +85,8 @@ namespace ImGuiVRHelperPluginAPI
 		uint32_t flags;      ///< bit0 client_has_focus
 							 ///< bit1 overlay_visible
 							 ///< bit2 client_pointer_in_panel
-		float hud_depth;     ///< HUD plane distance, meters (kClientFlag_HUDMode)
-		float hud_coverage;  ///< fraction of each eye's view the HUD plane fills
+		float hud_depth;     ///< Effective client HUD distance in meters, including overrides (kClientFlag_HUDMode)
+		float hud_coverage;  ///< Effective client HUD coverage, including overrides
 	};
 
 	/// Named bits for Frame::flags.

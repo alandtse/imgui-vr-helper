@@ -24,6 +24,7 @@
 
 #include "Globals.h"
 #include "HelperImpl.h"
+#include "InSceneOcclusion.h"
 #include "InSceneOverlay.h"
 #include "Input.h"
 #include "OpenVRDetection.h"
@@ -209,6 +210,7 @@ namespace ImGuiVRHelper::Hooks
 			InSceneOverlay::Install();
 			SettingsUI::Init();
 			HelperImpl::GetSingleton().EnsureSelfClient();
+			HUDOcclusion::Install();
 		}
 
 		void DecideRenderPath()
@@ -522,7 +524,9 @@ namespace ImGuiVRHelper::Hooks
 			return;
 		}
 
-		SKSE::AllocTrampoline(28);
+		constexpr std::size_t kThunkSlotSize = 14;
+		constexpr std::size_t kThunkCount = 4;
+		SKSE::AllocTrampoline(kThunkSlotSize * kThunkCount);
 
 		logs::info("Hooks::Install - writing BSGraphics::Renderer::InitD3D thunk");
 		// VR offset 77226 + 0x2BC matches the SCS Hooks.cpp install site for VR.
