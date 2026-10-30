@@ -281,16 +281,11 @@ float main(PS_INPUT input) : SV_Depth
 
 		// ---- Engine state probes ----------------------------------------
 
-		/// True only when the engine camera positively looks like a standard-Z
-		/// (near = 0) perspective projection, which is the only case a standard-Z
-		/// value can be written into. A renderer mod may run depth reversed
-		/// (near = 1), so an unreadable or unfamiliar projection must not stamp:
-		/// Resolves the depth convention and confirms the camera near/far describe
-		/// the frustum actually being rendered. See HUDOcclusion::ResolveDepthConvention
-		/// for why the magnitude of m[10] decides it: `camNear`/`camFar` come from
-		/// the camera data block (the same source the shipped world-quad depth
-		/// compare uses) and are cross-checked against the projection matrix, so a
-		/// stale or unrelated near/far cannot be combined with a live matrix.
+		/// Resolves the depth convention and confirms the camera near/far describe the
+		/// frustum actually being rendered. `camNear`/`camFar` come from the camera
+		/// data block (the same source the shipped world-quad compare uses) and are
+		/// cross-checked against the projection matrix, so a stale or unrelated
+		/// near/far cannot be combined with a live matrix.
 		bool ResolveConvention(float camNear, float camFar, HUDOcclusion::DepthConvention& out)
 		{
 			auto* shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
