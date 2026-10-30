@@ -26,10 +26,7 @@ namespace ImGuiVRHelper::InSceneOverlay
 		Reversed,  ///< near = 1, far = 0
 	};
 
-	/// Resolve the convention from a perspective projection and the camera range.
-	/// Do not switch to testing the sign of m[10]: a mirrored eye matrix gives the
-	/// same sign under either convention. The depth scales differ by far/near.
-	/// Returns false rather than guessing when the inputs cannot be classified.
+	/// Resolve a perspective depth convention; reject invalid or ambiguous ranges.
 	inline bool ResolveDepthConvention(const float* m, float camNear, float camFar,
 		DepthConvention& out)
 	{
@@ -37,23 +34,32 @@ namespace ImGuiVRHelper::InSceneOverlay
 			return false;
 		if (!(camNear > 0.0f) || !(camFar > camNear))
 			return false;
-		const float span = camFar - camNear;
-		const float scale = std::abs(m[10]);
-		if (!std::isfinite(scale) || !(scale > 0.0f))
+		for (int i = 0; i < 16; ++i) {
+			if (!std::isfinite(m[i]))
+				return false;
+		}
+		constexpr double kRangeTolerance = 0.10;
+		constexpr double kPerspectiveTolerance = 1e-4;
+		if (std::abs(m[15]) > kPerspectiveTolerance || m[0] == 0.0f || m[5] == 0.0f)
 			return false;
-
-		constexpr float kTolerance = 0.10f;
-		const float reversed = camNear / span;
-		if (std::abs(scale - reversed) <= kTolerance * reversed) {
-			out = DepthConvention::Reversed;
-			return true;
-		}
-		const float standard = camFar / span;
-		if (std::abs(scale - standard) <= kTolerance * standard) {
-			out = DepthConvention::Standard;
-			return true;
-		}
-		return false;
+		const double span = static_cast<double>(camFar) - camNear;
+		const double translation = static_cast<double>(camNear) * camFar / span;
+		const auto matches = [](double actual, double expected, double tolerance) {
+			return std::abs(std::abs(actual) - expected) <= tolerance * expected;
+		};
+		const bool rowPerspective = matches(m[11], 1.0, kPerspectiveTolerance) &&
+		                            matches(m[14], translation, kRangeTolerance);
+		const bool columnPerspective = matches(m[14], 1.0, kPerspectiveTolerance) &&
+		                               matches(m[11], translation, kRangeTolerance);
+		if (!rowPerspective && !columnPerspective)
+			return false;
+		const double scale = std::abs(m[10]);
+		const bool reversed = matches(scale, camNear / span, kRangeTolerance);
+		const bool standard = matches(scale, camFar / span, kRangeTolerance);
+		if (reversed == standard)
+			return false;
+		out = reversed ? DepthConvention::Reversed : DepthConvention::Standard;
+		return true;
 	}
 
 	/// Per-client HUD plane override, in meters and as a fraction of the view.
