@@ -458,9 +458,12 @@ float main(PS_INPUT input) : SV_Depth
 			for (const auto& claim : claims) {
 				LayerDraw draw;
 				draw.planeDepth = 0.0f;
+				// A helmet frame sits nearer than the camera near plane, which has no
+				// depth value of its own; clamp it to the near plane so the frame still
+				// culls what it covers instead of dropping the whole layer.
 				if (!HUDOcclusion::DepthForMetres(claim.depth, camNear, camFar, gameToMetre,
-						convention, draw.planeDepth))
-					return BackendStatus::UnusableDepth;
+						convention, draw.planeDepth, HUDOcclusion::NearPlanePolicy::Clamp))
+					continue;
 
 				bool posed = true;
 				posed = posed && InSceneOverlay::HUDPlaneWVP(vr::Eye_Left, claim.depth, claim.coverage, draw.wvp[0]);

@@ -184,3 +184,35 @@ TEST_CASE("Only Ready enables the depth write", "[occlusion][status]")
 	REQUIRE_FALSE(IsReady(BackendStatus::UnusableDepth));
 	REQUIRE_FALSE(IsReady(BackendStatus::NoDevice));
 }
+
+TEST_CASE("A plane nearer than the camera near plane clamps or refuses", "[occlusion][depth][near]")
+{
+	// Skyrim VR measured: near = 13 game units (0.186 m), far = 353840.
+	constexpr float kMeasuredNear = 13.0f;
+	constexpr float kMeasuredFar = 353840.0f;
+	float depth = -1.0f;
+
+	// A helmet frame wants a plane at 0.08 m, well inside the near plane.
+	REQUIRE_FALSE(DepthForMetres(0.08f, kMeasuredNear, kMeasuredFar, kGameToMetre,
+		DepthConvention::Reversed, depth));
+	REQUIRE(DepthForMetres(0.08f, kMeasuredNear, kMeasuredFar, kGameToMetre,
+		DepthConvention::Reversed, depth, NearPlanePolicy::Clamp));
+	REQUIRE(depth == 1.0f);  // the near plane under reversed depth
+	REQUIRE(DepthForMetres(0.08f, kMeasuredNear, kMeasuredFar, kGameToMetre,
+		DepthConvention::Standard, depth, NearPlanePolicy::Clamp));
+	REQUIRE(depth == 0.0f);
+
+	// Clamping is bounded to the near plane; a plane past it is unaffected.
+	REQUIRE(DepthForMetres(1.0f, kMeasuredNear, kMeasuredFar, kGameToMetre,
+				DepthConvention::Reversed, depth) ==
+			DepthForMetres(1.0f, kMeasuredNear, kMeasuredFar, kGameToMetre,
+				DepthConvention::Reversed, depth, NearPlanePolicy::Clamp));
+
+	// Input that is unusable for reasons other than its distance is still refused.
+	REQUIRE_FALSE(DepthForMetres(0.0f, kMeasuredNear, kMeasuredFar, kGameToMetre,
+		DepthConvention::Reversed, depth, NearPlanePolicy::Clamp));
+	REQUIRE_FALSE(DepthForMetres(-1.0f, kMeasuredNear, kMeasuredFar, kGameToMetre,
+		DepthConvention::Reversed, depth, NearPlanePolicy::Clamp));
+	REQUIRE_FALSE(DepthForMetres(1.0f, kMeasuredFar, kMeasuredNear, kGameToMetre,
+		DepthConvention::Reversed, depth, NearPlanePolicy::Clamp));
+}

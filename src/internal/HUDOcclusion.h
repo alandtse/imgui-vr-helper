@@ -50,20 +50,34 @@ namespace ImGuiVRHelper::HUDOcclusion
 		return std::isfinite(alpha) && alpha >= kOpaqueAlphaThreshold;
 	}
 
+	/// What to write for a plane at or in front of the camera near plane, where no
+	/// depth value can represent the plane's own distance.
+	enum class NearPlanePolicy
+	{
+		Refuse,  ///< the caller skips this layer
+		Clamp,   ///< write the near plane, so the layer culls everything behind it
+	};
+
 	/// Distance in metres -> game camera units, then to the depth value that
 	/// hides the plane under the given convention. Returns false for input that
 	/// would write an unusable depth; the caller must then skip the write
-	/// instead of guessing.
+	/// instead of guessing. A helmet-frame layer sits nearer than the near plane,
+	/// so it requests Clamp: the near plane is written and the layer culls what it
+	/// covers, which is what a visor wants.
 	inline bool DepthForMetres(float metres, float camNear, float camFar, float gameToMetre,
-		DepthConvention convention, float& out)
+		DepthConvention convention, float& out, NearPlanePolicy policy = NearPlanePolicy::Refuse)
 	{
 		if (!(std::isfinite(metres) && std::isfinite(camNear) && std::isfinite(camFar) && std::isfinite(gameToMetre)))
 			return false;
 		if (!(gameToMetre > 0.0f) || !(camNear > 0.0f) || !(camFar > camNear) || !(metres > 0.0f))
 			return false;
 		const float gameUnits = metres / gameToMetre;
-		if (!(gameUnits > camNear))
-			return false;  // at or in front of the near plane: nothing to write
+		if (!(gameUnits > camNear)) {
+			if (policy != NearPlanePolicy::Clamp)
+				return false;  // at or in front of the near plane: nothing to write
+			out = convention == DepthConvention::Reversed ? 1.0f : 0.0f;
+			return true;
+		}
 		float depth = (camFar * (gameUnits - camNear)) / (gameUnits * (camFar - camNear));
 		if (convention == DepthConvention::Reversed)
 			depth = 1.0f - depth;
