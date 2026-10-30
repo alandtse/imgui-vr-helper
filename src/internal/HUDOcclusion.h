@@ -11,8 +11,12 @@
 #include <cstdint>
 #include <vector>
 
+#include "HUDGeometry.h"
+
 namespace ImGuiVRHelper::HUDOcclusion
 {
+	using ImGuiVRHelper::InSceneOverlay::DepthConvention;
+
 	/// A HUD layer that will be composited over this frame's eye image, with the
 	/// resolved plane it is drawn at. Whether a pixel is actually opaque comes
 	/// from that same layer's canvas alpha at draw time, so a claim can never
@@ -44,61 +48,6 @@ namespace ImGuiVRHelper::HUDOcclusion
 	inline bool IsOpaque(float alpha)
 	{
 		return std::isfinite(alpha) && alpha >= kOpaqueAlphaThreshold;
-	}
-
-	/// Which end of the [0,1] depth range the near plane sits at.
-	///
-	/// Skyrim VR reports reversed depth (near = 1, far = 0), the same convention
-	/// HelmetOverlaysNG detects and adapts to rather than refusing to draw. A
-	/// hardcoded standard-Z mapping would write the near value for a far plane
-	/// and silently hide the world instead of the HUD, so the convention is
-	/// resolved from the live projection matrix and passed in.
-	enum class DepthConvention
-	{
-		Standard,  ///< near = 0, far = 1
-		Reversed,  ///< near = 1, far = 0
-	};
-
-	/// Resolve the convention from the camera projection matrix and the near/far
-	/// range the game reports.
-	///
-	/// The discriminator is the magnitude of the depth scale, m[10]:
-	///   standard depth: |m[10]| == far  / (far - near)
-	///   reversed depth: |m[10]| == near / (far - near)
-	/// Those differ by a factor of far/near, so on a real camera the two are
-	/// orders of magnitude apart and never ambiguously close. Measured on Skyrim
-	/// VR: near = 13, far = 353840 gives |m[10]| = 3.7e-5, which is the reversed
-	/// value (3.674e-5) to 0.7% and is 27000x away from the standard one (1.00003).
-	///
-	/// The sign of m[10] * perspective is NOT used: it is the same sign for a
-	/// mirrored-eye projection and says nothing reliable about the depth range.
-	inline bool ResolveDepthConvention(const float* m, float camNear, float camFar,
-		DepthConvention& out)
-	{
-		if (!m || !std::isfinite(camNear) || !std::isfinite(camFar))
-			return false;
-		if (!(camNear > 0.0f) || !(camFar > camNear))
-			return false;
-		const float span = camFar - camNear;
-		if (!(span > 0.0f))
-			return false;
-		const float scale = std::abs(m[10]);
-		if (!std::isfinite(scale) || !(scale > 0.0f))
-			return false;
-
-		const float standard = camFar / span;
-		const float reversed = camNear / span;
-		// 10% is far tighter than the far/near ratio between the two candidates,
-		// so this cannot pick the wrong branch on a real frustum.
-		if (std::abs(scale - reversed) <= 0.10f * reversed) {
-			out = DepthConvention::Reversed;
-			return true;
-		}
-		if (std::abs(scale - standard) <= 0.10f * standard) {
-			out = DepthConvention::Standard;
-			return true;
-		}
-		return false;
 	}
 
 	/// Distance in metres -> game camera units, then to the depth value that

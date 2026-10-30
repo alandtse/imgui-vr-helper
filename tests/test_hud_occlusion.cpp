@@ -9,6 +9,7 @@
 
 #include <limits>
 
+#include "internal/HUDGeometry.h"
 #include "internal/HUDOcclusion.h"
 
 using namespace ImGuiVRHelper::HUDOcclusion;

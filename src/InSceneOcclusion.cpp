@@ -302,7 +302,7 @@ float main(PS_INPUT input) : SV_Depth
 				if (!std::isfinite(m[i]))
 					return false;
 			}
-			return HUDOcclusion::ResolveDepthConvention(m, camNear, camFar, out);
+			return InSceneOverlay::ResolveDepthConvention(m, camNear, camFar, out);
 		}
 
 		bool DrawsToMainDepth()

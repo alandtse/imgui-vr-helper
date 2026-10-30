@@ -170,10 +170,6 @@ float4 main(PS_INPUT input) : SV_TARGET
 	float4 col = shaderTexture.Sample(sampleType, input.uv);
 	if (depthTestEnable > 0.5f) {
 		float sd = sceneDepth.Load(int3(int2(input.pos.xy * depthScale), 0));
-		// Skyrim VR reports reversed depth, where 0 is the far plane. The linearization
-		// has to match the buffer or the compare is inverted: measuring this install
-		// gave near=13, far=353840 and a sky sample of 0.0, which the standard-Z form
-		// would have read as 13 units (next to the lens) instead of infinity.
 		if (reversedDepth > 0.5f)
 			sd = 1.0 - sd;
 		float sceneMetres = (cameraData.w / (cameraData.x - sd * cameraData.z)) * gameToMeter;
@@ -1400,34 +1396,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 		float camFar = 0.0f;
 		float depthW = 0.0f;
 		float depthH = 0.0f;
-		/// True when the game's depth buffer has near at 1.0 (Skyrim VR). The
-		/// linearization below is written for standard depth, so the shader flips
-		/// the sample to match.
 		bool reversedDepth = false;
 	};
-	/// Which end of the depth range the near plane sits at, resolved from the
-	/// game's live camera projection. Skyrim VR reports reversed depth
-	/// (near = 1, far = 0), the same convention HelmetOverlaysNG reads, so the
-	/// standard-Z linearization below is only correct under Standard.
-	const char* DepthConventionName()
-	{
-		auto* shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
-		if (!shadowState)
-			return "unknown (no shadow state)";
-		const auto eye = shadowState->GetVRRuntimeData().cameraData.getEye(0);
-		const auto* m = reinterpret_cast<const float*>(&eye.projMat);
-		// Same layout rule HelmetOverlaysNG uses: the perspective term is whichever
-		// of m[14]/m[11] holds the 1, and a matrix with neither is unrecognised.
-		// Accepting "both look like 1" matters: the projection is briefly degenerate
-		// at the main menu and rejecting it there is how this probe went quiet.
-		const bool column = std::abs(std::abs(m[14]) - 1.0f) < 1e-3f;
-		const bool row = std::abs(std::abs(m[11]) - 1.0f) < 1e-3f;
-		if (!column && !row)
-			return "unknown (unrecognised layout)";
-		const float perspective = (column && !row) ? m[14] : m[11];
-		return (m[10] * perspective > 0.0f) ? "standard" : "reversed";
-	}
-
 	SceneDepthInfo GetSceneDepthInfo()
 	{
 		SceneDepthInfo info;
@@ -1441,9 +1411,9 @@ float4 main(PS_INPUT input) : SV_TARGET
 		if (auto* shadowState = RE::BSGraphics::RendererShadowState::GetSingleton()) {
 			const auto eye = shadowState->GetVRRuntimeData().cameraData.getEye(0);
 			const auto* m = reinterpret_cast<const float*>(&eye.projMat);
-			HUDOcclusion::DepthConvention convention = HUDOcclusion::DepthConvention::Standard;
-			if (HUDOcclusion::ResolveDepthConvention(m, info.camNear, info.camFar, convention))
-				info.reversedDepth = convention == HUDOcclusion::DepthConvention::Reversed;
+			DepthConvention convention = DepthConvention::Standard;
+			if (ResolveDepthConvention(m, info.camNear, info.camFar, convention))
+				info.reversedDepth = convention == DepthConvention::Reversed;
 		}
 		if (info.srv) {
 			// The underlying resource's dimensions don't change without the SRV pointer itself
