@@ -43,4 +43,9 @@ namespace ImGuiVRHelper::OverlayTinter
 	/// SRV for the latest successful dispatch in this frame, only if it was
 	/// produced from expectedSource. Otherwise nullptr: use the original panel.
 	ID3D11ShaderResourceView* GetOutputSRV(ID3D11Texture2D* expectedSource);
+
+	/// The post-process texture itself, under the same condition as
+	/// GetOutputSRV — for consumers that need a whole texture (a runtime
+	/// overlay layer) rather than a shader input.
+	winrt::com_ptr<ID3D11Texture2D> GetOutputTexture(ID3D11Texture2D* expectedSource);
 }

@@ -57,6 +57,9 @@ end
 
 set_basename("imgui-vr-helper")
 
+-- Version metadata identifies the runtime implementation (vrclient_x64.dll).
+add_syslinks("version")
+
 add_shflags("/DEBUG", { force = true })
 
 set_configvar("VERSION_MAJOR", tonumber(ver[1]))
@@ -159,9 +162,9 @@ target("ImGuiVRHelperTests")
 set_kind("binary")
 set_default(false)
 set_group("tests")
-add_packages("catch2", "directxtk")
+add_packages("catch2", "directxtk", "nlohmann_json")
 -- WARP-backed pipeline-state isolation regression tests (no VR/game needed).
-add_syslinks("d3d11", "d3dcompiler", "dxgi")
+add_syslinks("d3d11", "d3dcompiler", "dxgi", "version")
 -- <openvr.h> comes from CommonLibVR's vendored copy (the same header the plugin
 -- compiles against), not the xrepo openvr package (which nests it as openvr/).
 add_includedirs("src", "api", "lib/commonlibsse-ng/extern/openvr/headers")

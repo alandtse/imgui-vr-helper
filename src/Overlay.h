@@ -275,7 +275,9 @@ namespace ImGuiVRHelper::Overlay
 		/// top-center. Clamped to [0, 1]. Default 0.18 (near the top).
 		float toastTopFraction = 0.18f;
 
-		/// Retained for config compatibility; native menu hosting is disabled for safety.
+		/// Host the focused menu as a native runtime overlay layer instead of drawing
+		/// it into the eye buffers. Falls back to in-scene rendering whenever the
+		/// runtime cannot host it; toggling off and on retries.
 		bool useRuntimeOverlay = false;
 	};
 

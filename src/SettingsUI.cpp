@@ -14,6 +14,7 @@
 #include "OpenVRDetection.h"
 #include "Overlay.h"
 #include "PluginVersion.h"
+#include "RuntimeOverlay.h"
 #include "Theme.h"
 #include "WandPointing.h"
 
@@ -681,13 +682,12 @@ namespace ImGuiVRHelper::SettingsUI
 			ImGui::Spacing();
 			ImGui::Separator();
 			ImGui::TextDisabled("Render path");
-			bool nativeOverlayActive = false;
-			ImGui::BeginDisabled();
-			ImGui::Checkbox("Native VR overlay for menus (temporarily unavailable)", &nativeOverlayActive);
-			ImGui::EndDisabled();
+			ImGui::Checkbox("Native VR overlay for menus (experimental)", &s.useRuntimeOverlay);
 			ImGui::TextDisabled(
-				"    Disabled for safety after reported GPU crashes.\n"
-				"    Menus use in-scene rendering, including with older configurations.");
+				"    Composite the focused menu as a runtime overlay layer instead of\n"
+				"    drawing into the eye buffers. Falls back to in-scene rendering\n"
+				"    when the runtime cannot host it; untick and retick to retry.");
+			ImGui::TextDisabled("    Status: %s", RuntimeOverlay::StatusText());
 
 			ImGui::Spacing();
 			ImGui::Separator();

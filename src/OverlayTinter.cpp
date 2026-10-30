@@ -214,4 +214,12 @@ void main(uint3 tid : SV_DispatchThreadID)
 	{
 		return expectedSource && g_res.outputSource.get() == expectedSource ? g_res.dstSRV.get() : nullptr;
 	}
+
+	winrt::com_ptr<ID3D11Texture2D> GetOutputTexture(ID3D11Texture2D* expectedSource)
+	{
+		winrt::com_ptr<ID3D11Texture2D> panel;
+		if (expectedSource && g_res.outputSource.get() == expectedSource)
+			panel.copy_from(g_res.dstTex.get());
+		return panel;
+	}
 }

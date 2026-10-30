@@ -3,19 +3,25 @@
 
 #pragma once
 
+#include <openvr.h>
+
 namespace ImGuiVRHelper::RuntimeOverlay
 {
-	/// Capability, not the persisted user's preference. No configuration file
-	/// can opt back into the unsafe submission implementation.
-	inline constexpr bool kAvailable = false;
-
-	/// Render-thread compatibility tick. Warns once if a legacy setting asks
-	/// for native overlays. Never creates an overlay or submits a texture.
+	/// Present-thread observer. Records the Present producer identity and masks
+	/// hosting if the submit tick stops; never prepares work or calls the runtime.
 	void RenderTick();
 
-	/// Input-thread compatibility tick. No runtime calls or texture handoff.
-	void InputTick();
+	/// The single graphics owner: called from the IVRCompositor::Submit detour on
+	/// the thread that owns the game's D3D11 immediate context. Owns preparation,
+	/// every IVROverlay call and cleanup; ticks from other threads are refused.
+	void SubmitTick(vr::EVREye eye);
 
-	/// Always keep the in-scene panel visible while native hosting is disabled.
-	constexpr bool IsHostingPanel() noexcept { return false; }
+	/// Requests a fault from any thread; the owner consumes it on its next tick.
+	void ReportFault(const char* reason);
+
+	/// True while the runtime accepted the panel calls and ownership is intact.
+	bool IsHostingPanel();
+
+	/// One-line reason for the current hosting state, for the settings UI.
+	const char* StatusText();
 }

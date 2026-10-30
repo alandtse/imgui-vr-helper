@@ -891,6 +891,15 @@ float4 main(PS_INPUT input) : SV_TARGET
 				const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds,
 				vr::EVRSubmitFlags flags)
 			{
+				// Native hosting drives the runtime from this thread, which owns
+				// the immediate context the panel is written on.
+				try {
+					RuntimeOverlay::SubmitTick(eye);
+				} catch (const std::exception& e) {
+					logs::error("RuntimeOverlay: submit tick failed: {}", e.what());
+					RuntimeOverlay::ReportFault("native overlay submit threw");
+				}
+
 				if (!g_renderDisabled.load(std::memory_order_relaxed) &&
 					texture && texture->handle && texture->eType == vr::TextureType_DirectX) {
 					// Guard against vrclient throwing std::system_error
@@ -1182,8 +1191,10 @@ float4 main(PS_INPUT input) : SV_TARGET
 			return true;
 		}
 
+		// Snapshot handedness under Input's mutex; the raw state field is written by
+		// the input thread.
 		const auto attachIdx = Util::GetControllerIndexForDevice(
-			s.attachController, state.lastKnownLeftHandedMode);
+			s.attachController, Input::IsLeftHanded());
 		if (attachIdx == vr::k_unTrackedDeviceIndexInvalid)
 			return false;
 
@@ -1702,12 +1713,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		auto hudClients = HelperImpl::GetSingleton().SnapshotHUDClients();
 		auto worldClients = HelperImpl::GetSingleton().SnapshotWorldQuadClients();
 
-		// Focused panel-mode client gate (existing semantics). Held as a
-		// strong ref for the rest of this function so a concurrent
-		// UnregisterClient on another thread can't free it out from under
-		// GetMenuSRV's CreateShaderResourceView call below. When the runtime
-		// hosts the panel (RuntimeOverlay), the panel and cursor passes stand
-		// down — the runtime composites the panel with the cursor baked in.
+		// Hold the panel through GetMenuSRV so concurrent UnregisterClient cannot free it during SRV creation.
 		winrt::com_ptr<ID3D11Texture2D> menuTex;
 		bool wantPanelPass = false;
 		if (focused != 0 && s.attachMode != Overlay::AttachMode::None &&
