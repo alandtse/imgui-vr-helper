@@ -106,6 +106,46 @@ TEST_CASE("Reversed depth mirrors the standard mapping", "[occlusion][depth][rev
 	REQUIRE_FALSE(DepthForMetres(0.0f, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Reversed, unused));
 }
 
+TEST_CASE("Depth convention is resolved from the projection's depth scale", "[occlusion][depth][convention]")
+{
+	// Measured on Skyrim VR: near = 13, far = 353840, |m[10]| = 3.7e-5.
+	const float measuredNear = 13.0f, measuredFar = 353840.0f;
+	float m[16]{};
+	m[10] = -3.7e-5f;  // sign is not the discriminator; magnitude is
+	DepthConvention resolved = DepthConvention::Standard;
+	REQUIRE(ResolveDepthConvention(m, measuredNear, measuredFar, resolved));
+	REQUIRE(resolved == DepthConvention::Reversed);
+
+	// The standard-Z form of the same frustum would be |m[10]| == far/(far-near),
+	// which is ~27000x larger here, so the two can never be confused.
+	m[10] = measuredFar / (measuredFar - measuredNear);
+	REQUIRE(ResolveDepthConvention(m, measuredNear, measuredFar, resolved));
+	REQUIRE(resolved == DepthConvention::Standard);
+
+	// A plausible first-person near/far range also resolves, matching HelmetOverlaysNG's
+	// finding that VR reports reversed depth.
+	const float near = 0.1f, far = 1000.0f;
+	m[10] = near / (far - near);
+	REQUIRE(ResolveDepthConvention(m, near, far, resolved));
+	REQUIRE(resolved == DepthConvention::Reversed);
+	m[10] = far / (far - near);
+	REQUIRE(ResolveDepthConvention(m, near, far, resolved));
+	REQUIRE(resolved == DepthConvention::Standard);
+
+	// Menu/degenerate cameras must be refused, not guessed: at the main menu the
+	// game reports an infinite far plane with m[10] ~ 0 and near/far both 0.
+	m[10] = -9.8e-5f;
+	REQUIRE_FALSE(ResolveDepthConvention(m, 0.0f, 0.0f, resolved));
+	m[10] = 0.0f;
+	REQUIRE_FALSE(ResolveDepthConvention(m, 0.1f, 1000.0f, resolved));
+	// A scale matching neither branch is refused rather than snapped to the near one.
+	m[10] = 0.5f;
+	REQUIRE_FALSE(ResolveDepthConvention(m, 0.1f, 1000.0f, resolved));
+	// Non-finite input.
+	m[10] = std::numeric_limits<float>::quiet_NaN();
+	REQUIRE_FALSE(ResolveDepthConvention(m, 0.1f, 1000.0f, resolved));
+}
+
 TEST_CASE("The production opacity threshold matches the tested constant", "[occlusion][alpha]")
 {
 	// The pixel shader reads this value from a constant buffer; keeping the

@@ -59,6 +59,48 @@ namespace ImGuiVRHelper::HUDOcclusion
 		Reversed,  ///< near = 1, far = 0
 	};
 
+	/// Resolve the convention from the camera projection matrix and the near/far
+	/// range the game reports.
+	///
+	/// The discriminator is the magnitude of the depth scale, m[10]:
+	///   standard depth: |m[10]| == far  / (far - near)
+	///   reversed depth: |m[10]| == near / (far - near)
+	/// Those differ by a factor of far/near, so on a real camera the two are
+	/// orders of magnitude apart and never ambiguously close. Measured on Skyrim
+	/// VR: near = 13, far = 353840 gives |m[10]| = 3.7e-5, which is the reversed
+	/// value (3.674e-5) to 0.7% and is 27000x away from the standard one (1.00003).
+	///
+	/// The sign of m[10] * perspective is NOT used: it is the same sign for a
+	/// mirrored-eye projection and says nothing reliable about the depth range.
+	inline bool ResolveDepthConvention(const float* m, float camNear, float camFar,
+		DepthConvention& out)
+	{
+		if (!m || !std::isfinite(camNear) || !std::isfinite(camFar))
+			return false;
+		if (!(camNear > 0.0f) || !(camFar > camNear))
+			return false;
+		const float span = camFar - camNear;
+		if (!(span > 0.0f))
+			return false;
+		const float scale = std::abs(m[10]);
+		if (!std::isfinite(scale) || !(scale > 0.0f))
+			return false;
+
+		const float standard = camFar / span;
+		const float reversed = camNear / span;
+		// 10% is far tighter than the far/near ratio between the two candidates,
+		// so this cannot pick the wrong branch on a real frustum.
+		if (std::abs(scale - reversed) <= 0.10f * reversed) {
+			out = DepthConvention::Reversed;
+			return true;
+		}
+		if (std::abs(scale - standard) <= 0.10f * standard) {
+			out = DepthConvention::Standard;
+			return true;
+		}
+		return false;
+	}
+
 	/// Distance in metres -> game camera units, then to the depth value that
 	/// hides the plane under the given convention. Returns false for input that
 	/// would write an unusable depth; the caller must then skip the write

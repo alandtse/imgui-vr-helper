@@ -285,26 +285,13 @@ float main(PS_INPUT input) : SV_Depth
 		/// (near = 0) perspective projection, which is the only case a standard-Z
 		/// value can be written into. A renderer mod may run depth reversed
 		/// (near = 1), so an unreadable or unfamiliar projection must not stamp:
-		/// guessing wrong culls geometry that should have been visible.
-		/// True when the engine camera positively looks like a standard-Z (near = 0)
-		/// perspective projection, which is the only thing a standard-Z depth value
-		/// may be written into. A renderer mod can run depth reversed (near = 1), so
-		/// an unreadable or unfamiliar projection must not stamp: guessing wrong
-		/// culls geometry that should have stayed visible.
-		///
-		/// `camNear`/`camFar` are cross-checked against the same matrix here rather
-		/// than trusted on their own. They come from the camera data block (the same
-		/// source the shipped world-quad depth compare uses), while the matrix is
-		/// what proves the depth convention; agreeing on the ratio means both refer
-		/// to the frustum actually being rendered.
-		/// Resolves which end of the depth range the near plane sits at, and
-		/// checks the near/far range agrees with the live projection matrix.
-		///
-		/// Skyrim VR reports reversed depth, so refusing that convention (as this
-		/// did) would decline to draw on the runtime we target. HelmetOverlaysNG
-		/// reads the same matrix and adapts, writing the near value for whichever
-		/// convention is active; this mirrors that instead of standing down.
-		bool ResolveDepthConvention(float camNear, float camFar, HUDOcclusion::DepthConvention& out)
+		/// Resolves the depth convention and confirms the camera near/far describe
+		/// the frustum actually being rendered. See HUDOcclusion::ResolveDepthConvention
+		/// for why the magnitude of m[10] decides it: `camNear`/`camFar` come from
+		/// the camera data block (the same source the shipped world-quad depth
+		/// compare uses) and are cross-checked against the projection matrix, so a
+		/// stale or unrelated near/far cannot be combined with a live matrix.
+		bool ResolveConvention(float camNear, float camFar, HUDOcclusion::DepthConvention& out)
 		{
 			auto* shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 			if (!shadowState)
@@ -315,34 +302,7 @@ float main(PS_INPUT input) : SV_Depth
 				if (!std::isfinite(m[i]))
 					return false;
 			}
-			if (std::abs(m[15]) > 1e-4f)
-				return false;  // not a perspective projection
-			const bool column = std::abs(std::abs(m[14]) - 1.0f) < 1e-3f;
-			const bool row = std::abs(std::abs(m[11]) - 1.0f) < 1e-3f;
-			if (column == row)
-				return false;  // neither layout, or both: unrecognised
-			const float perspective = column ? m[14] : m[11];
-			const float depthScale = m[10] * perspective;
-			if (!(std::abs(depthScale) > 0.0f))
-				return false;  // degenerate: no depth range at all
-
-			// Plausible range, then agree with the matrix. The depth scale
-			// magnitude is far/(far-near) under either convention, so a range that
-			// does not reproduce it is not describing this projection.
-			if (!(camNear > 0.0f) || !(camFar > camNear))
-				return false;
-			const float ratio = camFar / camNear;
-			if (!(ratio > 1.0f) || ratio > 1.0e6f)
-				return false;
-			const float expectedScale = camFar / (camFar - camNear);
-			const float actualScale = std::abs(m[10]);
-			if (std::abs(actualScale - expectedScale) > 0.05f * expectedScale)
-				return false;
-
-			// Sign of m[10] against the perspective term is positive for standard
-			// depth and negative for reversed; same test HelmetOverlaysNG uses.
-			out = depthScale > 0.0f ? HUDOcclusion::DepthConvention::Standard : HUDOcclusion::DepthConvention::Reversed;
-			return true;
+			return HUDOcclusion::ResolveDepthConvention(m, camNear, camFar, out);
 		}
 
 		bool DrawsToMainDepth()
@@ -490,6 +450,23 @@ float main(PS_INPUT input) : SV_Depth
 			ctx->Unmap(buffer, 0);
 		}
 
+		/// Logs each distinct backend status once. Without this the only record of
+		/// whether the stamp ever ran is the install line's initial status, so an
+		/// install that silently stayed off and one that was culling correctly look
+		/// identical in the log.
+		void LogStatusOnce(BackendStatus status)
+		{
+			// Once per distinct status per session. The hook runs once per world
+			// batch — several times a frame, including passes that are not drawing
+			// the main depth target — so logging every change alternates between
+			// two statuses and buries the log in thousands of identical lines.
+			static std::atomic<uint32_t> seen{ 0 };
+			const uint32_t bit = 1u << static_cast<uint32_t>(status);
+			if (seen.fetch_or(bit) & bit)
+				return;
+			logs::info("HUDOcclusion: {}", BackendStatusToString(status));
+		}
+
 		void StampWorldDepth()
 		{
 			const auto& settings = Overlay::State::GetSingleton().settings;
@@ -502,13 +479,14 @@ float main(PS_INPUT input) : SV_Depth
 					return BackendStatus::Disabled;
 				if (!DrawsToMainDepth())
 					return BackendStatus::NotMainDepth;
-				if (!ResolveDepthConvention(range.camNear, range.camFar, convention))
+				if (!ResolveConvention(range.camNear, range.camFar, convention))
 					return BackendStatus::UnusableDepth;
 				return BackendStatus::Ready;
 			}();
 
 			if (!IsReady(preconditions)) {
 				g_status.store(preconditions, std::memory_order_relaxed);
+				LogStatusOnce(preconditions);
 				return;
 			}
 
@@ -553,6 +531,7 @@ float main(PS_INPUT input) : SV_Depth
 				target.camNear, target.camFar, convention, draws);
 			if (!IsReady(built)) {
 				g_status.store(built, std::memory_order_relaxed);
+				LogStatusOnce(built);
 				return;
 			}
 
@@ -648,6 +627,10 @@ float main(PS_INPUT input) : SV_Depth
 			}
 
 			g_status.store(status, std::memory_order_relaxed);
+			// Only announce the successful path; the failure paths above report
+			// themselves and repeating them every frame would flood the log.
+			if (IsReady(status))
+				LogStatusOnce(status);
 		}
 
 		// ---- Hook ------------------------------------------------------
