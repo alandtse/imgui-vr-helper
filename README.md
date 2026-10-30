@@ -162,7 +162,10 @@ Menu Framework**](https://github.com/alandtse/SKSE-Menu-Framework-3) are working
   rather than 0 — instead of standing down on it. It stays off whenever the
   combination isn't provably safe — depth not the main target, an unrecognised
   camera projection, or a near/far range that disagrees with the matrix — and then
-  renders the world normally. It cannot be verified without a headset, hence opt-in.
+  renders the world normally. It also marks those pixels with stencil `0xFF`, the
+  value the hidden-area mesh uses, so the VR passes that already skip such pixels
+  skip these too; flat rendering writes depth only. It cannot be verified without a
+  headset, hence opt-in.
 
 ## Build
 
