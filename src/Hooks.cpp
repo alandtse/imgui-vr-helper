@@ -107,10 +107,15 @@ namespace ImGuiVRHelper::Hooks
 				}
 			}
 
-			// Runs even while the render path is disabled so an already-shown
-			// runtime overlay gets hidden; needs DispatchFrame's tinter output
-			// when active, hence after the block above.
-			RuntimeOverlay::RenderTick();
+			// Observer only: masks native hosting if the submit tick stops. All
+			// overlay work happens on the Submit detour thread, which owns the
+			// D3D11 immediate context.
+			try {
+				RuntimeOverlay::RenderTick();
+			} catch (const std::exception& e) {
+				logs::error("Hooks: native overlay tick failed: {}", e.what());
+				RuntimeOverlay::ReportFault("native overlay tick threw");
+			}
 
 			return g_originalPresent(This, SyncInterval, Flags);
 		}
@@ -315,10 +320,6 @@ namespace ImGuiVRHelper::Hooks
 			static void thunk(RE::BSTEventSource<RE::InputEvent*>* a_dispatcher,
 				RE::InputEvent* const* a_events)
 			{
-				// Before the disabled early-return so a shown runtime overlay
-				// still gets hidden after the render path latches off.
-				RuntimeOverlay::InputTick();
-
 				// If the overlay render path is disabled (e.g. Community Shaders
 				// hosts the in-scene overlay, or a VR fault latched us off),
 				// don't feed or swallow input — just chain through so nothing
