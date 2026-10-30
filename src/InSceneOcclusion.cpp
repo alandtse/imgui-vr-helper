@@ -478,9 +478,17 @@ float main(PS_INPUT input) : SV_Depth
 		}
 
 		/// Community Shaders (and its Open Shaders successor) owns depth semantics:
-		/// it rewrites depth-stencil state on submit and consumes exact near-plane
-		/// depth for its HMD mask, so a stamp here is not provably safe. Re-checked
-		/// every frame rather than latched, since the module can load after us.
+		/// its screen-space effects read the main depth buffer we would be writing
+		/// (deferred composite, effects, temporal AA, upscaling), so a stamp here is
+		/// not provably safe. Re-checked every frame rather than latched, since the
+		/// module can load after us.
+		///
+		/// Note this is deliberately conservative and broader than strictly needed
+		/// in a given install: with Reverse Z off and VR StereoOptimizations Off
+		/// (CS's stencil swap and its near-plane HMD mask both inactive) the stamp
+		/// would likely be harmless. Narrowing the check to the active sub-features
+		/// would widen the tested surface for little gain, so the module presence
+		/// stays the gate.
 		bool RendererOwnsDepth()
 		{
 			if (GetModuleHandleW(L"CommunityShaders.dll"))
@@ -676,6 +684,18 @@ float main(PS_INPUT input) : SV_Depth
 		if (g_installed.exchange(true))
 			return;
 		if (!Globals::IsReady()) {
+			g_installed.store(false);
+			return;
+		}
+
+		// The trampoline fails by terminating the game, not by returning, so check
+		// there is room first: occlusion is optional, the game loading is not.
+		constexpr std::size_t kThunkSlotSize = 14;
+		if (SKSE::GetTrampoline().free_size() < kThunkSlotSize) {
+			logs::error(
+				"HUDOcclusion: no trampoline room ({} bytes free); world occlusion "
+				"stays off and the world renders normally",
+				SKSE::GetTrampoline().free_size());
 			g_installed.store(false);
 			return;
 		}

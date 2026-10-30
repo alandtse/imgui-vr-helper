@@ -524,7 +524,14 @@ namespace ImGuiVRHelper::Hooks
 			return;
 		}
 
-		SKSE::AllocTrampoline(28);
+		// Each write_thunk_call below consumes one 14-byte trampoline slot
+		// (jmp [rip] + 8-byte target). This used to be sized for exactly the two
+		// hooks here; exhausting it makes SKSE report_and_fail, which terminates
+		// the game during load. Size it for the hooks we install with room to
+		// spare rather than exactly.
+		constexpr std::size_t kThunkSlotSize = 14;
+		constexpr std::size_t kThunkCount = 4;  // InitD3D, PollInputDevices, world-start, spare
+		SKSE::AllocTrampoline(kThunkSlotSize * kThunkCount);
 
 		logs::info("Hooks::Install - writing BSGraphics::Renderer::InitD3D thunk");
 		// VR offset 77226 + 0x2BC matches the SCS Hooks.cpp install site for VR.
