@@ -58,6 +58,11 @@ namespace ImGuiVRHelper::HUDOcclusion
 
 	namespace
 	{
+		/// Stencil value for occluded HUD pixels. 0xFF already means "skip this pixel"
+		/// to the VR passes that cull the hidden-area mesh, so writing it here reuses
+		/// that convention instead of adding a new value no pass tests for.
+		constexpr UINT kHudStencilRef = 0xFF;
+
 		// Same unit-quad geometry and constant layout the HUD pass uses, so the
 		// depth write lands on exactly the pixels the HUD composites over. The
 		// pixel shader writes only SV_Depth, and only where the layer's own canvas
@@ -136,6 +141,7 @@ float main(PS_INPUT input) : SV_Depth
 			winrt::com_ptr<ID3D11InputLayout> layout;
 			winrt::com_ptr<ID3D11SamplerState> sampler;
 			winrt::com_ptr<ID3D11DepthStencilState> depthWrite;
+			winrt::com_ptr<ID3D11DepthStencilState> depthStencilWrite;
 			winrt::com_ptr<ID3D11RasterizerState> rasterizer;
 			winrt::com_ptr<ID3D11BlendState> noColor;
 		};
@@ -262,6 +268,20 @@ float main(PS_INPUT input) : SV_Depth
 			dsDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
 			dsDesc.StencilEnable = FALSE;
 			if (FAILED(device->CreateDepthStencilState(&dsDesc, g_pipeline.depthWrite.put())))
+				return false;
+
+			// Same depth write, plus stencil 0xFF so the VR passes that already skip
+			// hidden-area pixels (sun glare, SSAO, water, HDR imagespace) skip these
+			// pixels too. Only the depth-write state is used outside VR: the value is
+			// a VR convention and has no consumer in flat rendering.
+			D3D11_DEPTH_STENCIL_DESC stencilDesc = dsDesc;
+			stencilDesc.StencilEnable = TRUE;
+			stencilDesc.StencilReadMask = 0xFF;
+			stencilDesc.StencilWriteMask = 0xFF;
+			stencilDesc.FrontFace = { D3D11_STENCIL_OP_REPLACE, D3D11_STENCIL_OP_REPLACE,
+				D3D11_STENCIL_OP_REPLACE, D3D11_COMPARISON_ALWAYS };
+			stencilDesc.BackFace = stencilDesc.FrontFace;
+			if (FAILED(device->CreateDepthStencilState(&stencilDesc, g_pipeline.depthStencilWrite.put())))
 				return false;
 
 			D3D11_RASTERIZER_DESC rasDesc{};
@@ -569,7 +589,7 @@ float main(PS_INPUT input) : SV_Depth
 
 			ctx->OMSetRenderTargets(0, nullptr, target.dsv);
 			ctx->OMSetBlendState(g_pipeline.noColor.get(), nullptr, 0xFFFFFFFF);
-			ctx->OMSetDepthStencilState(g_pipeline.depthWrite.get(), 0);
+			ctx->OMSetDepthStencilState(g_pipeline.depthStencilWrite.get(), kHudStencilRef);
 			ctx->RSSetState(g_pipeline.rasterizer.get());
 			ctx->IASetInputLayout(g_pipeline.layout.get());
 			ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
