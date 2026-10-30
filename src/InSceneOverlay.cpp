@@ -155,7 +155,7 @@ cbuffer DepthCB : register(b0)
 	float  depthTestEnable; // 1 = occlude against the scene, 0 = passthrough
 	float2 depthScale;      // sceneDepth texel size / submit texel size (upscaling can leave the
 	                        // depth buffer at a lower internal resolution than the submit target)
-	float  _pad;
+	float  reversedDepth;
 };
 struct PS_INPUT
 {
@@ -167,6 +167,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 	float4 col = shaderTexture.Sample(sampleType, input.uv);
 	if (depthTestEnable > 0.5f) {
 		float sd = sceneDepth.Load(int3(int2(input.pos.xy * depthScale), 0));
+		if (reversedDepth > 0.5f)
+			sd = 1.0 - sd;
 		float sceneMetres = (cameraData.w / (cameraData.x - sd * cameraData.z)) * gameToMeter;
 		float billMetres = (helperNear * helperFar) / (helperFar - input.pos.z * (helperFar - helperNear));
 		if (billMetres > sceneMetres + depthBias)
@@ -205,7 +207,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 			float depthTestEnable = 0.0f;
 			// sceneDepth texel size / submit texel size — see the SceneDepthInfo comment below.
 			float depthScale[2] = { 1.0f, 1.0f };
-			float pad = 0.0f;
+			float reversedDepth = 0.0f;
 		};
 
 		struct Resources
@@ -1372,6 +1374,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 		float camFar = 0.0f;
 		float depthW = 0.0f;
 		float depthH = 0.0f;
+		bool reversedDepth = false;
+		bool conventionKnown = false;
 	};
 	SceneDepthInfo GetSceneDepthInfo()
 	{
@@ -1383,6 +1387,13 @@ float4 main(PS_INPUT input) : SV_TARGET
 		static REL::Relocation<std::uintptr_t> cameraData{ REL::RelocationID(517032, 403540) };
 		info.camNear = *reinterpret_cast<const float*>(cameraData.address() + 0x40);
 		info.camFar = *reinterpret_cast<const float*>(cameraData.address() + 0x44);
+		if (auto* shadowState = RE::BSGraphics::RendererShadowState::GetSingleton()) {
+			const auto eye = shadowState->GetVRRuntimeData().cameraData.getEye(0);
+			const auto* m = reinterpret_cast<const float*>(&eye.projMat);
+			DepthConvention convention = DepthConvention::Standard;
+			info.conventionKnown = ResolveDepthConvention(m, info.camNear, info.camFar, convention);
+			info.reversedDepth = convention == DepthConvention::Reversed;
+		}
 		if (info.srv) {
 			// The underlying resource's dimensions don't change without the SRV pointer itself
 			// changing (a new resource on an upscale-mode/resolution switch), so cache by pointer
@@ -1518,7 +1529,8 @@ float4 main(PS_INPUT input) : SV_TARGET
 		// the camera near/far look invalid, so the billboards still draw un-occluded.
 		SceneDepthInfo depthInfo = GetSceneDepthInfo();
 		WorldQuadDepthParams depthParams;
-		if (depthInfo.srv && depthInfo.camNear > 0.0f && depthInfo.camFar > depthInfo.camNear) {
+		if (depthInfo.srv && depthInfo.conventionKnown) {
+			depthParams.reversedDepth = depthInfo.reversedDepth ? 1.0f : 0.0f;
 			depthParams.cameraData[0] = depthInfo.camFar;
 			depthParams.cameraData[1] = depthInfo.camNear;
 			depthParams.cameraData[2] = depthInfo.camFar - depthInfo.camNear;
