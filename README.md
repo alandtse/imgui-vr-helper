@@ -24,13 +24,43 @@ the mod author.
 - All binds are rebindable in the settings, saved to
   `Data/SKSE/Plugins/ImGuiVRHelper.toml`.
 
-### Native overlay safety
+### Native overlay (experimental)
 
-The experimental **Native VR overlay for menus** path is temporarily disabled
-following GPU crashes that stopped when users turned it off. Menus render
-in-scene even if an older config has `useRuntimeOverlay=true`; no config edit
-is required. Native hosting will remain unavailable until runtime ownership
-and texture-consumption synchronization are validated.
+`useRuntimeOverlay = true` composites the focused menu as a SteamVR runtime
+overlay layer instead of drawing it into the eye buffers, so temporal upscalers
+and frame generation don't smear it. One thread owns the layer: the
+IVRCompositor::Submit detour thread that already draws into the submitted eye
+texture with the game's D3D11 immediate context. That thread copies the panel
+into a helper-owned texture, draws the helper cursor into that copy only, and
+makes every overlay call; a tick on any other thread is refused. The in-scene
+panel stands down only after every requested anchor accepts its width,
+transform and texture for consecutive frames (all anchors for
+`attachMode = Both`), so a half-hosted panel never replaces the menu.
+
+Hosting is limited to SteamVR. The helper classifies the module that implements
+the clean texture-submission overlay interface, and accepts only the stock
+`<runtime>\bin\vrclient_x64.dll` under a runtime root listed in
+`openvrpaths.vrpath` whose Win32 version identity is Valve Corporation's VR
+Client. A matching file name or registered location alone is not accepted. A
+game proxy, an unregistered runtime, a wrapper under a registered root, and the
+null/headless driver all keep the in-scene menu with a status that says why.
+OpenComposite has no readiness/capability query this helper can verify, so it
+also stays in-scene rather than treating a possibly no-op call as presentation.
+The two-frame confirmation is bound to the first accepted frame's client,
+configuration, tracking origin, anchor mask and texture generation, so a change
+cannot inherit a partial streak; both anchors of `attachMode = Both` must
+accept every call. A runtime accepting those calls is not proof that the
+compositor painted pixels. Failed width/transform/texture/show/hide/clear/destroy
+calls keep the in-scene menu, leave cleanup scheduled, and are retried while
+graphics ownership is verified; a Present/Submit thread conflict retains the
+pending cleanup without calling the runtime and says so in the status.
+Repeated refusals latch native hosting off until the setting is toggled while no
+handles are pending, and an off/on toggle grants a fresh backend probe. If the
+submit tick stops, the helper cannot guarantee removing what the runtime still
+shows: it resumes the in-scene menu, says so in the status and log, and keeps
+cleanup pending when ownership cannot be verified.
+SteamVR presentation on this owner thread still needs real-headset validation;
+the null driver does not exercise it.
 
 Helper graphics passes require D3D11.1 context-state isolation. If unavailable,
 the helper skips the affected pass rather than modifying unprotected game state.
