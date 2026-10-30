@@ -151,21 +151,18 @@ Menu Framework**](https://github.com/alandtse/SKSE-Menu-Framework-3) are working
   helper hands back a `GetApiFunction` vtable, and every later call goes through it.
 - The helper owns the Present hook and OpenVR access on the correct thread; clients
   never touch OpenVR.
-- **Optional world occlusion** (`hudDepthOcclusion`, off by default) skips drawing
-  the scene behind parts of the HUD that are fully opaque. It writes the HUD plane's
-  depth into the game's main depth buffer before the first world batch, so the depth
-  test discards what the HUD covers while anything nearer still draws. Only the
-  layer's own canvas alpha decides (254+), so it can never drift from the composited
-  art; layers from several clients union automatically (nearest opaque layer wins).
-  It reads the convention from the live projection matrix and adapts the way
-  HelmetOverlaysNG does — Skyrim VR reports reversed depth, so the near value is 1
-  rather than 0 — instead of standing down on it. It stays off whenever the
-  combination isn't provably safe — depth not the main target, an unrecognised
-  camera projection, or a near/far range that disagrees with the matrix — and then
-  renders the world normally. It also marks those pixels with stencil `0xFF`, the
-  value the hidden-area mesh uses, so the VR passes that already skip such pixels
-  skip these too; flat rendering writes depth only. It cannot be verified without a
-  headset, hence opt-in.
+- **Experimental VR world occlusion** (`hudDepthOcclusion`, off by default)
+  stamps each HUD plane's depth into the main depth buffer where its canvas
+  alpha reaches 254/255, rejecting world geometry behind that plane. The nearest
+  opaque layer wins overlapping pixels; planes inside the camera near distance
+  clamp to the near depth. The live perspective matrix selects standard or
+  reversed depth; unusable projections and non-main-depth batches skip stamping.
+  The VR path also writes stencil `0xFF` for hidden-area skip consumers; renderer
+  state overrides can suppress that stencil write. Canvas or pose changes between
+  stamping and composition can leave edge artifacts or briefly missing world
+  pixels, and depth-based effects see the synthetic HUD surface. Real-headset,
+  temporal reconstruction and stencil compatibility remain unverified. No
+  frame-time improvement has been measured.
 
 ## Build
 
