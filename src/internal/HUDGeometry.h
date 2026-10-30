@@ -19,6 +19,43 @@ namespace ImGuiVRHelper::InSceneOverlay
 		float centerY = 0.0f;
 	};
 
+	/// Which end of [0,1] the near plane sits at in the scene depth buffer.
+	enum class DepthConvention
+	{
+		Standard,  ///< near = 0, far = 1
+		Reversed,  ///< near = 1, far = 0
+	};
+
+	/// Resolve the convention from a perspective projection and the camera range.
+	/// Do not switch to testing the sign of m[10]: a mirrored eye matrix gives the
+	/// same sign under either convention. The depth scales differ by far/near.
+	/// Returns false rather than guessing when the inputs cannot be classified.
+	inline bool ResolveDepthConvention(const float* m, float camNear, float camFar,
+		DepthConvention& out)
+	{
+		if (!m || !std::isfinite(camNear) || !std::isfinite(camFar))
+			return false;
+		if (!(camNear > 0.0f) || !(camFar > camNear))
+			return false;
+		const float span = camFar - camNear;
+		const float scale = std::abs(m[10]);
+		if (!std::isfinite(scale) || !(scale > 0.0f))
+			return false;
+
+		constexpr float kTolerance = 0.10f;
+		const float reversed = camNear / span;
+		if (std::abs(scale - reversed) <= kTolerance * reversed) {
+			out = DepthConvention::Reversed;
+			return true;
+		}
+		const float standard = camFar / span;
+		if (std::abs(scale - standard) <= kTolerance * standard) {
+			out = DepthConvention::Standard;
+			return true;
+		}
+		return false;
+	}
+
 	/// Per-client HUD plane override, in meters and as a fraction of the view.
 	/// A zero field means "use the helper's global setting".
 	struct HUDPlaneOverride
