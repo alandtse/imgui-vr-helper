@@ -389,6 +389,33 @@ float main(PS_INPUT input) : SV_Depth
 			BOOL m_value = FALSE;
 		};
 
+		/// The stencil reference is dropped by the same swap for the same reason, and
+		/// the stamp binds kHudStencilRef, so the game's value has to be put back.
+		/// Constructed before the guard so it runs after the guard restored its state.
+		class StencilRefRestore final
+		{
+		public:
+			explicit StencilRefRestore(ID3D11DeviceContext* context) :
+				m_context(context)
+			{
+				m_context->OMGetDepthStencilState(nullptr, &m_reference);
+			}
+
+			~StencilRefRestore() noexcept
+			{
+				winrt::com_ptr<ID3D11DepthStencilState> current;
+				m_context->OMGetDepthStencilState(current.put(), nullptr);
+				m_context->OMSetDepthStencilState(current.get(), m_reference);
+			}
+
+			StencilRefRestore(const StencilRefRestore&) = delete;
+			StencilRefRestore& operator=(const StencilRefRestore&) = delete;
+
+		private:
+			ID3D11DeviceContext* m_context;
+			UINT m_reference = 0;
+		};
+
 		// ---- Draw ------------------------------------------------------
 
 		/// One layer's quad: the same HUD projection the composite uses, per eye,
@@ -575,9 +602,10 @@ float main(PS_INPUT input) : SV_Depth
 				return;
 			}
 
-			// Declared before the guard so it restores after the guard has put the
-			// pipeline back: predication is not part of a device-context state.
+			// Constructed before the guard so they restore after it; neither predication
+			// nor the stencil reference is part of a device-context state.
 			PredicationRestore predication(ctx);
+			StencilRefRestore stencilRef(ctx);
 
 			// Everything else this draw touches is restored on scope exit, including
 			// stage slots a plain save/restore would miss.
