@@ -1,8 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-Modding-Exception
 // Copyright (c) 2025 ImGuiVRHelper contributors. See COPYING and EXCEPTIONS.md.
-//
-// Pure logic for skipping world rendering behind opaque HUD pixels. No runtime
-// dependency — unit-testable headless.
 
 #pragma once
 
@@ -17,10 +14,7 @@ namespace ImGuiVRHelper::HUDOcclusion
 {
 	using ImGuiVRHelper::InSceneOverlay::DepthConvention;
 
-	/// A HUD layer that will be composited over this frame's eye image, with the
-	/// resolved plane it is drawn at. Whether a pixel is actually opaque comes
-	/// from that same layer's canvas alpha at draw time, so a claim can never
-	/// drift from the art composited on top of the world.
+	/// HUD layer identity and resolved plane.
 	struct LayerClaim
 	{
 		uint32_t clientId = 0;
@@ -28,42 +22,24 @@ namespace ImGuiVRHelper::HUDOcclusion
 		float coverage = 0.0f;
 	};
 
-	/// Farthest plane first. Each layer writes depth only where its own canvas is
-	/// opaque, so at any pixel the nearest opaque layer wins and a transparent
-	/// layer leaves an earlier, farther claim standing. A pixel covered by any
-	/// opaque layer ends up hidden, which is exactly what compositing that layer
-	/// over the world does.
+	/// Sort by descending depth, preserving registration order for ties.
 	inline void SortFarthestFirst(std::vector<LayerClaim>& claims)
 	{
 		std::stable_sort(claims.begin(), claims.end(),
 			[](const LayerClaim& a, const LayerClaim& b) { return a.depth > b.depth; });
 	}
 
-	/// Canvas alpha at or above which the composite replaces the world outright.
-	/// Requiring essentially solid alpha keeps blended art (fades, glows,
-	/// translucent backdrops) out of occlusion: those pixels still show the world
-	/// through them, so the world must keep drawing there.
+	/// Minimum sampled canvas alpha eligible for occlusion.
 	inline constexpr float kOpaqueAlphaThreshold = 254.0f / 255.0f;
 
-	inline bool IsOpaque(float alpha)
-	{
-		return std::isfinite(alpha) && alpha >= kOpaqueAlphaThreshold;
-	}
-
-	/// What to write for a plane at or in front of the camera near plane, where no
-	/// depth value can represent the plane's own distance.
+	/// Handling for planes at or inside the camera near plane.
 	enum class NearPlanePolicy
 	{
 		Refuse,  ///< the caller skips this layer
 		Clamp,   ///< write the near plane, so the layer culls everything behind it
 	};
 
-	/// Distance in metres -> game camera units, then to the depth value that
-	/// hides the plane under the given convention. Returns false for input that
-	/// would write an unusable depth; the caller must then skip the write
-	/// instead of guessing. A helmet-frame layer sits nearer than the near plane,
-	/// so it requests Clamp: the near plane is written and the layer culls what it
-	/// covers, which is what a visor wants.
+	/// Convert metres to camera depth; returns false without changing out for unusable inputs.
 	inline bool DepthForMetres(float metres, float camNear, float camFar, float gameToMetre,
 		DepthConvention convention, float& out, NearPlanePolicy policy = NearPlanePolicy::Refuse)
 	{
@@ -74,7 +50,7 @@ namespace ImGuiVRHelper::HUDOcclusion
 		const float gameUnits = metres / gameToMetre;
 		if (!(gameUnits > camNear)) {
 			if (policy != NearPlanePolicy::Clamp)
-				return false;  // at or in front of the near plane: nothing to write
+				return false;
 			out = convention == DepthConvention::Reversed ? 1.0f : 0.0f;
 			return true;
 		}
@@ -87,11 +63,7 @@ namespace ImGuiVRHelper::HUDOcclusion
 		return true;
 	}
 
-	/// Eye viewport inside the side-by-side depth target. Dynamic resolution
-	/// renders a scaled sub-rect of the full-size target, so the eye quad must
-	/// not assume the whole half is live. Callers pass the ratios only when the
-	/// depth target is still full size; a target that is already shrunk would be
-	/// shrunk twice.
+	/// Eye viewport inside a side-by-side depth target.
 	struct EyeViewport
 	{
 		float x = 0.0f;
@@ -100,6 +72,7 @@ namespace ImGuiVRHelper::HUDOcclusion
 		float height = 0.0f;
 	};
 
+	/// Pass unit ratios when the target is already scaled; returns false for invalid inputs.
 	inline bool MakeEyeViewport(uint32_t targetWidth, uint32_t targetHeight,
 		float drsWidthRatio, float drsHeightRatio, bool rightEye, EyeViewport& out)
 	{
@@ -117,8 +90,7 @@ namespace ImGuiVRHelper::HUDOcclusion
 		return true;
 	}
 
-	/// Why the depth write did not happen. Every one of these renders the world
-	/// normally; none of them degrades correctness instead.
+	/// Last occlusion attempt's backend status.
 	enum class BackendStatus
 	{
 		Ready,

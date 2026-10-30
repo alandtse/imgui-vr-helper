@@ -636,8 +636,6 @@ namespace ImGuiVRHelper::SettingsUI
 				Overlay::Config::kMaxHUDCoverage, "%.2f");
 			ImGui::TextDisabled("    Fraction of the view the HUD fills; 1.0 may clip at the lens.");
 
-			// Experimental and opt-in: it writes the game's main depth buffer, which
-			// post-process passes can read. The status line reports why it is inactive.
 			ImGui::Checkbox("Skip hidden world", &s.hudDepthOcclusion);
 			ImGui::TextDisabled("    Do not draw the scene behind opaque HUD pixels (experimental).");
 			if (s.hudDepthOcclusion) {

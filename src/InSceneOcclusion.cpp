@@ -1,24 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-Modding-Exception
 // Copyright (c) 2025 ImGuiVRHelper contributors. See COPYING and EXCEPTIONS.md.
-//
-// Depth-only world occlusion behind fully opaque HUD pixels.
-//
-// Pixels the HUD covers completely are invisible behind it, so rasterising the
-// world there is wasted work. Before the game issues its first world batch this
-// stamps each HUD plane's depth into kMAIN wherever that layer's own canvas alpha
-// is opaque, so the depth test discards the world behind the panel while
-// anything nearer still draws.
-//
-// Opacity comes from the layer's own canvas, never from a separate client mask,
-// so the write cannot drift from the art composited on top of it. Colour and
-// stencil are never written. Every situation this code cannot prove safe renders
-// the world normally instead of guessing.
-//
-// Known limitation: layer canvases are filled during DispatchFrame while the
-// world renders between presents, so a canvas that changes from fully opaque to
-// transparent can leave the world missing behind that area for a single frame.
-// The 254/255 threshold keeps this to opaque<->transparent transitions, and the
-// setting is off by default because only a headset can confirm it looks right.
 
 #include "pch.h"
 
@@ -58,15 +39,8 @@ namespace ImGuiVRHelper::HUDOcclusion
 
 	namespace
 	{
-		/// Stencil value for occluded HUD pixels. 0xFF already means "skip this pixel"
-		/// to the VR passes that cull the hidden-area mesh, so writing it here reuses
-		/// that convention instead of adding a new value no pass tests for.
 		constexpr UINT kHudStencilRef = 0xFF;
 
-		// Same unit-quad geometry and constant layout the HUD pass uses, so the
-		// depth write lands on exactly the pixels the HUD composites over. The
-		// pixel shader writes only SV_Depth, and only where the layer's own canvas
-		// alpha is opaque — blended art keeps the world visible through it.
 		constexpr const char* kVertexShader = R"(
 cbuffer MatrixBuffer : register(b0)
 {
@@ -125,7 +99,6 @@ float main(PS_INPUT input) : SV_Depth
 		struct DepthCB
 		{
 			float planeDepth = 0.0f;
-			// The tested constant, not a magic literal duplicated in HLSL.
 			float opacityThreshold = kOpaqueAlphaThreshold;
 			float depthPad[2] = { 0.0f, 0.0f };
 		};
@@ -150,9 +123,7 @@ float main(PS_INPUT input) : SV_Depth
 		std::atomic<bool> g_installed{ false };
 		std::atomic<BackendStatus> g_status{ BackendStatus::Disabled };
 		std::atomic<bool> g_pipelineFailed{ false };
-		/// Device the cached pipeline was created on; a different device means the
-		/// cached state objects belong to something else and must not be bound.
-		std::atomic<ID3D11Device*> g_pipelineDevice{ nullptr };
+		winrt::com_ptr<ID3D11Device> g_attemptedDevice;
 
 		const char* BackendStatusToString(BackendStatus status)
 		{
@@ -187,16 +158,16 @@ float main(PS_INPUT input) : SV_Depth
 			return code;
 		}
 
-		bool CreatePipeline(ID3D11Device* device)
+		bool CreatePipeline(ID3D11Device* device, Pipeline& pipeline)
 		{
 			const auto vsBlob = Compile(kVertexShader, "vs_5_0", "vertex");
 			const auto psBlob = Compile(kPixelShader, "ps_5_0", "pixel");
 			if (!vsBlob || !psBlob)
 				return false;
 			if (FAILED(device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(),
-					nullptr, g_pipeline.vs.put())) ||
+					nullptr, pipeline.vs.put())) ||
 				FAILED(device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(),
-					nullptr, g_pipeline.ps.put()))) {
+					nullptr, pipeline.ps.put()))) {
 				logs::error("HUDOcclusion: shader creation failed");
 				return false;
 			}
@@ -206,7 +177,7 @@ float main(PS_INPUT input) : SV_Depth
 				{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
 			};
 			if (FAILED(device->CreateInputLayout(elems, 2, vsBlob->GetBufferPointer(),
-					vsBlob->GetBufferSize(), g_pipeline.layout.put()))) {
+					vsBlob->GetBufferSize(), pipeline.layout.put()))) {
 				logs::error("HUDOcclusion: input layout creation failed");
 				return false;
 			}
@@ -240,40 +211,32 @@ float main(PS_INPUT input) : SV_Depth
 			cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 
 			cbDesc.ByteWidth = sizeof(QuadCB);
-			if (FAILED(device->CreateBuffer(&cbDesc, nullptr, g_pipeline.quadCB.put())))
+			if (FAILED(device->CreateBuffer(&cbDesc, nullptr, pipeline.quadCB.put())))
 				return false;
 			cbDesc.ByteWidth = sizeof(DepthCB);
-			if (FAILED(device->CreateBuffer(&cbDesc, nullptr, g_pipeline.depthCB.put())))
+			if (FAILED(device->CreateBuffer(&cbDesc, nullptr, pipeline.depthCB.put())))
 				return false;
-			if (FAILED(device->CreateBuffer(&vbDesc, &vbData, g_pipeline.vb.put())) ||
-				FAILED(device->CreateBuffer(&ibDesc, &ibData, g_pipeline.ib.put()))) {
+			if (FAILED(device->CreateBuffer(&vbDesc, &vbData, pipeline.vb.put())) ||
+				FAILED(device->CreateBuffer(&ibDesc, &ibData, pipeline.ib.put()))) {
 				logs::error("HUDOcclusion: geometry buffer creation failed");
 				return false;
 			}
 
 			D3D11_SAMPLER_DESC samplerDesc{};
-			// Bilinear, matching the composite's sampler, so a pixel the composite
-			// renders as partly transparent is not point-sampled as fully opaque.
 			samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
 			samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
 			samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
-			if (FAILED(device->CreateSamplerState(&samplerDesc, g_pipeline.sampler.put())))
+			if (FAILED(device->CreateSamplerState(&samplerDesc, pipeline.sampler.put())))
 				return false;
 
-			// Depth writes only: no stencil, no colour. Stencil is left untouched
-			// because other VR machinery reads the values the game wrote.
 			D3D11_DEPTH_STENCIL_DESC dsDesc{};
 			dsDesc.DepthEnable = TRUE;
 			dsDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
 			dsDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
 			dsDesc.StencilEnable = FALSE;
-			if (FAILED(device->CreateDepthStencilState(&dsDesc, g_pipeline.depthWrite.put())))
+			if (FAILED(device->CreateDepthStencilState(&dsDesc, pipeline.depthWrite.put())))
 				return false;
 
-			// Same depth write, plus stencil 0xFF so the VR passes that already skip
-			// hidden-area pixels (sun glare, SSAO, water, HDR imagespace) skip these
-			// pixels too. Only the depth-write state is used outside VR: the value is
-			// a VR convention and has no consumer in flat rendering.
 			D3D11_DEPTH_STENCIL_DESC stencilDesc = dsDesc;
 			stencilDesc.StencilEnable = TRUE;
 			stencilDesc.StencilReadMask = 0xFF;
@@ -281,31 +244,24 @@ float main(PS_INPUT input) : SV_Depth
 			stencilDesc.FrontFace = { D3D11_STENCIL_OP_REPLACE, D3D11_STENCIL_OP_REPLACE,
 				D3D11_STENCIL_OP_REPLACE, D3D11_COMPARISON_ALWAYS };
 			stencilDesc.BackFace = stencilDesc.FrontFace;
-			if (FAILED(device->CreateDepthStencilState(&stencilDesc, g_pipeline.depthStencilWrite.put())))
+			if (FAILED(device->CreateDepthStencilState(&stencilDesc, pipeline.depthStencilWrite.put())))
 				return false;
 
 			D3D11_RASTERIZER_DESC rasDesc{};
 			rasDesc.FillMode = D3D11_FILL_SOLID;
 			rasDesc.CullMode = D3D11_CULL_NONE;
-			rasDesc.DepthClipEnable = FALSE;  // the plane can sit outside the clip range
-			if (FAILED(device->CreateRasterizerState(&rasDesc, g_pipeline.rasterizer.put())))
+			rasDesc.DepthClipEnable = FALSE;
+			if (FAILED(device->CreateRasterizerState(&rasDesc, pipeline.rasterizer.put())))
 				return false;
 
 			D3D11_BLEND_DESC blendDesc{};
 			blendDesc.RenderTarget[0].RenderTargetWriteMask = 0;
-			if (FAILED(device->CreateBlendState(&blendDesc, g_pipeline.noColor.put())))
+			if (FAILED(device->CreateBlendState(&blendDesc, pipeline.noColor.put())))
 				return false;
 
 			return true;
 		}
 
-		// ---- Engine state probes ----------------------------------------
-
-		/// Resolves the depth convention and confirms the camera near/far describe the
-		/// frustum actually being rendered. `camNear`/`camFar` come from the camera
-		/// data block (the same source the shipped world-quad compare uses) and are
-		/// cross-checked against the projection matrix, so a stale or unrelated
-		/// near/far cannot be combined with a live matrix.
 		bool ResolveConvention(float camNear, float camFar, HUDOcclusion::DepthConvention& out)
 		{
 			auto* shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
@@ -360,10 +316,6 @@ float main(PS_INPUT input) : SV_Depth
 			return target;
 		}
 
-		/// Predication is context state but NOT part of a device-context state
-		/// object, so D3D11StateGuard's ClearState/swap would silently drop it and
-		/// leave the rest of the game's frame unpredicated. Construct this BEFORE
-		/// the guard so it restores after the guard has reinstated everything else.
 		class PredicationRestore final
 		{
 		public:
@@ -389,9 +341,6 @@ float main(PS_INPUT input) : SV_Depth
 			BOOL m_value = FALSE;
 		};
 
-		/// The stencil reference is dropped by the same swap for the same reason, and
-		/// the stamp binds kHudStencilRef, so the game's value has to be put back.
-		/// Constructed before the guard so it runs after the guard restored its state.
 		class StencilRefRestore final
 		{
 		public:
@@ -416,14 +365,8 @@ float main(PS_INPUT input) : SV_Depth
 			UINT m_reference = 0;
 		};
 
-		// ---- Draw ------------------------------------------------------
-
-		/// One layer's quad: the same HUD projection the composite uses, per eye,
-		/// plus the standard-Z depth of that layer's plane.
 		struct LayerDraw
 		{
-			// Held, not borrowed: the snapshot that produced it is a local, so a raw
-			// pointer could dangle if a client unregisters before the draw.
 			winrt::com_ptr<ID3D11Texture2D> texture;
 			Matrix wvp[2]{};
 			float planeDepth = 0.0f;
@@ -433,7 +376,7 @@ float main(PS_INPUT input) : SV_Depth
 			float camNear, float camFar, HUDOcclusion::DepthConvention convention,
 			std::vector<LayerDraw>& draws)
 		{
-			const float hudDepth = std::max(0.3f, s.hudDepth);
+			const float hudDepth = std::max(Overlay::Config::kMinGlobalHUDDepthMetres, s.hudDepth);
 			const float coverage = std::clamp(s.hudCoverage,
 				Overlay::Config::kMinHUDCoverage, Overlay::Config::kMaxHUDCoverage);
 
@@ -441,8 +384,6 @@ float main(PS_INPUT input) : SV_Depth
 			if (hudClients.empty())
 				return BackendStatus::NoLayers;
 
-			// Farthest first: each layer writes depth only where its own canvas is
-			// opaque, so the nearest opaque layer wins a shared pixel.
 			std::vector<LayerClaim> claims;
 			claims.reserve(hudClients.size());
 			for (const auto& hud : hudClients) {
@@ -458,9 +399,6 @@ float main(PS_INPUT input) : SV_Depth
 			for (const auto& claim : claims) {
 				LayerDraw draw;
 				draw.planeDepth = 0.0f;
-				// A helmet frame sits nearer than the camera near plane, which has no
-				// depth value of its own; clamp it to the near plane so the frame still
-				// culls what it covers instead of dropping the whole layer.
 				if (!HUDOcclusion::DepthForMetres(claim.depth, camNear, camFar, gameToMetre,
 						convention, draw.planeDepth, HUDOcclusion::NearPlanePolicy::Clamp))
 					continue;
@@ -469,7 +407,7 @@ float main(PS_INPUT input) : SV_Depth
 				posed = posed && InSceneOverlay::HUDPlaneWVP(vr::Eye_Left, claim.depth, claim.coverage, draw.wvp[0]);
 				posed = posed && InSceneOverlay::HUDPlaneWVP(vr::Eye_Right, claim.depth, claim.coverage, draw.wvp[1]);
 				if (!posed)
-					return BackendStatus::NoLayers;  // pose/projection cache not ready yet
+					return BackendStatus::NoLayers;
 
 				for (const auto& hud : hudClients) {
 					if (hud.client_id == claim.clientId) {
@@ -495,16 +433,8 @@ float main(PS_INPUT input) : SV_Depth
 			ctx->Unmap(buffer, 0);
 		}
 
-		/// Logs each distinct backend status once. Without this the only record of
-		/// whether the stamp ever ran is the install line's initial status, so an
-		/// install that silently stayed off and one that was culling correctly look
-		/// identical in the log.
 		void LogStatusOnce(BackendStatus status)
 		{
-			// Once per distinct status per session. The hook runs once per world
-			// batch — several times a frame, including passes that are not drawing
-			// the main depth target — so logging every change alternates between
-			// two statuses and buries the log in thousands of identical lines.
 			static std::atomic<uint32_t> seen{ 0 };
 			const uint32_t bit = 1u << static_cast<uint32_t>(status);
 			if (seen.fetch_or(bit) & bit)
@@ -542,24 +472,24 @@ float main(PS_INPUT input) : SV_Depth
 				return;
 			}
 
-			if (!g_pipeline.vs || g_pipelineDevice.load(std::memory_order_relaxed) != device) {
-				if (g_pipeline.vs && g_pipelineDevice.load(std::memory_order_relaxed) != device) {
-					// A different device: drop the old pipeline rather than bind its
-					// state objects to a device that never created them.
-					g_pipeline = Pipeline{};
-					g_pipelineFailed.store(false, std::memory_order_relaxed);
-				}
-				if (g_pipelineFailed.load(std::memory_order_relaxed)) {
-					g_status.store(BackendStatus::NoDevice, std::memory_order_relaxed);
-					return;
-				}
-				if (!CreatePipeline(device)) {
+			if (g_attemptedDevice.get() != device) {
+				g_pipeline = Pipeline{};
+				g_attemptedDevice.copy_from(device);
+				g_pipelineFailed.store(false, std::memory_order_relaxed);
+			}
+			if (g_pipelineFailed.load(std::memory_order_relaxed)) {
+				g_status.store(BackendStatus::NoDevice, std::memory_order_relaxed);
+				return;
+			}
+			if (!g_pipeline.vs) {
+				Pipeline pipeline;
+				if (!CreatePipeline(device, pipeline)) {
 					logs::error("HUDOcclusion: pipeline creation failed; world occlusion stays off");
 					g_pipelineFailed.store(true, std::memory_order_relaxed);
 					g_status.store(BackendStatus::NoDevice, std::memory_order_relaxed);
 					return;
 				}
-				g_pipelineDevice.store(device, std::memory_order_relaxed);
+				g_pipeline = std::move(pipeline);
 			}
 
 			const DepthTarget& target = range;
@@ -568,9 +498,6 @@ float main(PS_INPUT input) : SV_Depth
 				return;
 			}
 
-			// The same game-unit-to-metre conversion (room scale included) the
-			// world-quad depth compare uses, so the plane's depth and the geometry it
-			// occludes share one scale and cannot drift apart.
 			std::vector<LayerDraw> draws;
 			const BackendStatus built = BuildDraws(settings, InSceneOverlay::GameUnitsToMetres(),
 				target.camNear, target.camFar, convention, draws);
@@ -580,12 +507,6 @@ float main(PS_INPUT input) : SV_Depth
 				return;
 			}
 
-			// Dynamic resolution renders a sub-rect of a full-size target, but some
-			// configurations shrink the depth texture itself. Applying the ratio to an
-			// already-shrunk target would shrivel the stamp, so only apply it when the
-			// target still matches the screen size.
-			// screenWidth/Height are direct State members; the ratios live in the
-			// runtime block, so both views of the same object are needed.
 			auto* gameState = RE::BSGraphics::State::GetSingleton();
 			if (!gameState) {
 				g_status.store(BackendStatus::NoDevice, std::memory_order_relaxed);
@@ -605,13 +526,10 @@ float main(PS_INPUT input) : SV_Depth
 				return;
 			}
 
-			// Constructed before the guard so they restore after it; neither predication
-			// nor the stencil reference is part of a device-context state.
+			// Restore after the guard so its ClearState cannot overwrite these values.
 			PredicationRestore predication(ctx);
 			StencilRefRestore stencilRef(ctx);
 
-			// Everything else this draw touches is restored on scope exit, including
-			// stage slots a plain save/restore would miss.
 			Util::D3D11StateGuard guard(ctx);
 			if (!guard.IsValid()) {
 				g_status.store(BackendStatus::NoDevice, std::memory_order_relaxed);
@@ -673,21 +591,15 @@ float main(PS_INPUT input) : SV_Depth
 			}
 
 			g_status.store(status, std::memory_order_relaxed);
-			// Only announce the successful path; the failure paths above report
-			// themselves and repeating them every frame would flood the log.
 			if (IsReady(status))
 				LogStatusOnce(status);
 		}
-
-		// ---- Hook ------------------------------------------------------
 
 		struct RenderWorldStart
 		{
 			static void thunk(RE::BSBatchRenderer* renderer, uint32_t startRange,
 				uint32_t endRange, uint32_t flags, int geometryGroup)
 			{
-				// Runs before the first world batch, so the depth test rejects the
-				// geometry the HUD is about to cover.
 				StampWorldDepth();
 				func(renderer, startRange, endRange, flags, geometryGroup);
 			}
@@ -707,8 +619,6 @@ float main(PS_INPUT input) : SV_Depth
 			return;
 		}
 
-		// The trampoline fails by terminating the game, not by returning, so check
-		// there is room first: occlusion is optional, the game loading is not.
 		constexpr std::size_t kThunkSlotSize = 14;
 		if (SKSE::GetTrampoline().free_size() < kThunkSlotSize) {
 			logs::error(
@@ -719,9 +629,6 @@ float main(PS_INPUT input) : SV_Depth
 			return;
 		}
 
-		// The same call site other world-render mods use. The trampoline chains
-		// onto whatever was installed before, so an existing owner keeps running
-		// (after this stamp for our hook, since SKSE chains newest-first).
 		try {
 			stl::write_thunk_call<RenderWorldStart>(
 				REL::RelocationID(99938, 106583).address() + REL::Relocate(0x8E, 0x84));

@@ -1,8 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH LicenseRef-Modding-Exception
 // Copyright (c) 2025 ImGuiVRHelper contributors. See COPYING and EXCEPTIONS.md.
-//
-// Headless tests for the HUD-occlusion decisions: which layers are opaque, the
-// order they may write depth in, and the depth value written.
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -18,23 +15,6 @@ using Catch::Approx;
 namespace
 {
 	constexpr float kGameToMetre = 0.01428f;
-}
-
-TEST_CASE("Only essentially solid alpha occludes the world", "[occlusion][alpha]")
-{
-	// Blended art still shows the scene through it, so it must not occlude.
-	REQUIRE_FALSE(IsOpaque(0.0f));
-	REQUIRE_FALSE(IsOpaque(0.5f));
-	REQUIRE_FALSE(IsOpaque(0.98f));
-	REQUIRE_FALSE(IsOpaque(253.0f / 255.0f));
-	REQUIRE(IsOpaque(1.0f));
-	REQUIRE(IsOpaque(254.0f / 255.0f));
-}
-
-TEST_CASE("Non-finite alpha never occludes", "[occlusion][alpha]")
-{
-	REQUIRE_FALSE(IsOpaque(std::numeric_limits<float>::quiet_NaN()));
-	REQUIRE_FALSE(IsOpaque(std::numeric_limits<float>::infinity()));
 }
 
 TEST_CASE("Layers are drawn farthest first so the nearest opaque layer wins", "[occlusion][order]")
@@ -65,13 +45,10 @@ TEST_CASE("Equal depths keep registration order", "[occlusion][order]")
 TEST_CASE("HUD plane depth converts to a depth value in either convention", "[occlusion][depth]")
 {
 	float depth = 0.0f;
-	// A 1 m plane with a 0.1 m near and 1000 m far plane sits far from both ends.
 	REQUIRE(DepthForMetres(1.0f, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Standard, depth));
 	REQUIRE(depth > 0.0f);
 	REQUIRE(depth < 1.0f);
 
-	// Closer planes are nearer in depth, farther planes are farther. This is the
-	// ordering the depth test relies on.
 	float near = 0.0f, far = 0.0f;
 	REQUIRE(DepthForMetres(0.5f, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Standard, near));
 	REQUIRE(DepthForMetres(2.0f, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Standard, far));
@@ -80,11 +57,6 @@ TEST_CASE("HUD plane depth converts to a depth value in either convention", "[oc
 
 TEST_CASE("Reversed depth mirrors the standard mapping", "[occlusion][depth][reversed]")
 {
-	// Skyrim VR reports reversed depth (near = 1, far = 0). The mapping must be
-	// the mirror of the standard one, not the same numbers, or the stamp would
-	// hide the world instead of the HUD.
-	// Stays inside the synthetic far plane: 1000 game units x kGameToMetre is
-	// ~14.3 m, and a plane beyond it is correctly refused rather than clamped.
 	for (const float metres : { 0.5f, 1.0f, 2.0f, 10.0f }) {
 		float standard = 0.0f, reversed = 0.0f;
 		REQUIRE(DepthForMetres(metres, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Standard, standard));
@@ -92,44 +64,27 @@ TEST_CASE("Reversed depth mirrors the standard mapping", "[occlusion][depth][rev
 		REQUIRE(reversed == Approx(1.0f - standard));
 	}
 
-	// Ordering must flip with the convention: nearer planes are larger values
-	// under reversed depth, which is what makes a "write toward the near plane"
-	// cull the world behind the HUD.
 	float nearReversed = 0.0f, farReversed = 0.0f;
 	REQUIRE(DepthForMetres(0.5f, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Reversed, nearReversed));
 	REQUIRE(DepthForMetres(2.0f, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Reversed, farReversed));
 	REQUIRE(nearReversed > farReversed);
 
-	// Still bounded, and still refuses a plane at or inside the near plane.
 	REQUIRE(nearReversed > 0.0f);
 	REQUIRE(nearReversed < 1.0f);
 	float unused = 0.0f;
 	REQUIRE_FALSE(DepthForMetres(0.0f, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Reversed, unused));
 }
 
-TEST_CASE("The production opacity threshold matches the tested constant", "[occlusion][alpha]")
-{
-	// The pixel shader reads this value from a constant buffer; keeping the
-	// boundary case here means a changed threshold cannot silently drift.
-	REQUIRE(kOpaqueAlphaThreshold == Approx(254.0f / 255.0f));
-	REQUIRE(IsOpaque(kOpaqueAlphaThreshold));
-	REQUIRE_FALSE(IsOpaque(std::nextafter(kOpaqueAlphaThreshold, 0.0f)));
-}
-
 TEST_CASE("An unusable camera or plane writes nothing", "[occlusion][depth]")
 {
 	float depth = 0.0f;
-	// Behind or exactly at the near plane.
 	REQUIRE_FALSE(DepthForMetres(0.0f, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Standard, depth));
 	REQUIRE_FALSE(DepthForMetres(-1.0f, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Standard, depth));
-	// Inverted or zero-range camera.
 	REQUIRE_FALSE(DepthForMetres(1.0f, 1000.0f, 0.1f, kGameToMetre, DepthConvention::Standard, depth));
 	REQUIRE_FALSE(DepthForMetres(1.0f, 5.0f, 5.0f, kGameToMetre, DepthConvention::Standard, depth));
 	REQUIRE_FALSE(DepthForMetres(1.0f, 0.0f, 1000.0f, kGameToMetre, DepthConvention::Standard, depth));
-	// Degenerate unit scale.
 	REQUIRE_FALSE(DepthForMetres(1.0f, 0.1f, 1000.0f, 0.0f, DepthConvention::Standard, depth));
 	REQUIRE_FALSE(DepthForMetres(1.0f, 0.1f, 1000.0f, -kGameToMetre, DepthConvention::Standard, depth));
-	// Non-finite inputs.
 	const float nan = std::numeric_limits<float>::quiet_NaN();
 	REQUIRE_FALSE(DepthForMetres(nan, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Standard, depth));
 	REQUIRE_FALSE(DepthForMetres(1.0f, nan, 1000.0f, kGameToMetre, DepthConvention::Standard, depth));
@@ -187,28 +142,27 @@ TEST_CASE("Only Ready enables the depth write", "[occlusion][status]")
 
 TEST_CASE("A plane nearer than the camera near plane clamps or refuses", "[occlusion][depth][near]")
 {
-	// Skyrim VR measured: near = 13 game units (0.186 m), far = 353840.
 	constexpr float kMeasuredNear = 13.0f;
 	constexpr float kMeasuredFar = 353840.0f;
 	float depth = -1.0f;
 
-	// A helmet frame wants a plane at 0.08 m, well inside the near plane.
 	REQUIRE_FALSE(DepthForMetres(0.08f, kMeasuredNear, kMeasuredFar, kGameToMetre,
 		DepthConvention::Reversed, depth));
 	REQUIRE(DepthForMetres(0.08f, kMeasuredNear, kMeasuredFar, kGameToMetre,
 		DepthConvention::Reversed, depth, NearPlanePolicy::Clamp));
-	REQUIRE(depth == 1.0f);  // the near plane under reversed depth
+	REQUIRE(depth == 1.0f);
 	REQUIRE(DepthForMetres(0.08f, kMeasuredNear, kMeasuredFar, kGameToMetre,
 		DepthConvention::Standard, depth, NearPlanePolicy::Clamp));
 	REQUIRE(depth == 0.0f);
 
-	// Clamping is bounded to the near plane; a plane past it is unaffected.
+	float unclampedDepth = -1.0f;
+	float clampedDepth = -1.0f;
 	REQUIRE(DepthForMetres(1.0f, kMeasuredNear, kMeasuredFar, kGameToMetre,
-				DepthConvention::Reversed, depth) ==
-			DepthForMetres(1.0f, kMeasuredNear, kMeasuredFar, kGameToMetre,
-				DepthConvention::Reversed, depth, NearPlanePolicy::Clamp));
+		DepthConvention::Reversed, unclampedDepth));
+	REQUIRE(DepthForMetres(1.0f, kMeasuredNear, kMeasuredFar, kGameToMetre,
+		DepthConvention::Reversed, clampedDepth, NearPlanePolicy::Clamp));
+	REQUIRE(clampedDepth == Approx(unclampedDepth));
 
-	// Input that is unusable for reasons other than its distance is still refused.
 	REQUIRE_FALSE(DepthForMetres(0.0f, kMeasuredNear, kMeasuredFar, kGameToMetre,
 		DepthConvention::Reversed, depth, NearPlanePolicy::Clamp));
 	REQUIRE_FALSE(DepthForMetres(-1.0f, kMeasuredNear, kMeasuredFar, kGameToMetre,

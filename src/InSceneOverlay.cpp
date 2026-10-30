@@ -1117,7 +1117,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 	{
 		ZoneScopedN("InScene::HUDPass");
 		HELPER_GPU_PASS("ImGuiVRHelper::HUDPass");
-		const float hudDepth = std::max(0.3f, s.hudDepth);  // sanity floor
+		const float hudDepth = std::max(Overlay::Config::kMinGlobalHUDDepthMetres, s.hudDepth);
 		const float coverage = std::clamp(s.hudCoverage, Overlay::Config::kMinHUDCoverage, Overlay::Config::kMaxHUDCoverage);
 
 		float projL[4], projR[4];
@@ -1480,8 +1480,6 @@ float4 main(PS_INPUT input) : SV_TARGET
 	// Skyrim world units -> metres. Must match FloatingSubtitles::ImGui::Renderer::kGameUnitToMeter.
 	constexpr float kSkyrimUnitToMeter = 0.01428f;
 
-	// Single source for game-unit -> metre (room scale included), shared by the
-	// world-quad depth compare and the HUD occlusion stamp so they can't drift.
 	float GameUnitsToMetres()
 	{
 		const SkyrimToTrackingXform skyrimXf = GetSkyrimToTrackingXform();

@@ -72,6 +72,8 @@ namespace ImGuiVRHelper::Overlay
 		inline constexpr float kPokeEngageDepthMeters = -0.005f;
 		inline constexpr float kPokeReleaseDepthMeters = 0.020f;
 
+		inline constexpr float kMinGlobalHUDDepthMetres = 0.3f;
+
 		// Fraction of each eye's view the HUD quad covers (see hudCoverage). Min/max
 		// are shared by the settings slider and the render-time clamp so the two
 		// can't disagree.
@@ -255,13 +257,7 @@ namespace ImGuiVRHelper::Overlay
 		/// [kMinHUDCoverage, kMaxHUDCoverage].
 		float hudCoverage = Config::kDefaultHUDCoverage;
 
-		/// Skip world rendering behind parts of the HUD that are fully opaque.
-		/// Pixels the HUD completely covers are hidden anyway, so drawing the
-		/// scene there is wasted work. Applies only where a layer's own canvas
-		/// is solid (alpha 254+) and the renderer combination is one the helper
-		/// can write depth into safely; otherwise the world draws normally.
-		/// Off by default: it writes depth into the game's main buffer, and only
-		/// a headset can confirm the result looks right.
+		/// Opt-in world depth/stencil stamping behind opaque HUD pixels (alpha 254+).
 		bool hudDepthOcclusion = false;
 
 		/// Base resolution of every overlay panel texture, before HUD

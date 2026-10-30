@@ -311,7 +311,7 @@ namespace ImGuiVRHelperPluginAPI
 		/// restores the helper's global setting for that parameter. The plane stays
 		/// eye-independent (stereo-fused at `depth_m`). No-op for unknown ids or clients
 		/// that didn't set kClientFlag_HUDMode. Depths below 0.2 m are experimental and
-		/// may leave the stereo view; older 006 builds clamp positive depths to 0.2 m.
+		/// may leave the stereo view.
 		virtual void SetHudPlane(uint32_t client_id, float depth_m, float coverage) = 0;
 	};
 
