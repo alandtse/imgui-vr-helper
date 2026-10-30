@@ -61,20 +61,49 @@ TEST_CASE("Equal depths keep registration order", "[occlusion][order]")
 	REQUIRE(claims[1].clientId == 4);
 }
 
-TEST_CASE("HUD plane depth converts to a standard-Z depth value", "[occlusion][depth]")
+TEST_CASE("HUD plane depth converts to a depth value in either convention", "[occlusion][depth]")
 {
 	float depth = 0.0f;
 	// A 1 m plane with a 0.1 m near and 1000 m far plane sits far from both ends.
-	REQUIRE(StandardZDepth(1.0f, 0.1f, 1000.0f, kGameToMetre, depth));
+	REQUIRE(DepthForMetres(1.0f, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Standard, depth));
 	REQUIRE(depth > 0.0f);
 	REQUIRE(depth < 1.0f);
 
 	// Closer planes are nearer in depth, farther planes are farther. This is the
 	// ordering the depth test relies on.
 	float near = 0.0f, far = 0.0f;
-	REQUIRE(StandardZDepth(0.5f, 0.1f, 1000.0f, kGameToMetre, near));
-	REQUIRE(StandardZDepth(2.0f, 0.1f, 1000.0f, kGameToMetre, far));
+	REQUIRE(DepthForMetres(0.5f, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Standard, near));
+	REQUIRE(DepthForMetres(2.0f, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Standard, far));
 	REQUIRE(near < far);
+}
+
+TEST_CASE("Reversed depth mirrors the standard mapping", "[occlusion][depth][reversed]")
+{
+	// Skyrim VR reports reversed depth (near = 1, far = 0). The mapping must be
+	// the mirror of the standard one, not the same numbers, or the stamp would
+	// hide the world instead of the HUD.
+	// Stays inside the synthetic far plane: 1000 game units x kGameToMetre is
+	// ~14.3 m, and a plane beyond it is correctly refused rather than clamped.
+	for (const float metres : { 0.5f, 1.0f, 2.0f, 10.0f }) {
+		float standard = 0.0f, reversed = 0.0f;
+		REQUIRE(DepthForMetres(metres, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Standard, standard));
+		REQUIRE(DepthForMetres(metres, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Reversed, reversed));
+		REQUIRE(reversed == Approx(1.0f - standard));
+	}
+
+	// Ordering must flip with the convention: nearer planes are larger values
+	// under reversed depth, which is what makes a "write toward the near plane"
+	// cull the world behind the HUD.
+	float nearReversed = 0.0f, farReversed = 0.0f;
+	REQUIRE(DepthForMetres(0.5f, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Reversed, nearReversed));
+	REQUIRE(DepthForMetres(2.0f, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Reversed, farReversed));
+	REQUIRE(nearReversed > farReversed);
+
+	// Still bounded, and still refuses a plane at or inside the near plane.
+	REQUIRE(nearReversed > 0.0f);
+	REQUIRE(nearReversed < 1.0f);
+	float unused = 0.0f;
+	REQUIRE_FALSE(DepthForMetres(0.0f, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Reversed, unused));
 }
 
 TEST_CASE("The production opacity threshold matches the tested constant", "[occlusion][alpha]")
@@ -90,19 +119,19 @@ TEST_CASE("An unusable camera or plane writes nothing", "[occlusion][depth]")
 {
 	float depth = 0.0f;
 	// Behind or exactly at the near plane.
-	REQUIRE_FALSE(StandardZDepth(0.0f, 0.1f, 1000.0f, kGameToMetre, depth));
-	REQUIRE_FALSE(StandardZDepth(-1.0f, 0.1f, 1000.0f, kGameToMetre, depth));
+	REQUIRE_FALSE(DepthForMetres(0.0f, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Standard, depth));
+	REQUIRE_FALSE(DepthForMetres(-1.0f, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Standard, depth));
 	// Inverted or zero-range camera.
-	REQUIRE_FALSE(StandardZDepth(1.0f, 1000.0f, 0.1f, kGameToMetre, depth));
-	REQUIRE_FALSE(StandardZDepth(1.0f, 5.0f, 5.0f, kGameToMetre, depth));
-	REQUIRE_FALSE(StandardZDepth(1.0f, 0.0f, 1000.0f, kGameToMetre, depth));
+	REQUIRE_FALSE(DepthForMetres(1.0f, 1000.0f, 0.1f, kGameToMetre, DepthConvention::Standard, depth));
+	REQUIRE_FALSE(DepthForMetres(1.0f, 5.0f, 5.0f, kGameToMetre, DepthConvention::Standard, depth));
+	REQUIRE_FALSE(DepthForMetres(1.0f, 0.0f, 1000.0f, kGameToMetre, DepthConvention::Standard, depth));
 	// Degenerate unit scale.
-	REQUIRE_FALSE(StandardZDepth(1.0f, 0.1f, 1000.0f, 0.0f, depth));
-	REQUIRE_FALSE(StandardZDepth(1.0f, 0.1f, 1000.0f, -kGameToMetre, depth));
+	REQUIRE_FALSE(DepthForMetres(1.0f, 0.1f, 1000.0f, 0.0f, DepthConvention::Standard, depth));
+	REQUIRE_FALSE(DepthForMetres(1.0f, 0.1f, 1000.0f, -kGameToMetre, DepthConvention::Standard, depth));
 	// Non-finite inputs.
 	const float nan = std::numeric_limits<float>::quiet_NaN();
-	REQUIRE_FALSE(StandardZDepth(nan, 0.1f, 1000.0f, kGameToMetre, depth));
-	REQUIRE_FALSE(StandardZDepth(1.0f, nan, 1000.0f, kGameToMetre, depth));
+	REQUIRE_FALSE(DepthForMetres(nan, 0.1f, 1000.0f, kGameToMetre, DepthConvention::Standard, depth));
+	REQUIRE_FALSE(DepthForMetres(1.0f, nan, 1000.0f, kGameToMetre, DepthConvention::Standard, depth));
 }
 
 TEST_CASE("Eye viewports split the side-by-side target", "[occlusion][viewport]")
@@ -150,7 +179,6 @@ TEST_CASE("Only Ready enables the depth write", "[occlusion][status]")
 	REQUIRE(IsReady(BackendStatus::Ready));
 	REQUIRE_FALSE(IsReady(BackendStatus::Disabled));
 	REQUIRE_FALSE(IsReady(BackendStatus::NoLayers));
-	REQUIRE_FALSE(IsReady(BackendStatus::RendererConflict));
 	REQUIRE_FALSE(IsReady(BackendStatus::NotMainDepth));
 	REQUIRE_FALSE(IsReady(BackendStatus::UnusableDepth));
 	REQUIRE_FALSE(IsReady(BackendStatus::NoDevice));

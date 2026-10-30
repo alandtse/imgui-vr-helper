@@ -46,11 +46,25 @@ namespace ImGuiVRHelper::HUDOcclusion
 		return std::isfinite(alpha) && alpha >= kOpaqueAlphaThreshold;
 	}
 
-	/// Distance in metres -> game camera units, then to the game's standard-Z
-	/// depth value (the same mapping the world-quad pass inverts). Returns false
-	/// for input that would write an unusable depth; the caller must then skip
-	/// the write instead of guessing.
-	inline bool StandardZDepth(float metres, float camNear, float camFar, float gameToMetre, float& out)
+	/// Which end of the [0,1] depth range the near plane sits at.
+	///
+	/// Skyrim VR reports reversed depth (near = 1, far = 0), the same convention
+	/// HelmetOverlaysNG detects and adapts to rather than refusing to draw. A
+	/// hardcoded standard-Z mapping would write the near value for a far plane
+	/// and silently hide the world instead of the HUD, so the convention is
+	/// resolved from the live projection matrix and passed in.
+	enum class DepthConvention
+	{
+		Standard,  ///< near = 0, far = 1
+		Reversed,  ///< near = 1, far = 0
+	};
+
+	/// Distance in metres -> game camera units, then to the depth value that
+	/// hides the plane under the given convention. Returns false for input that
+	/// would write an unusable depth; the caller must then skip the write
+	/// instead of guessing.
+	inline bool DepthForMetres(float metres, float camNear, float camFar, float gameToMetre,
+		DepthConvention convention, float& out)
 	{
 		if (!(std::isfinite(metres) && std::isfinite(camNear) && std::isfinite(camFar) && std::isfinite(gameToMetre)))
 			return false;
@@ -59,7 +73,9 @@ namespace ImGuiVRHelper::HUDOcclusion
 		const float gameUnits = metres / gameToMetre;
 		if (!(gameUnits > camNear))
 			return false;  // at or in front of the near plane: nothing to write
-		const float depth = (camFar * (gameUnits - camNear)) / (gameUnits * (camFar - camNear));
+		float depth = (camFar * (gameUnits - camNear)) / (gameUnits * (camFar - camNear));
+		if (convention == DepthConvention::Reversed)
+			depth = 1.0f - depth;
 		if (!(std::isfinite(depth)) || depth < 0.0f || depth > 1.0f)
 			return false;
 		out = depth;
@@ -101,12 +117,11 @@ namespace ImGuiVRHelper::HUDOcclusion
 	enum class BackendStatus
 	{
 		Ready,
-		Disabled,          ///< user setting off, or the render path is disabled
-		NoLayers,          ///< nothing is being composited over the world this frame
-		RendererConflict,  ///< a renderer mod owns depth semantics we must not touch
-		NotMainDepth,      ///< the engine is drawing a shadow map, reflection, etc.
-		UnusableDepth,     ///< camera near/far unusable, or the buffer is reversed-Z
-		NoDevice,          ///< D3D not ready, or the kMAIN target is missing
+		Disabled,       ///< user setting off, or the render path is disabled
+		NoLayers,       ///< nothing is being composited over the world this frame
+		NotMainDepth,   ///< the engine is drawing a shadow map, reflection, etc.
+		UnusableDepth,  ///< camera near/far unusable, or the projection is unrecognised
+		NoDevice,       ///< D3D not ready, or the kMAIN target is missing
 	};
 
 	inline bool IsReady(BackendStatus status)

@@ -157,10 +157,12 @@ Menu Framework**](https://github.com/alandtse/SKSE-Menu-Framework-3) are working
   test discards what the HUD covers while anything nearer still draws. Only the
   layer's own canvas alpha decides (254+), so it can never drift from the composited
   art; layers from several clients union automatically (nearest opaque layer wins).
-  It stays off whenever the combination isn't provably safe — Community Shaders
-  present (it rewrites depth-stencil state and reads near-plane depth), depth not
-  the main target, or an unrecognised/reversed camera projection — and then renders
-  the world normally. It cannot be verified without a headset, hence opt-in.
+  It reads the convention from the live projection matrix and adapts the way
+  HelmetOverlaysNG does — Skyrim VR reports reversed depth, so the near value is 1
+  rather than 0 — instead of standing down on it. It stays off whenever the
+  combination isn't provably safe — depth not the main target, an unrecognised
+  camera projection, or a near/far range that disagrees with the matrix — and then
+  renders the world normally. It cannot be verified without a headset, hence opt-in.
 
 ## Build
 

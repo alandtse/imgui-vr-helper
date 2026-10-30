@@ -143,7 +143,6 @@ float main(PS_INPUT input) : SV_Depth
 		Pipeline g_pipeline;
 		std::atomic<bool> g_installed{ false };
 		std::atomic<BackendStatus> g_status{ BackendStatus::Disabled };
-		std::atomic<bool> g_conflictLogged{ false };
 		std::atomic<bool> g_pipelineFailed{ false };
 		/// Device the cached pipeline was created on; a different device means the
 		/// cached state objects belong to something else and must not be bound.
@@ -158,12 +157,10 @@ float main(PS_INPUT input) : SV_Depth
 				return "off";
 			case BackendStatus::NoLayers:
 				return "idle (no HUD layer this frame)";
-			case BackendStatus::RendererConflict:
-				return "unavailable: another renderer mod owns the depth buffer";
 			case BackendStatus::NotMainDepth:
 				return "unavailable: not drawing the main depth target";
 			case BackendStatus::UnusableDepth:
-				return "unavailable: camera depth range unusable";
+				return "unavailable: camera depth range unusable or projection unrecognised";
 			case BackendStatus::NoDevice:
 				return "unavailable: D3D not ready";
 			}
@@ -300,7 +297,14 @@ float main(PS_INPUT input) : SV_Depth
 		/// source the shipped world-quad depth compare uses), while the matrix is
 		/// what proves the depth convention; agreeing on the ratio means both refer
 		/// to the frustum actually being rendered.
-		bool StandardDepthConfirmed(float camNear, float camFar)
+		/// Resolves which end of the depth range the near plane sits at, and
+		/// checks the near/far range agrees with the live projection matrix.
+		///
+		/// Skyrim VR reports reversed depth, so refusing that convention (as this
+		/// did) would decline to draw on the runtime we target. HelmetOverlaysNG
+		/// reads the same matrix and adapts, writing the near value for whichever
+		/// convention is active; this mirrors that instead of standing down.
+		bool ResolveDepthConvention(float camNear, float camFar, HUDOcclusion::DepthConvention& out)
 		{
 			auto* shadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 			if (!shadowState)
@@ -318,12 +322,13 @@ float main(PS_INPUT input) : SV_Depth
 			if (column == row)
 				return false;  // neither layout, or both: unrecognised
 			const float perspective = column ? m[14] : m[11];
-			if (!(m[10] * perspective > 0.0f))
-				return false;  // reversed or degenerate depth
+			const float depthScale = m[10] * perspective;
+			if (!(std::abs(depthScale) > 0.0f))
+				return false;  // degenerate: no depth range at all
 
-			// Plausible range, then agree with the matrix. For a standard-Z frustum
-			// the depth scale is far/(far-near), so a range that does not reproduce
-			// it is not describing this projection.
+			// Plausible range, then agree with the matrix. The depth scale
+			// magnitude is far/(far-near) under either convention, so a range that
+			// does not reproduce it is not describing this projection.
 			if (!(camNear > 0.0f) || !(camFar > camNear))
 				return false;
 			const float ratio = camFar / camNear;
@@ -331,7 +336,13 @@ float main(PS_INPUT input) : SV_Depth
 				return false;
 			const float expectedScale = camFar / (camFar - camNear);
 			const float actualScale = std::abs(m[10]);
-			return std::abs(actualScale - expectedScale) <= 0.05f * expectedScale;
+			if (std::abs(actualScale - expectedScale) > 0.05f * expectedScale)
+				return false;
+
+			// Sign of m[10] against the perspective term is positive for standard
+			// depth and negative for reversed; same test HelmetOverlaysNG uses.
+			out = depthScale > 0.0f ? HUDOcclusion::DepthConvention::Standard : HUDOcclusion::DepthConvention::Reversed;
+			return true;
 		}
 
 		bool DrawsToMainDepth()
@@ -417,7 +428,8 @@ float main(PS_INPUT input) : SV_Depth
 		};
 
 		BackendStatus BuildDraws(const Overlay::Settings& s, float gameToMetre,
-			float camNear, float camFar, std::vector<LayerDraw>& draws)
+			float camNear, float camFar, HUDOcclusion::DepthConvention convention,
+			std::vector<LayerDraw>& draws)
 		{
 			const float hudDepth = std::max(0.3f, s.hudDepth);
 			const float coverage = std::clamp(s.hudCoverage,
@@ -444,7 +456,8 @@ float main(PS_INPUT input) : SV_Depth
 			for (const auto& claim : claims) {
 				LayerDraw draw;
 				draw.planeDepth = 0.0f;
-				if (!StandardZDepth(claim.depth, camNear, camFar, gameToMetre, draw.planeDepth))
+				if (!HUDOcclusion::DepthForMetres(claim.depth, camNear, camFar, gameToMetre,
+						convention, draw.planeDepth))
 					return BackendStatus::UnusableDepth;
 
 				bool posed = true;
@@ -477,42 +490,19 @@ float main(PS_INPUT input) : SV_Depth
 			ctx->Unmap(buffer, 0);
 		}
 
-		/// Community Shaders (and its Open Shaders successor) owns depth semantics:
-		/// its screen-space effects read the main depth buffer we would be writing
-		/// (deferred composite, effects, temporal AA, upscaling), so a stamp here is
-		/// not provably safe. Re-checked every frame rather than latched, since the
-		/// module can load after us.
-		///
-		/// Note this is deliberately conservative and broader than strictly needed
-		/// in a given install: with Reverse Z off and VR StereoOptimizations Off
-		/// (CS's stencil swap and its near-plane HMD mask both inactive) the stamp
-		/// would likely be harmless. Narrowing the check to the active sub-features
-		/// would widen the tested surface for little gain, so the module presence
-		/// stays the gate.
-		bool RendererOwnsDepth()
-		{
-			if (GetModuleHandleW(L"CommunityShaders.dll"))
-				return true;
-			return false;
-		}
-
 		void StampWorldDepth()
 		{
 			const auto& settings = Overlay::State::GetSingleton().settings;
 			const DepthTarget range = GetDepthTarget();
+			HUDOcclusion::DepthConvention convention = HUDOcclusion::DepthConvention::Standard;
 			const BackendStatus preconditions = [&] {
 				if (!settings.hudDepthOcclusion)
 					return BackendStatus::Disabled;
 				if (InSceneOverlay::IsRenderPathDisabled())
 					return BackendStatus::Disabled;
-				if (RendererOwnsDepth()) {
-					if (!g_conflictLogged.exchange(true))
-						logs::info("HUDOcclusion: Community Shaders owns the depth buffer; world occlusion stays off");
-					return BackendStatus::RendererConflict;
-				}
 				if (!DrawsToMainDepth())
 					return BackendStatus::NotMainDepth;
-				if (!StandardDepthConfirmed(range.camNear, range.camFar))
+				if (!ResolveDepthConvention(range.camNear, range.camFar, convention))
 					return BackendStatus::UnusableDepth;
 				return BackendStatus::Ready;
 			}();
@@ -560,7 +550,7 @@ float main(PS_INPUT input) : SV_Depth
 			// occludes share one scale and cannot drift apart.
 			std::vector<LayerDraw> draws;
 			const BackendStatus built = BuildDraws(settings, InSceneOverlay::GameUnitsToMetres(),
-				target.camNear, target.camFar, draws);
+				target.camNear, target.camFar, convention, draws);
 			if (!IsReady(built)) {
 				g_status.store(built, std::memory_order_relaxed);
 				return;
