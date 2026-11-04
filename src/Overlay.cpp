@@ -190,7 +190,7 @@ namespace ImGuiVRHelper::Overlay
 			    << "hudDepth = " << s.hudDepth << "  # meters\n"
 			    << "hudCoverage = " << s.hudCoverage << "  # 0.2-1.0 fraction of the view\n"
 			    << "# Skip drawing the world where the HUD is fully opaque (alpha 254+).\n"
-			    << "# Inactive when another renderer mod owns the depth buffer.\n"
+			    << "# Experimental; VR only.\n"
 			    << "hudDepthOcclusion = " << (s.hudDepthOcclusion ? "true" : "false") << "\n"
 			    << "# Overlay panel texture resolution + supersampling (applied at panel\n"
 			    << "# allocation, so restart to take effect). baseWidth/Height is the logical\n"
