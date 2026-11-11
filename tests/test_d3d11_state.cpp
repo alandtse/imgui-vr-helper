@@ -431,6 +431,53 @@ TEST_CASE("D3D11 guard restores graphics, compute and shader class instances", "
 	caller.RequireEqual(Snapshot(warp.context.get()));
 }
 
+TEST_CASE("D3D11 manual guard restores graphics bindings and clears unused stages", "[d3d11][warp]")
+{
+	WarpDevice warp;
+	Compiler compiler;
+	BindRepresentativePipeline(warp, compiler);
+	const Snapshot caller(warp.context.get());
+	{
+		D3D11StateGuard guard(warp.context.get(), true);
+		REQUIRE(guard.IsValid());
+		winrt::com_ptr<ID3D11GeometryShader> geometry;
+		winrt::com_ptr<ID3D11HullShader> hull;
+		winrt::com_ptr<ID3D11DomainShader> domain;
+		UINT instances = 0;
+		warp.context->GSGetShader(geometry.put(), nullptr, &instances);
+		warp.context->HSGetShader(hull.put(), nullptr, &instances);
+		warp.context->DSGetShader(domain.put(), nullptr, &instances);
+		REQUIRE(geometry == nullptr);
+		REQUIRE(hull == nullptr);
+		REQUIRE(domain == nullptr);
+
+		Texture overlay(warp.device.get());
+		auto* rtv = overlay.rtv.get();
+		warp.context->OMSetRenderTargets(1, &rtv, nullptr);
+		const D3D11_VIEWPORT viewport{ 0, 0, 4, 4, 0.0f, 1.0f };
+		warp.context->RSSetViewports(1, &viewport);
+		warp.context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+		auto* srv = overlay.srv.get();
+		warp.context->PSSetShaderResources(0, 1, &srv);
+		warp.context->PSSetShaderResources(1, 1, &srv);
+		warp.context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+		warp.context->VSSetShader(nullptr, nullptr, 0);
+		warp.context->PSSetShader(nullptr, nullptr, 0);
+	}
+	caller.RequireEqual(Snapshot(warp.context.get()));
+}
+
+TEST_CASE("D3D11 manual guard rejects null and deferred contexts", "[d3d11][warp]")
+{
+	D3D11StateGuard missing(nullptr, true);
+	REQUIRE_FALSE(missing.IsValid());
+	WarpDevice warp;
+	winrt::com_ptr<ID3D11DeviceContext> deferred;
+	REQUIRE(SUCCEEDED(warp.device->CreateDeferredContext(0, deferred.put())));
+	D3D11StateGuard unsupported(deferred.get(), true);
+	REQUIRE_FALSE(unsupported.IsValid());
+}
+
 TEST_CASE("D3D11 guard isolates automatic cross-stage resource unbinding", "[d3d11][warp]")
 {
 	WarpDevice warp;
