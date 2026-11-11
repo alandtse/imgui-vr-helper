@@ -93,6 +93,7 @@ namespace
 	struct MockSource final : IFrameSource
 	{
 		int prepareCalls = 0;
+		int appliedCalls = 0;
 		bool result = true;
 		bool transient = true;
 		bool deviceChanged = false;
@@ -114,6 +115,8 @@ namespace
 			out.generation = generation;
 			return true;
 		}
+
+		void Applied() override { ++appliedCalls; }
 	};
 
 	struct CaptureSink final : ISink
@@ -241,7 +244,7 @@ TEST_CASE("SteamVR hosting confirms over two complete frames", "[runtime-overlay
 	CHECK(h.api.Count("CreateOverlay") == 1);
 	CHECK(h.api.Count("ShowOverlay") == 1);
 	CHECK(h.api.Count("SetOverlayTexture") == 2);
-	CHECK(h.api.Count("SetOverlayTransformAbsolute") == 2);
+	CHECK(h.api.Count("SetOverlayTransformAbsolute") == 1);
 }
 
 TEST_CASE("Every requested anchor must be placed before anything is applied",
@@ -1300,4 +1303,64 @@ TEST_CASE("Detection budget retries only after an observed off and on", "[runtim
 	CHECK(budget.Cached() == Backend::Unknown);
 	CHECK(budget.Attempts() == 0);
 	CHECK(budget.Next() == ProbeDecision::Probe);
+}
+
+TEST_CASE("Unchanged placement is not re-sent but the texture is", "[runtime-overlay]")
+{
+	Harness h;
+	auto in = SteamInput();
+	Activate(h, in);
+	const int width = h.api.Count("SetOverlayWidthInMeters");
+	const int transform = h.api.Count("SetOverlayTransformAbsolute");
+	const int texture = h.api.Count("SetOverlayTexture");
+
+	h.Tick(in);
+	h.Tick(in);
+	CHECK(h.api.Count("SetOverlayWidthInMeters") == width);
+	CHECK(h.api.Count("SetOverlayTransformAbsolute") == transform);
+	CHECK(h.api.Count("SetOverlayTexture") == texture + 2);
+
+	in.anchor[kHmdAnchor].transform[0][3] = 0.5f;
+	h.Tick(in);
+	CHECK(h.api.Count("SetOverlayWidthInMeters") == width + 1);
+	CHECK(h.api.Count("SetOverlayTransformAbsolute") == transform + 1);
+
+	in.widthMeters = 2.0f;
+	h.Tick(in);
+	CHECK(h.api.Count("SetOverlayWidthInMeters") == width + 2);
+
+	in.origin = 0;
+	h.Tick(in);
+	CHECK(h.api.Count("SetOverlayTransformAbsolute") == transform + 3);
+}
+
+TEST_CASE("A failed placement call is retried rather than cached", "[runtime-overlay]")
+{
+	Harness h;
+	const auto in = SteamInput();
+	h.api.fail = [](const std::string& op, std::uint64_t) {
+		return op == "SetOverlayTransformAbsolute" ? 7 : 0;
+	};
+	h.Tick(in);
+	CHECK(h.api.Count("SetOverlayTransformAbsolute") == 1);
+	h.api.fail = nullptr;
+	h.Tick(in);
+	CHECK(h.api.Count("SetOverlayTransformAbsolute") == 2);
+	h.Tick(in);
+	CHECK(h.api.Count("SetOverlayTransformAbsolute") == 2);
+}
+
+TEST_CASE("The frame source is told only after every anchor accepted the texture",
+	"[runtime-overlay]")
+{
+	Harness h;
+	const auto both = SteamInput(7, (1u << kHmdAnchor) | (1u << kControllerAnchor));
+	h.api.fail = [](const std::string& op, std::uint64_t handle) {
+		return op == "SetOverlayTexture" && handle == 102 ? 7 : 0;
+	};
+	h.Tick(both);
+	CHECK(h.source.appliedCalls == 0);
+	h.api.fail = nullptr;
+	h.Tick(both);
+	CHECK(h.source.appliedCalls == 1);
 }

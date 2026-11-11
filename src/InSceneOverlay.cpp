@@ -1849,17 +1849,28 @@ float4 main(PS_INPUT input) : SV_TARGET
 		if (!cursorSRV)
 			return;
 
-		// RTV cache keyed by texture pointer (the panel is reallocated only on
-		// a size change).
-		static winrt::com_ptr<ID3D11RenderTargetView> s_rtv;
-		static ID3D11Texture2D* s_rtvKey = nullptr;
-		if (s_rtvKey != panel) {
-			s_rtv = nullptr;
-			if (FAILED(device->CreateRenderTargetView(panel, nullptr, s_rtv.put()))) {
-				s_rtvKey = nullptr;
+		// RTV cache keyed by texture pointer; two entries so a double-buffered
+		// target alternates without recreating its view.
+		struct CursorRtv
+		{
+			winrt::com_ptr<ID3D11RenderTargetView> view;
+			ID3D11Texture2D* key = nullptr;
+		};
+		static CursorRtv s_cache[2];
+		static std::size_t s_evict = 0;
+		CursorRtv* entry = nullptr;
+		for (auto& candidate : s_cache) {
+			if (candidate.key == panel)
+				entry = &candidate;
+		}
+		if (!entry) {
+			entry = &s_cache[s_evict];
+			s_evict = (s_evict + 1) % std::size(s_cache);
+			entry->view = nullptr;
+			entry->key = nullptr;
+			if (FAILED(device->CreateRenderTargetView(panel, nullptr, entry->view.put())))
 				return;
-			}
-			s_rtvKey = panel;
+			entry->key = panel;
 		}
 
 		D3D11_TEXTURE2D_DESC desc{};
@@ -1870,7 +1881,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		Util::D3D11StateGuard stateGuard(ctx);
 		if (!stateGuard.IsValid())
 			return;
-		ID3D11RenderTargetView* rtv = s_rtv.get();
+		ID3D11RenderTargetView* rtv = entry->view.get();
 		ctx->OMSetRenderTargets(1, &rtv, nullptr);
 		D3D11_VIEWPORT vp{};
 		vp.Width = static_cast<float>(desc.Width);

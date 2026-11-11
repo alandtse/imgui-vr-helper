@@ -39,9 +39,11 @@ namespace ImGuiVRHelper::RuntimeOverlay
 		constexpr UINT kLayerBindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
 		constexpr UINT kLayerMiscFlags = D3D11_RESOURCE_MISC_SHARED;
 
+		constexpr std::size_t kLayerBuffers = 2;
+
 		struct LayerTexture
 		{
-			winrt::com_ptr<ID3D11Texture2D> texture;
+			winrt::com_ptr<ID3D11Texture2D> texture[kLayerBuffers];
 			Core::ImageDesc desc{};
 		};
 
@@ -211,7 +213,7 @@ namespace ImGuiVRHelper::RuntimeOverlay
 					return false;
 				}
 
-				if (!layer.texture || Core::NeedsRecreate(layer.desc, desc)) {
+				if (!layer.texture[0] || Core::NeedsRecreate(layer.desc, desc)) {
 					if (layer.desc.device != nullptr && layer.desc.device != device)
 						out.deviceChanged = true;
 					D3D11_TEXTURE2D_DESC layerDesc{};
@@ -224,36 +226,50 @@ namespace ImGuiVRHelper::RuntimeOverlay
 					layerDesc.Usage = D3D11_USAGE_DEFAULT;
 					layerDesc.BindFlags = kLayerBindFlags;
 					layerDesc.MiscFlags = kLayerMiscFlags;
-					winrt::com_ptr<ID3D11Texture2D> fresh;
-					const HRESULT hr = device->CreateTexture2D(&layerDesc, nullptr, fresh.put());
-					if (FAILED(hr)) {
-						logs::error("RuntimeOverlay: CreateTexture2D failed (HRESULT 0x{:08X})",
-							static_cast<std::uint32_t>(hr));
-						out = Core::PreparedImage{};
-						out.transient = false;
-						reason = "could not allocate the menu layer texture";
-						return false;
+					winrt::com_ptr<ID3D11Texture2D> fresh[kLayerBuffers];
+					for (auto& texture : fresh) {
+						const HRESULT hr = device->CreateTexture2D(&layerDesc, nullptr, texture.put());
+						if (FAILED(hr)) {
+							logs::error("RuntimeOverlay: CreateTexture2D failed (HRESULT 0x{:08X})",
+								static_cast<std::uint32_t>(hr));
+							out = Core::PreparedImage{};
+							out.transient = false;
+							reason = "could not allocate the menu layer texture";
+							return false;
+						}
 					}
-					layer.texture = std::move(fresh);
+					for (std::size_t i = 0; i < kLayerBuffers; ++i) {
+						if (layer.texture[i])
+							retired.push_back(std::move(layer.texture[i]));
+						layer.texture[i] = std::move(fresh[i]);
+					}
 					layer.desc = desc;
 					++generation;
 				}
 
-				ctx->CopyResource(layer.texture.get(), image);
+				// The compositor may still read the buffer submitted last frame.
+				current = (current + 1) % kLayerBuffers;
+				ID3D11Texture2D* target = layer.texture[current].get();
+				ctx->CopyResource(target, image);
 				auto& helper = HelperImpl::GetSingleton();
 				if ((helper.GetClientFlags(focusedClient) &
 						ImGuiVRHelperPluginAPI::kClientFlag_OwnCursor) == 0) {
-					InSceneOverlay::RenderCursorIntoPanel(layer.texture.get());
+					InSceneOverlay::RenderCursorIntoPanel(target);
 				}
 
 				out.ok = true;
-				out.texture = layer.texture.get();
+				out.texture = target;
 				out.generation = generation;
 				out.desc = desc;
 				return true;
 			}
 
+			void Applied() override { retired.clear(); }
+
 			LayerTexture layer;
+			// Replaced textures stay alive until the runtime holds the new one.
+			std::vector<winrt::com_ptr<ID3D11Texture2D>> retired;
+			std::size_t current = 0;
 			std::uint64_t generation = 0;
 		};
 
@@ -446,10 +462,20 @@ namespace ImGuiVRHelper::RuntimeOverlay
 			return backend;
 		}
 
+		// The tracking space changes rarely, and each query is a vrclient call.
+		constexpr std::uint32_t kOriginRefreshTicks = 256;
+
 		vr::ETrackingUniverseOrigin CurrentTrackingOrigin()
 		{
-			auto* compositor = RE::BSOpenVR::GetIVRCompositor();
-			return compositor ? compositor->GetTrackingSpace() : vr::TrackingUniverseStanding;
+			static vr::ETrackingUniverseOrigin cached = vr::TrackingUniverseStanding;
+			static std::uint32_t untilRefresh = 0;
+			if (untilRefresh == 0) {
+				if (auto* compositor = RE::BSOpenVR::GetIVRCompositor())
+					cached = compositor->GetTrackingSpace();
+				untilRefresh = kOriginRefreshTicks;
+			}
+			--untilRefresh;
+			return cached;
 		}
 
 		void CopyTransform(const DirectX::SimpleMath::Matrix& matrix, float out[3][4])

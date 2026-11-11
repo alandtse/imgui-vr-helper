@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -211,6 +212,9 @@ namespace ImGuiVRHelper::RuntimeOverlay::Core
 		virtual ~IFrameSource() = default;
 		virtual bool Prepare(std::uint32_t focusedClient, PreparedImage& out,
 			const char*& reason) = 0;
+		/// Every requested anchor accepted the prepared texture; resources the
+		/// runtime may have held from earlier frames can be released.
+		virtual void Applied() {}
 	};
 
 	struct ISink
@@ -570,6 +574,10 @@ namespace ImGuiVRHelper::RuntimeOverlay::Core
 			bool hideFailureLogged = false;
 			bool clearFailureLogged = false;
 			bool destroyFailureLogged = false;
+			bool placed = false;
+			int placedOrigin = 0;
+			float placedWidth = 0.0f;
+			float placedTransform[3][4]{};
 		};
 
 		void ConsumeFaultRequest();
@@ -834,16 +842,28 @@ namespace ImGuiVRHelper::RuntimeOverlay::Core
 					return false;
 				}
 			}
-			if (const int err = api_.SetOverlayWidthInMeters(slot.handle, in.widthMeters);
-				err != 0) {
-				Failure(Describe("SetOverlayWidthInMeters", err));
-				return false;
-			}
-			if (const int err = api_.SetOverlayTransformAbsolute(slot.handle, in.origin,
-					in.anchor[i].transform);
-				err != 0) {
-				Failure(Describe("SetOverlayTransformAbsolute", err));
-				return false;
+			const bool placementCurrent = slot.placed && slot.placedOrigin == in.origin &&
+			                              slot.placedWidth == in.widthMeters &&
+			                              std::memcmp(slot.placedTransform, in.anchor[i].transform,
+											  sizeof(slot.placedTransform)) == 0;
+			if (!placementCurrent) {
+				slot.placed = false;
+				if (const int err = api_.SetOverlayWidthInMeters(slot.handle, in.widthMeters);
+					err != 0) {
+					Failure(Describe("SetOverlayWidthInMeters", err));
+					return false;
+				}
+				if (const int err = api_.SetOverlayTransformAbsolute(slot.handle, in.origin,
+						in.anchor[i].transform);
+					err != 0) {
+					Failure(Describe("SetOverlayTransformAbsolute", err));
+					return false;
+				}
+				slot.placed = true;
+				slot.placedOrigin = in.origin;
+				slot.placedWidth = in.widthMeters;
+				std::memcpy(slot.placedTransform, in.anchor[i].transform,
+					sizeof(slot.placedTransform));
 			}
 			if (const int err = api_.SetOverlayTexture(slot.handle, image.texture);
 				err != 0) {
@@ -851,6 +871,7 @@ namespace ImGuiVRHelper::RuntimeOverlay::Core
 				return false;
 			}
 		}
+		source_.Applied();
 		return true;
 	}
 
