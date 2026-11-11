@@ -19,6 +19,49 @@ namespace ImGuiVRHelper::InSceneOverlay
 		float centerY = 0.0f;
 	};
 
+	/// Which end of [0,1] the near plane sits at in the scene depth buffer.
+	enum class DepthConvention
+	{
+		Standard,  ///< near = 0, far = 1
+		Reversed,  ///< near = 1, far = 0
+	};
+
+	/// Resolve a perspective depth convention; reject invalid or ambiguous ranges.
+	inline bool ResolveDepthConvention(const float* m, float camNear, float camFar,
+		DepthConvention& out)
+	{
+		if (!m || !std::isfinite(camNear) || !std::isfinite(camFar))
+			return false;
+		if (!(camNear > 0.0f) || !(camFar > camNear))
+			return false;
+		for (int i = 0; i < 16; ++i) {
+			if (!std::isfinite(m[i]))
+				return false;
+		}
+		constexpr double kRangeTolerance = 0.10;
+		constexpr double kPerspectiveTolerance = 1e-4;
+		if (std::abs(m[15]) > kPerspectiveTolerance || m[0] == 0.0f || m[5] == 0.0f)
+			return false;
+		const double span = static_cast<double>(camFar) - camNear;
+		const double translation = static_cast<double>(camNear) * camFar / span;
+		const auto matches = [](double actual, double expected, double tolerance) {
+			return std::abs(std::abs(actual) - expected) <= tolerance * expected;
+		};
+		const bool rowPerspective = matches(m[11], 1.0, kPerspectiveTolerance) &&
+		                            matches(m[14], translation, kRangeTolerance);
+		const bool columnPerspective = matches(m[14], 1.0, kPerspectiveTolerance) &&
+		                               matches(m[11], translation, kRangeTolerance);
+		if (!rowPerspective && !columnPerspective)
+			return false;
+		const double scale = std::abs(m[10]);
+		const bool reversed = matches(scale, camNear / span, kRangeTolerance);
+		const bool standard = matches(scale, camFar / span, kRangeTolerance);
+		if (reversed == standard)
+			return false;
+		out = reversed ? DepthConvention::Reversed : DepthConvention::Standard;
+		return true;
+	}
+
 	/// Per-client HUD plane override, in meters and as a fraction of the view.
 	/// A zero field means "use the helper's global setting".
 	struct HUDPlaneOverride

@@ -96,3 +96,71 @@ TEST_CASE("plane override treats non-positive and non-finite as unset", "[hud]")
 	REQUIRE(bad.depth == 0.0f);
 	REQUIRE(bad.coverage == 0.0f);
 }
+
+TEST_CASE("depth convention is resolved from the projection's depth scale", "[hud]")
+{
+	using ImGuiVRHelper::InSceneOverlay::DepthConvention;
+	using ImGuiVRHelper::InSceneOverlay::ResolveDepthConvention;
+
+	float m[16] = {};
+	m[0] = m[5] = 1.0f;
+	m[11] = 1.0f;
+	m[14] = 13.0f * (353840.0f / (353840.0f - 13.0f));
+	m[10] = -0.000036716f;
+	DepthConvention got = DepthConvention::Standard;
+	REQUIRE(ResolveDepthConvention(m, 13.0f, 353840.0f, got));
+	REQUIRE(got == DepthConvention::Reversed);
+
+	m[10] = -(353840.0f / (353840.0f - 13.0f));
+	REQUIRE(ResolveDepthConvention(m, 13.0f, 353840.0f, got));
+	REQUIRE(got == DepthConvention::Standard);
+
+	m[14] = 0.1f * (1000.0f / (1000.0f - 0.1f));
+	m[10] = -(0.1f / (1000.0f - 0.1f));
+	REQUIRE(ResolveDepthConvention(m, 0.1f, 1000.0f, got));
+	REQUIRE(got == DepthConvention::Reversed);
+	m[10] = -(1000.0f / (1000.0f - 0.1f));
+	REQUIRE(ResolveDepthConvention(m, 0.1f, 1000.0f, got));
+	REQUIRE(got == DepthConvention::Standard);
+	std::swap(m[11], m[14]);
+	REQUIRE(ResolveDepthConvention(m, 0.1f, 1000.0f, got));
+	REQUIRE(got == DepthConvention::Standard);
+}
+
+TEST_CASE("depth convention refuses inputs it cannot classify", "[hud]")
+{
+	using ImGuiVRHelper::InSceneOverlay::DepthConvention;
+	using ImGuiVRHelper::InSceneOverlay::ResolveDepthConvention;
+
+	float m[16] = {};
+	DepthConvention got = DepthConvention::Standard;
+
+	REQUIRE_FALSE(ResolveDepthConvention(m, 0.0f, 0.0f, got));
+
+	m[10] = 0.0f;
+	REQUIRE_FALSE(ResolveDepthConvention(m, 13.0f, 353840.0f, got));
+	m[10] = 0.5f;
+	REQUIRE_FALSE(ResolveDepthConvention(m, 13.0f, 353840.0f, got));
+
+	const float nan = std::numeric_limits<float>::quiet_NaN();
+	m[10] = nan;
+	REQUIRE_FALSE(ResolveDepthConvention(m, 13.0f, 353840.0f, got));
+	m[10] = -1.0f;
+	REQUIRE_FALSE(ResolveDepthConvention(m, nan, 353840.0f, got));
+	REQUIRE_FALSE(ResolveDepthConvention(nullptr, 13.0f, 353840.0f, got));
+
+	m[10] = -(13.0f / (353840.0f - 13.0f));
+	REQUIRE_FALSE(ResolveDepthConvention(m, 13.0f, 353840.0f, got));
+	m[0] = m[5] = 1.0f;
+	m[11] = 1.0f;
+	m[14] = 13.0f * (353840.0f / (353840.0f - 13.0f));
+	REQUIRE(ResolveDepthConvention(m, 13.0f, 353840.0f, got));
+	m[15] = 1.0f;
+	REQUIRE_FALSE(ResolveDepthConvention(m, 13.0f, 353840.0f, got));
+	m[15] = 0.0f;
+	m[14] *= 2.0f;
+	REQUIRE_FALSE(ResolveDepthConvention(m, 13.0f, 353840.0f, got));
+	m[14] = 13.0f * 14.0f;
+	m[10] = -13.0f;
+	REQUIRE_FALSE(ResolveDepthConvention(m, 13.0f, 14.0f, got));
+}
