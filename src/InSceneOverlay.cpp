@@ -926,6 +926,12 @@ float4 main(PS_INPUT input) : SV_TARGET
 			Matrix vpWorldSpace;  // for controller-attached and fixed-world
 			Vector3 hmdPos;       // HMD position (standing space) from the SAME pose as vpWorldSpace
 			bool valid = false;
+
+			/// Planes beyond the standard range keep the original projection.
+			const Matrix& HUDViewProj(float planeDepth) const
+			{
+				return UsesStandardHUDNearClip(planeDepth) ? vpHeadSpace : vpHUDHeadSpace;
+			}
 		};
 
 		EyeMatrices ComputeEyeMatrices(vr::EVREye eye)
@@ -1058,7 +1064,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 		const HUDQuad quad = ComputeHUDQuad(projL, projR, depth, coverage);
 		const Matrix model = Matrix::CreateScale(quad.width, quad.height, 1.0f) *
 		                     Matrix::CreateTranslation(0.0f, quad.centerY, -depth);
-		outWvp = (model * matrices.vpHUDHeadSpace).Transpose();
+		outWvp = (model * matrices.HUDViewProj(depth)).Transpose();
 		return true;
 	}
 
@@ -1128,7 +1134,7 @@ float4 main(PS_INPUT input) : SV_TARGET
 			const Matrix model =
 				Matrix::CreateScale(quad.width, quad.height, 1.0f) *
 				Matrix::CreateTranslation(0.0f, quad.centerY, -depth);
-			return (model * matrices.vpHUDHeadSpace).Transpose();
+			return (model * matrices.HUDViewProj(depth)).Transpose();
 		};
 		const Matrix hudWvp = planeWvp(hudDepth, coverage);
 

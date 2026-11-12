@@ -118,3 +118,21 @@ TEST_CASE("HUD quad corners retain asymmetric stereo coverage", "[hud][projectio
 		}
 	}
 }
+
+TEST_CASE("planes in the standard range keep the original near clip", "[hud][projection]")
+{
+	using namespace ImGuiVRHelper::InSceneOverlay;
+	for (const auto depth : { 0.2f, 0.3f, 1.5f, 5.0f })
+		REQUIRE(UsesStandardHUDNearClip(depth));
+	for (const auto depth : { 0.01f, 0.05f, 0.1f, 0.199f })
+		REQUIRE_FALSE(UsesStandardHUDNearClip(depth));
+
+	const auto standard = ComputeHUDProjection(-1.1f, 0.9f, -0.8f, 1.2f, kHUDStandardNearClip);
+	const auto original = DirectX::XMMatrixPerspectiveOffCenterRH(
+		-0.11f, 0.09f, -0.08f, 0.12f, 0.1f, 1000.0f);
+	DirectX::XMFLOAT4X4 a, b;
+	DirectX::XMStoreFloat4x4(&a, standard);
+	DirectX::XMStoreFloat4x4(&b, original);
+	for (int i = 0; i < 16; ++i)
+		REQUIRE(a.m[i / 4][i % 4] == Catch::Approx(b.m[i / 4][i % 4]).epsilon(1e-5));
+}

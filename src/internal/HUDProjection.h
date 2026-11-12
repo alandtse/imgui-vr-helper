@@ -10,12 +10,20 @@
 namespace ImGuiVRHelper::InSceneOverlay
 {
 	inline constexpr float kHUDNearClip = kMinHUDPlaneDepth * 0.5f;
+	inline constexpr float kHUDStandardNearClip = 0.1f;
 	inline constexpr float kHUDFarClip = 1000.0f;
 
-	inline DirectX::XMMATRIX ComputeHUDProjection(float left, float right, float bottom, float top)
+	/// Planes at or beyond twice the standard near clip keep the standard projection.
+	inline bool UsesStandardHUDNearClip(float planeDepth)
+	{
+		return planeDepth >= kHUDStandardNearClip * 2.0f;
+	}
+
+	inline DirectX::XMMATRIX ComputeHUDProjection(float left, float right, float bottom, float top,
+		float nearClip = kHUDNearClip)
 	{
 		return DirectX::XMMatrixPerspectiveOffCenterRH(
-			left * kHUDNearClip, right * kHUDNearClip,
-			bottom * kHUDNearClip, top * kHUDNearClip, kHUDNearClip, kHUDFarClip);
+			left * nearClip, right * nearClip,
+			bottom * nearClip, top * nearClip, nearClip, kHUDFarClip);
 	}
 }

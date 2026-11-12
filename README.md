@@ -105,7 +105,9 @@ g_vr.RenderFrame();      // VR: flat panel only; flat screen / no helper: your n
   view. A slider whose zero means "closest" must send `max(value, 0.01f)`;
   sending literal zero means reset. Older interface-006 builds clamp positive
   depths to 0.2 m, so interface support alone does not prove this range exists.
-  Global HUD, menu, and world-quad depth settings are unchanged.
+  Planes nearer than 0.2 m use a closer near clip; planes at 0.2 m or beyond
+  keep the original projection. Global HUD, menu, and world-quad depth
+  settings are unchanged.
 
 - **World-anchored overlays (World-Quad Mode):** For 2D content that should stay pinned in the scene (subtitles, damage numbers, nameplates) rather than ride the head-locked HUD plane, connect with `kClientFlag_WorldQuad`. Draw your text into the client panel as usual, then each frame submit billboards that sample sub-rects of that panel at world positions:
 
