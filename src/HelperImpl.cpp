@@ -1593,6 +1593,7 @@ namespace ImGuiVRHelper
 			ImGuiVRHelperPluginAPI::OnFrameFn on_frame;
 			void* user;
 			uint32_t flags;
+			InSceneOverlay::HUDPlaneOverride hudPlane;
 		};
 		std::vector<Snapshot> snapshot;
 		uint32_t focused;
@@ -1601,7 +1602,7 @@ namespace ImGuiVRHelper
 			focused = m_focused_client;
 			snapshot.reserve(m_clients.size());
 			for (const auto& [id, rec] : m_clients) {
-				snapshot.push_back({ id, rec.on_frame, rec.user, rec.flags });
+				snapshot.push_back({ id, rec.on_frame, rec.user, rec.flags, { rec.hudDepth, rec.hudCoverage } });
 			}
 		}
 
@@ -1702,6 +1703,12 @@ namespace ImGuiVRHelper
 
 		for (const auto& sn : snapshot) {
 			ImGuiVRHelperPluginAPI::Frame perClient = baseFrame;
+			if (sn.flags & ImGuiVRHelperPluginAPI::kClientFlag_HUDMode) {
+				const auto plane = InSceneOverlay::ResolveHUDPlane(sn.hudPlane,
+					{ baseFrame.hud_depth, baseFrame.hud_coverage });
+				perClient.hud_depth = plane.depth;
+				perClient.hud_coverage = plane.coverage;
+			}
 			if (sn.id == focused) {
 				perClient.flags |= 1u << 0;  // bit0 client_has_focus
 				if (wandHit) {
