@@ -402,10 +402,11 @@ namespace ImGuiVRHelper
 		/// Poke (direct-touch) click hysteresis, called from UpdateWandPointer
 		/// with its fresh isIntersecting/depthMeters. On an engage/release
 		/// transition, synthesizes a real kTrigger press/release via
-		/// Input::SetSyntheticButtonState so every client -- old or new -- sees
+		/// Input::SetPokeButtonState so every client -- old or new -- sees
 		/// it through the same TriggerClick path a physical trigger pull already uses.
 		void UpdatePokeContact(bool isPokeCandidate, float depthMeters);
 		bool m_pokeContactLatched = false;
+		bool m_pokeContactPrimaryHand = false;
 		void ReconcileSelfFocusAndCombos();
 		/// Edge-detect the off-panel stick-click overlay-cycle shortcut and
 		/// dispatch CycleOverlay. Runs every frame; no-ops while the wand is on

@@ -1151,6 +1151,7 @@ namespace ImGuiVRHelper
 		// tracked (headless null-driver testing), so it precedes every gate.
 		// No poke hysteresis here -- devbench aims by UV, not physical depth.
 		if (overlayState.debugPointer.active.load(std::memory_order_relaxed)) {
+			UpdatePokeContact(false, 0.0f);
 			overlayState.wandState.isIntersecting = true;
 			overlayState.wandState.uvCoordinatesX.store(
 				overlayState.debugPointer.u.load(std::memory_order_relaxed), std::memory_order_relaxed);
@@ -1180,7 +1181,7 @@ namespace ImGuiVRHelper
 
 	// Poke (direct-touch) click: hysteresis on WandPointing's per-frame depth,
 	// synthesized as a REAL kTrigger press/release via
-	// Input::SetSyntheticButtonState -- not a new wire bit -- so every
+	// Input::SetPokeButtonState -- not a new wire bit -- so every
 	// already-compiled client gets poke for free through the exact same
 	// TriggerClick path a physical trigger pull already uses (PumpInput
 	// forwards TriggerClick unconditionally; it has no way to distinguish
@@ -1189,7 +1190,7 @@ namespace ImGuiVRHelper
 	// raw-trigger reads (kFrameFlag_SuppressInputForwarding's doc comment)
 	// might mean something other than a click.
 	//
-	// Uses SetSyntheticButtonState, not InjectButton: this runs on the render
+	// Uses SetPokeButtonState, not InjectButton: this runs on the render
 	// thread inside DispatchFrame, the SAME thread and frame BuildFrame reads
 	// controller state on right after -- InjectButton's cross-thread queue
 	// (meant for devbench, which calls from a genuinely different thread)
@@ -1214,9 +1215,11 @@ namespace ImGuiVRHelper
 		if (!transitioned)
 			return;
 
-		const bool primary = WandPointing::GetPointingDevice() ==
-		                     ImGuiVRHelperPluginAPI::InputDeviceType::Primary;
-		Input::SetSyntheticButtonState(primary,
+		if (m_pokeContactLatched) {
+			m_pokeContactPrimaryHand = WandPointing::GetPointingDevice() ==
+			                           ImGuiVRHelperPluginAPI::InputDeviceType::Primary;
+		}
+		Input::SetPokeButtonState(m_pokeContactPrimaryHand,
 			static_cast<uint32_t>(RE::BSOpenVRControllerDevice::Keys::kTrigger), m_pokeContactLatched);
 
 		// Haptic confirmation on engage only: poke has no physical trigger-pull
@@ -1231,7 +1234,7 @@ namespace ImGuiVRHelper
 		// so it's the proven-safe path here, not a new one.
 		if (m_pokeContactLatched) {
 			const bool leftHanded = Overlay::State::GetSingleton().lastKnownLeftHandedMode;
-			const bool isRightController = leftHanded ? !primary : primary;
+			const bool isRightController = leftHanded ? !m_pokeContactPrimaryHand : m_pokeContactPrimaryHand;
 			if (auto* openvr = RE::BSOpenVR::GetSingleton()) {
 				// TriggerHapticPulse's duration is a multiplier, not milliseconds
 				// (BSOpenVR.h: "X * 4,000 microseconds, 250 = 1 second") -- 3.75

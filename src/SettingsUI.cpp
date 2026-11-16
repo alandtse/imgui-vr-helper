@@ -1425,7 +1425,7 @@ namespace ImGuiVRHelper::SettingsUI
 		pumpButtons(vrState.secondaryControllerState, prevSecondary);
 		// Poke (direct-touch) needs no separate handling here: HelperImpl's poke
 		// hysteresis synthesizes a real kTrigger press via
-		// Input::SetSyntheticButtonState, which lands in this same
+		// Input::SetPokeButtonState, which lands in this same
 		// vrState.*ControllerState the loop above already reads --
 		// indistinguishable from a physical trigger pull.
 
