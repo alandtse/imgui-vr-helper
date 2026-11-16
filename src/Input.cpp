@@ -20,6 +20,7 @@
 #include "Input.h"
 
 #include "Overlay.h"
+#include "internal/ButtonSources.h"
 #include "internal/VRUtils.h"
 
 #include <RE/B/BSOpenVR.h>
@@ -83,6 +84,7 @@ namespace ImGuiVRHelper::Input
 
 		// Protect handedness plus controller snapshots across threads.
 		std::mutex g_controllerStateMutex;
+		ButtonSources::State g_buttonSources[2];
 
 		bool g_lastKnownLeftHanded = false;
 		bool g_handednessInitialized = false;
@@ -99,6 +101,8 @@ namespace ImGuiVRHelper::Input
 					auto& state = Overlay::State::GetSingleton();
 					state.primaryControllerState = {};
 					state.secondaryControllerState = {};
+					g_buttonSources[0].Clear();
+					g_buttonSources[1].Clear();
 				}
 				g_handednessInitialized = true;
 				g_lastKnownLeftHanded = now;
@@ -115,6 +119,29 @@ namespace ImGuiVRHelper::Input
 				}
 			}
 			return mask;
+		}
+
+		void SetButtonSourceLocked(RE::VRControllerState& target,
+			ButtonSources::State& sources, ButtonSources::Source source,
+			uint32_t keyCode, bool pressed, double nowSecs)
+		{
+			for (const auto& button : ButtonTable()) {
+				if (button.reKey != keyCode)
+					continue;
+				if (!sources.Set(source, keyCode, pressed))
+					return;
+				bool held = false;
+				for (const auto& alias : ButtonTable()) {
+					if (alias.canonicalKey == button.canonicalKey && sources.IsDown(alias.reKey)) {
+						held = true;
+						break;
+					}
+				}
+				auto& buttonState = target[button.canonicalKey];
+				if (buttonState.isPressed != held)
+					buttonState.OnEvent(held, nowSecs);
+				return;
+			}
 		}
 
 		// Recent VR controller events ring buffer (diagnostics UI). Written
@@ -276,13 +303,9 @@ namespace ImGuiVRHelper::Input
 			auto& state = Overlay::State::GetSingleton();
 			auto& target = isPrimary ? state.primaryControllerState : state.secondaryControllerState;
 
-			// Store the canonical key so one physical button maps to one entry.
-			for (const auto& m : ButtonTable()) {
-				if (keyCode == m.reKey) {
-					target[m.canonicalKey].OnEvent(pressed, nowSecs);
-					break;
-				}
-			}
+			auto& sources = g_buttonSources[isPrimary ? 0 : 1];
+			SetButtonSourceLocked(target, sources, ButtonSources::Source::Physical,
+				keyCode, pressed, nowSecs);
 
 			target.thumbsticks[thumbIdx].x = snappedX;
 			target.thumbsticks[thumbIdx].y = snappedY;
@@ -373,7 +396,7 @@ namespace ImGuiVRHelper::Input
 
 		// Poke (direct-touch) click hysteresis lives in HelperImpl::UpdatePokeContact
 		// instead of here: it synthesizes a real kTrigger press via
-		// Input::SetSyntheticButtonState, so it needs to run where the fresh
+		// Input::SetPokeButtonState, so it needs to run where the fresh
 		// isIntersecting/depthMeters are computed (HelperImpl::UpdateWandPointer)
 		// rather than duplicating that read here.
 
@@ -412,7 +435,7 @@ namespace ImGuiVRHelper::Input
 
 	void SetSyntheticButtonState(bool primaryHand, uint32_t keyCode, bool pressed)
 	{
-		// Unlike InjectButton, this mutates state[Canonical(keyCode)] directly
+		// Unlike InjectButton, this updates controller state immediately
 		// instead of queuing for DrainInjected -- for a caller (HelperImpl's
 		// poke hysteresis) that already runs on the same thread and same frame
 		// as the readers (BuildFrame, SettingsUI's raw pump), routing through
@@ -427,7 +450,22 @@ namespace ImGuiVRHelper::Input
 		                         .count();
 		std::scoped_lock lk{ g_controllerStateMutex };
 		auto& target = primaryHand ? state.primaryControllerState : state.secondaryControllerState;
-		target[Canonical(keyCode)].OnEvent(pressed, nowSecs);
+		auto& sources = g_buttonSources[primaryHand ? 0 : 1];
+		SetButtonSourceLocked(target, sources, ButtonSources::Source::Injected,
+			keyCode, pressed, nowSecs);
+	}
+
+	void SetPokeButtonState(bool primaryHand, uint32_t keyCode, bool pressed)
+	{
+		auto& state = Overlay::State::GetSingleton();
+		const auto nowSecs = std::chrono::duration<double>(
+			std::chrono::steady_clock::now().time_since_epoch())
+		                         .count();
+		std::scoped_lock lk{ g_controllerStateMutex };
+		auto& target = primaryHand ? state.primaryControllerState : state.secondaryControllerState;
+		auto& sources = g_buttonSources[primaryHand ? 0 : 1];
+		SetButtonSourceLocked(target, sources, ButtonSources::Source::Poke,
+			keyCode, pressed, nowSecs);
 	}
 
 	void DrainInjected()
@@ -447,9 +485,9 @@ namespace ImGuiVRHelper::Input
 		for (const auto& e : pending) {
 			auto& target = e.primaryHand ? state.primaryControllerState :
 			                               state.secondaryControllerState;
-			// Same canonical fold real events get, so one synthetic button is
-			// exactly one state entry (see FeedVREvent).
-			target[Canonical(e.keyCode)].OnEvent(e.pressed, nowSecs);
+			auto& sources = g_buttonSources[e.primaryHand ? 0 : 1];
+			SetButtonSourceLocked(target, sources, ButtonSources::Source::Injected,
+				e.keyCode, e.pressed, nowSecs);
 		}
 	}
 }
